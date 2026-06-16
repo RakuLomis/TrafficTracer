@@ -1,0 +1,124 @@
+{
+  "constants": {
+    "logFormatVersion": 1,
+    "timeTickOffset": "1329000000000",
+    "logEventTypes": {
+      "REQUEST_ALIVE": 0,
+      "HOST_RESOLVER_IMPL_JOB": 1,
+      "SOCKET_ALIVE": 3,
+      "TCP_CONNECT": 4,
+      "TCP_CONNECT_ATTEMPT": 5,
+      "SOCKET_IN_USE": 6,
+      "SOCKET_BYTES_SENT": 8,
+      "SOCKET_BYTES_RECEIVED": 9,
+      "URL_REQUEST_START_JOB": 11,
+      "HTTP_STREAM_REQUEST": 21,
+      "HTTP_STREAM_REQUEST_BOUND_TO_JOB": 22,
+      "HTTP2_SESSION_SEND_HEADERS": 29,
+      "HTTP2_SESSION_RECV_HEADERS": 30,
+      "QUIC_SESSION": 32,
+      "HTTP_STREAM_PARSER_READ_HEADERS": 36,
+      "SSL_CONNECT": 50
+    },
+    "logSourceType": {
+      "NONE": 0,
+      "URL_REQUEST": 1,
+      "TRANSPORT_CONNECT_JOB": 2,
+      "SOCKET": 3,
+      "HOST_RESOLVER_IMPL_JOB": 4,
+      "HTTP_STREAM_JOB": 5,
+      "CERT_VERIFIER_JOB": 6,
+      "SSL_CONNECT_JOB": 8,
+      "HTTP2_SESSION": 14,
+      "QUIC_SESSION": 15,
+      "PROXY_CLIENT_SOCKET": 18,
+      "UDP_SOCKET": 19,
+      "TCP_STREAM_ATTEMPT": 20,
+      "TLS_STREAM_ATTEMPT": 21,
+      "DNS_TRANSACTION": 25,
+      "HTTP_STREAM_POOL_GROUP": 31,
+      "HTTP_STREAM_POOL_JOB": 32
+    },
+    "logEventPhase": {
+      "PHASE_BEGIN": 0,
+      "PHASE_END": 1,
+      "PHASE_NONE": 2
+    },
+    "clientInfo": {
+      "name": "Chrome",
+      "version": "96.0.4664.45",
+      "official": "Official",
+      "command_line": "chrome.exe --enable-net-logging"
+    },
+    "netError": {
+      "ERR_FAILED": -2,
+      "ERR_NAME_NOT_RESOLVED": -105,
+      "ERR_CONNECTION_REFUSED": -102,
+      "ERR_TIMED_OUT": -7
+    }
+  },
+  "events": [
+    {"time":"1000","type":0,"phase":0,"source":{"id":1,"type":1},"params":{"url":"https://www.example.com/","source_dependency":{"id":10,"type":5}}},
+    {"time":"1010","type":0,"phase":0,"source":{"id":2,"type":1},"params":{"url":"https://www.example.com/favicon.ico","source_dependency":{"id":11,"type":5}}},
+    {"time":"1020","type":0,"phase":0,"source":{"id":3,"type":1},"params":{"url":"https://cdn.example.net/script.js","source_dependency":{"id":20,"type":5}}},
+    {"time":"1030","type":0,"phase":0,"source":{"id":4,"type":1},"params":{"url":"https://fail.example.com/","net_error":-105,"source_dependency":{"id":30,"type":5}}},
+
+    {"time":"1005","type":21,"phase":2,"source":{"id":10,"type":5},"params":{"url":"https://www.example.com/","source_dependency":{"id":100,"type":2}}},
+    {"time":"1005","type":21,"phase":2,"source":{"id":11,"type":5},"params":{"url":"https://www.example.com/favicon.ico","source_dependency":{"id":100,"type":2}}},
+    {"time":"1025","type":21,"phase":2,"source":{"id":20,"type":5},"params":{"url":"https://cdn.example.net/script.js","source_dependency":{"id":200,"type":2}}},
+    {"time":"1035","type":21,"phase":2,"source":{"id":30,"type":5},"params":{"url":"https://fail.example.com/","source_dependency":{"id":300,"type":2}}},
+
+    {"time":"1003","type":3,"phase":0,"source":{"id":100,"type":2},"params":{"group_id":"www.example.com:443"}},
+    {"time":"1023","type":3,"phase":0,"source":{"id":200,"type":2},"params":{"group_id":"cdn.example.net:443"}},
+    {"time":"1033","type":3,"phase":0,"source":{"id":300,"type":2},"params":{"group_id":"fail.example.com:443"}},
+
+    {"time":"1004","type":3,"phase":0,"source":{"id":1000,"type":3},"params":{"source_dependency":{"id":100,"type":2}}},
+    {"time":"1024","type":3,"phase":0,"source":{"id":2000,"type":3},"params":{"source_dependency":{"id":200,"type":2}}},
+    {"time":"1034","type":3,"phase":0,"source":{"id":3000,"type":3},"params":{"source_dependency":{"id":300,"type":2}}},
+
+    {"time":"1004","type":5,"phase":2,"source":{"id":5000,"type":20},"params":{"ip_endpoint":"93.184.216.34:443","source_dependency":{"id":1000,"type":3}}},
+    {"time":"1024","type":5,"phase":2,"source":{"id":5001,"type":20},"params":{"ip_endpoint":"203.0.113.5:443","source_dependency":{"id":2000,"type":3}}},
+
+    {"time":"1004","type":50,"phase":0,"source":{"id":6000,"type":8},"params":{"source_dependency":{"id":100,"type":2},"host":"www.example.com","port":443}},
+    {"time":"1010","type":50,"phase":1,"source":{"id":6000,"type":8},"params":{}},
+
+    {"time":"1100","type":0,"phase":1,"source":{"id":1,"type":1},"params":{}},
+    {"time":"1200","type":0,"phase":1,"source":{"id":2,"type":1},"params":{}},
+    {"time":"1300","type":0,"phase":1,"source":{"id":3,"type":1},"params":{}},
+    {"time":"1400","type":0,"phase":1,"source":{"id":4,"type":1},"params":{}},
+
+    {"time":"2000","type":32,"phase":0,"source":{"id":7000,"type":15},"params":{"host":"www.example.com"}},
+    {"time":"2100","type":32,"phase":1,"source":{"id":7000,"type":15},"params":{}},
+
+    {"time":"3000","type":1,"phase":0,"source":{"id":8000,"type":4},"params":{"host":"www.example.com"}},
+    {"time":"3100","type":1,"phase":1,"source":{"id":8000,"type":4},"params":{}},
+
+    {"time":"4000","type":1,"phase":0,"source":{"id":9000,"type":25},"params":{"hostname":"www.example.com"}},
+    {"time":"4100","type":1,"phase":1,"source":{"id":9000,"type":25},"params":{}},
+    {"time":"4000","type":1,"phase":0,"source":{"id":9001,"type":25},"params":{"hostname":"cdn.example.net"}},
+    {"time":"4100","type":1,"phase":1,"source":{"id":9001,"type":25},"params":{}},
+
+    {"time":"5000","type":3,"phase":0,"source":{"id":10000,"type":19},"params":{"address":"8.8.8.8:53","source_dependency":{"id":9000,"type":25}}}
+  ],
+  "polledData": {
+    "hostResolverInfo": {
+      "cache": {
+        "capacity": 100,
+        "network_changes": 1,
+        "entries": [
+          {"hostname":"www.example.com","address_family":1,"addresses":["93.184.216.34"],"ttl":300,"expiration":"1329002000000","network_anonymization_key":"example.com","network_changes":0},
+          {"hostname":"cdn.example.net","address_family":1,"addresses":["203.0.113.5"],"ttl":120,"expiration":"1329001500000","network_anonymization_key":"example.net","network_changes":0},
+          {"hostname":"fail.example.com","address_family":1,"error":-105,"ttl":0,"expiration":"1329001000000","network_changes":0}
+        ]
+      }
+    },
+    "spdySessionInfo": [
+      {"source_id":7000,"host_port_pair":"www.example.com:443","proxy":"direct","aliases":["cdn.example.net","static.example.com"],"active_streams":3,"max_concurrent_streams":100,"negotiated_protocol":"h2"}
+    ],
+    "quicInfo": {
+      "sessions": [
+        {"source_id":7100,"host":"www.example.com","aliases":["api.example.com"],"active_streams":1}
+      ]
+    }
+  }
+}
