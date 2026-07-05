@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from ..config import Config, GlobalConfig, SiteConfig
+from ..config import Config, GlobalConfig, SiteConfig, load_config
 from ..utils import logger, ensure_dir, setup_logging
 from .mihomo import MihomoManager
 from .tshark import start_tshark, stop_tshark
@@ -137,3 +137,30 @@ def _cleanup(mihomo_proc, active_procs=None):
     if mihomo_proc and mihomo_proc.poll() is None:
         mihomo_proc.terminate()
         mihomo_proc.wait(timeout=10)
+
+
+def main():
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="TrafficTracer Capture Pipeline",
+    )
+    parser.add_argument("--config", "-c", required=True,
+                        help="Path to YAML config file")
+    parser.add_argument("--only", "-o",
+                        help="Only capture this domain")
+    args = parser.parse_args()
+
+    try:
+        config = load_config(args.config)
+    except Exception as e:
+        print(f"Error loading config: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    session_dir = run_capture(config, only_domain=args.only)
+    print(f"Capture session saved to: {session_dir}")
+
+
+if __name__ == "__main__":
+    main()
