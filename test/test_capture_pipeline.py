@@ -2,12 +2,10 @@
 
 import sys
 import os
-import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.config import (
-    load_config, Config, GlobalConfig, MihomoConfig, ChromeConfig,
-    NetworkConfig, OutputConfig, SiteConfig,
+    Config, GlobalConfig, OutputConfig, SiteConfig,
 )
 
 
