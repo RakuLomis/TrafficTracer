@@ -78,6 +78,14 @@ def _find_matching_mihomo(
             continue
         m_src = mconn.connect.src
         m_dst = mconn.connect.dst
+        if netlog_src == m_src and netlog_dst == m_dst:
+            return mconn
+
+    for conn_id, mconn in mihomo_conns.items():
+        if mconn.connect is None:
+            continue
+        m_src = mconn.connect.src
+        m_dst = mconn.connect.dst
         if netlog_src == m_src or netlog_src == m_dst:
             return mconn
         if netlog_dst == m_src or netlog_dst == m_dst:

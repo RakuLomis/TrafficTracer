@@ -51,6 +51,41 @@ def test_correlate_matching():
     assert result.flows[0].post_proxy.dst_port == 443
 
 
+def test_correlate_connect_only():
+    netlog_conns = [
+        DomainConnections(
+            name="https://direct.example.com",
+            site="https://direct.example.com",
+            relation="same_site",
+            five_tuples=[
+                FiveTupleData("10.0.0.1", 40000, "93.184.216.34", 80, "tcp"),
+            ],
+        ),
+    ]
+
+    mihomo_conns = {
+        "conn-2": MihomoConnection(
+            conn_id="conn-2",
+            connect=TcpConnect(
+                ts="", conn_id="conn-2",
+                src="10.0.0.1:40000", dst="93.184.216.34:80",
+                host="direct.example.com",
+            ),
+            proxy_dial=None,
+            close=None,
+        ),
+    }
+
+    result = correlate(netlog_conns, mihomo_conns, "direct.example.com")
+    assert len(result.flows) == 1
+    assert result.flows[0].pre_proxy.src_ip == "10.0.0.1"
+    assert result.flows[0].pre_proxy.src_port == 40000
+    assert result.flows[0].post_proxy.src_ip == ""
+    assert result.flows[0].post_proxy.src_port == 0
+    assert result.flows[0].post_proxy.dst_ip == "93.184.216.34"
+    assert result.flows[0].post_proxy.dst_port == 80
+
+
 def test_correlate_no_match():
     netlog_conns = [
         DomainConnections(
@@ -80,5 +115,6 @@ def test_correlate_no_match():
 
 if __name__ == "__main__":
     test_correlate_matching()
+    test_correlate_connect_only()
     test_correlate_no_match()
     print("\n✓ All correlator tests passed!")
