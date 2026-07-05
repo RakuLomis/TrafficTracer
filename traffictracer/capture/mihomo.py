@@ -19,9 +19,10 @@ class MihomoManager:
         self.api_url = api_url.rstrip("/")
 
     def start(self) -> subprocess.Popen:
-        logger.info("Starting Mihomo: %s -f %s", self.binary, self.config_path)
+        config_dir = str(Path(self.config_path).parent)
+        logger.info("Starting Mihomo: %s -d %s", self.binary, config_dir)
         proc = subprocess.Popen(
-            [self.binary, "-f", self.config_path],
+            [self.binary, "-d", config_dir],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

@@ -1,0 +1,20 @@
+global:
+  mihomo:
+    binary: /data/ytluo/projects/mihomo/bin/mihomo-linux-amd64
+    config: /tmp/mihomo-test/config.yaml
+    api: "http://127.0.0.1:9099"
+  chrome:
+    binary: /tmp/chrome-wrapper.sh
+    user_data_dir: /tmp/chrome-profile-tt
+    headless: true
+  network:
+    tun_interface: utun
+    phys_interface: eno1
+  output:
+    base_dir: /data/datasets/ttTest-0705
+
+sites:
+  - domain: bilibili.com
+    url: "https://www.bilibili.com"
+    wait: 15
+    traffic_type: video-mainpage
