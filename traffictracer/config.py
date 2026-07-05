@@ -12,7 +12,6 @@ class MihomoConfig:
     binary: str = "mihomo"
     config: str = ""
     api: str = "http://127.0.0.1:9090"
-    tracing_log: str = ""
 
 
 @dataclass
@@ -71,7 +70,6 @@ def load_config(path: str) -> Config:
         binary=m.get("binary", "mihomo"),
         config=m.get("config", ""),
         api=m.get("api", "http://127.0.0.1:9090"),
-        tracing_log=m.get("tracing_log", ""),
     )
 
     c = g.get("chrome", {})

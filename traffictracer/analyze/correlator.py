@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from .netlog import FiveTupleData, DomainConnections
+from .netlog import FiveTupleData, DomainConnections, _parse_addr
 from .mihomo_log import MihomoConnection
 
 
@@ -94,23 +94,3 @@ def _find_matching_mihomo(
     return None
 
 
-def _parse_addr(addr: str) -> tuple[str, int]:
-    if not addr:
-        return ("", 0)
-    if addr.startswith("["):
-        idx = addr.rfind("]:")
-        if idx == -1:
-            return ("", 0)
-        host = addr[1:idx]
-        port_str = addr[idx + 2:]
-    else:
-        idx = addr.rfind(":")
-        if idx == -1:
-            return (addr, 0)
-        host = addr[:idx]
-        port_str = addr[idx + 1:]
-    try:
-        port = int(port_str)
-    except ValueError:
-        return (host, 0)
-    return (host, port)

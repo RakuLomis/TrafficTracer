@@ -27,11 +27,12 @@ def run_analysis(session_dir: str) -> str:
     all_correlations: dict[str, list[dict]] = {}
 
     trace_files = sorted(logs_dir.glob("mihomo_trace_*.jsonl"))
+    mihomo_conns: dict = {}
     if trace_files:
-        mihomo_conns = parse_tracing_log(str(trace_files[0]))
+        for tf in trace_files:
+            mihomo_conns.update(parse_tracing_log(str(tf)))
     else:
         logger.warning("No Mihomo trace files found in %s", logs_dir)
-        mihomo_conns = {}
 
     for domain_dir in sorted(captures_dir.iterdir()):
         if not domain_dir.is_dir():
