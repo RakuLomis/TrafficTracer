@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 id="session-title">Session</h2>
+
+<div id="session-content">Loading...</div>
+
+<div id="log-section" style="margin-top:24px">
+    <h3>Live Log</h3>
+    <div id="log-panel" class="log-panel" style="height:200px"></div>
+</div>
+
+<script>
+const path = window.location.pathname;
+const sessionId = path.split('/').pop();
+
+fetch('/api/session/' + sessionId).then(r => r.json()).then(s => {
+    const st = s.stats || {};
+    const tunKb = Math.round((st.tun_pcap_bytes || 0) / 1024);
+    const physKb = Math.round((st.phys_pcap_bytes || 0) / 1024);
+    const badge = s.status === 'analyzed' ? 'badge-green' : s.status === 'captured' ? 'badge-yellow' : 'badge-red';
+
+    let html = `
+        <p><strong>ID:</strong> ${s.id}</p>
+        <p><strong>Status:</strong> <span class="badge ${badge}">${s.status}</span></p>
+        <p><strong>Path:</strong> <code>${s.path}</code></p>
+        <h3>File Sizes</h3>
+        <table>
+            <tr><th>TUN pcap</th><td>${tunKb} KB</td></tr>
+            <tr><th>Phys pcap</th><td>${physKb} KB</td></tr>
+            <tr><th>NetLog</th><td>${Math.round((st.netlog_bytes || 0) / 1024)} KB</td></tr>
+            <tr><th>Mihomo Trace</th><td>${Math.round((st.trace_bytes || 0) / 1024)} KB</td></tr>
+            <tr><th>Total Flows</th><td>${st.total_flows || '-'}</td></tr>
+            <tr><th>Subdomains</th><td>${(st.subdomains || []).join(', ') || '-'}</td></tr>
+        </table>
+    `;
+
+    if (s.correlation) {
+        html += '<h3>Correlation Results</h3>';
+        const domains = Object.keys(s.correlation);
+        domains.forEach(domain => {
+            const flows = s.correlation[domain];
+            html += `<h4>${domain} (${flows.length} flows)</h4>`;
+            html += '<table><thead><tr><th>Name</th><th>Relation</th><th>Pre-Proxy</th><th>Post-Proxy</th></tr></thead><tbody>';
+            flows.forEach(f => {
+                const pre = f.pre_proxy || {};
+                const post = f.post_proxy || {};
+                html += `<tr>
+                    <td>${f.name || '?'}</td>
+                    <td>${f.relation || ''}</td>
+                    <td><code>${pre.src || '?'} → ${pre.dst || '?'}</code></td>
+                    <td><code>${post.src || '?'} → ${post.dst || '?'}</code></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+        });
+    } else if (s.status !== 'empty') {
+        html += `<br><button onclick="runAnalysis()">Run Analysis</button>`;
+    }
+
+    document.getElementById('session-content').innerHTML = html;
+    document.getElementById('session-title').textContent = 'Session: ' + s.id;
+});
+
+function runAnalysis() {
+    fetch('/api/session/' + sessionId + '/analyze', {method: 'POST'}).then(r => r.json()).then(resp => {
+        const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+        startLogStream(wsUrl + '/api/session/' + sessionId + '/log', 'log-panel');
+        setTimeout(() => location.reload(), 3000);
+    });
+}
+</script>
+{% endblock %}
