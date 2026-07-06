@@ -238,22 +238,70 @@ for domain, flows in data.items():
 
 ### Dashboard
 
-A web UI for managing captures without CLI commands.
+A web UI for managing the full TrafficTracer workflow: configure target sites, run one-click captures with live log streaming, browse session history, and explore correlation results — without CLI commands.
+
+#### Starting the Dashboard
 
 ```bash
-# Install dashboard dependency
+# Install dependency (one-time)
 pip install fastapi uvicorn
 
 # Start dashboard
 cd TrafficTracer
 python dashboard/server.py
-# or: python -m uvicorn dashboard.server:app --host 127.0.0.1 --port 5080
+# Dashboard:   http://127.0.0.1:5080
 ```
 
-Then open `http://127.0.0.1:5080` in browser:
-- **Config** — edit sites.yaml, save, and run capture with live log
-- **Sessions** — browse capture history, view stats and correlation results
-- **Session detail** — per-flow pre/post proxy 5-tuples, run analysis
+#### Complete Workflow
+
+The dashboard works alongside **metacubexd** (proxy management) and the **mihomo-TrafficTracer** binary:
+
+```
+metacubexd (:9099/ui)                  TrafficTracer Dashboard (:5080)
+───────────────────────                 ────────────────────────────────
+1. Select proxy node                    3. Edit target sites in Config
+2. Verify TUN + proxy work              4. Click [Run Capture] → live log
+                                           → session auto-created
+                                        5. Open Sessions → click session
+                                        6. View stats + correlation table
+                                           Click [Run Analysis] if needed
+```
+
+**Step-by-step:**
+
+```bash
+# 1. Start mihomo with TUN mode + proxy config (if not already running)
+/path/to/mihomo-linux-amd64 -d /path/to/mihomo-config-dir &
+
+# 2. Open metacubexd to select proxy node & verify TUN
+#    http://127.0.0.1:9099/ui
+
+# 3. Start TrafficTracer Dashboard
+cd TrafficTracer && python dashboard/server.py
+
+# 4. Open http://127.0.0.1:5080
+#    Config tab → edit sites.yaml → [Save Config] → [Run Capture]
+
+# 5. After capture completes, go to Sessions → click session → view results
+```
+
+#### Pages
+
+| Page | URL | Description |
+|------|-----|-------------|
+| **Config** | `/config` | Edit sites.yaml form, save, and start captures with real-time log |
+| **Sessions** | `/sessions` | History list with status badges, pcap sizes, flow counts |
+| **Session Detail** | `/session/<id>` | File sizes, flow statistics, pre/post proxy correlation table, [Run Analysis] button |
+
+#### Pre-Flight Checklist
+
+Before running a capture from the dashboard, ensure:
+
+- [ ] Mihomo is running in TUN mode (`ip link show utun` shows the device)
+- [ ] Proxy connectivity works (`curl -x http://127.0.0.1:7890 https://www.google.com`)
+- [ ] Chrome binary is configured correctly in Config (use wrapper if extracted from .deb without suid)
+- [ ] Output base directory exists and is writable
+- [ ] `tshark` has capture capability (`getcap $(which tshark)` shows `cap_net_raw`)
 
 ## Mihomo Proxy Operations
 
