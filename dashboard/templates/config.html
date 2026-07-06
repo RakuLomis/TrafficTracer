@@ -27,6 +27,69 @@
   <button type="submit">Save Config</button>
 </form>
 
+<br>
+<h3>Capture</h3>
+<div>
+    <label>Single site (optional): </label>
+    <input id="only-domain" placeholder="e.g. bilibili.com" style="width:200px">
+    <button id="capture-btn" onclick="startCapture()">Run Capture</button>
+    <span id="capture-status"></span>
+</div>
+<div style="margin-top:16px">
+    <div id="capture-log" class="log-panel" style="height:300px"></div>
+</div>
+
+<script>
+function startCapture() {
+    const only = document.getElementById('only-domain').value || null;
+    const btn = document.getElementById('capture-btn');
+    btn.disabled = true;
+    btn.textContent = 'Capturing...';
+    document.getElementById('capture-status').innerHTML = '<span class="badge badge-yellow">running</span>';
+
+    fetch('/api/capture/start', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({only: only})
+    }).then(r => r.json()).then(data => {
+        const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+        const panel = document.getElementById('capture-log');
+        panel.innerHTML = '';
+
+        const ws = new WebSocket(wsUrl + '/api/capture/' + data.session_id + '/log');
+        ws.onmessage = (e) => {
+            const d = JSON.parse(e.data);
+            const line = document.createElement('div');
+            let cls = 'log-info';
+            if (d.line.includes('[WARNING') || d.line.includes('[WARN')) cls = 'log-warn';
+            if (d.line.includes('[ERROR')) cls = 'log-error';
+            line.className = cls;
+            line.textContent = d.line;
+            panel.appendChild(line);
+            panel.scrollTop = panel.scrollHeight;
+        };
+        ws.onclose = () => {
+            document.getElementById('capture-status').innerHTML = '<span class="badge badge-green">done</span>';
+            btn.disabled = false;
+            btn.textContent = 'Run Capture';
+            const line = document.createElement('div');
+            line.className = 'log-info';
+            line.textContent = '--- Capture complete. Check Sessions page for results. ---';
+            panel.appendChild(line);
+        };
+        ws.onerror = () => {
+            document.getElementById('capture-status').innerHTML = '<span class="badge badge-red">error</span>';
+            btn.disabled = false;
+            btn.textContent = 'Run Capture';
+        };
+    }).catch(() => {
+        document.getElementById('capture-status').innerHTML = '<span class="badge badge-red">error</span>';
+        btn.disabled = false;
+        btn.textContent = 'Run Capture';
+    });
+}
+</script>
+
 <script>
 function addSiteRow() {
     const tbody = document.querySelector('#sites-table tbody');
