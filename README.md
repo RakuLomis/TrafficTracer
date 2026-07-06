@@ -236,6 +236,25 @@ for domain, flows in data.items():
 - **post_proxy** — traffic leaving the physical NIC (real machine IP)
 - **relation** — `same_site` (main domain) or `cross_site` (third-party sub-resources)
 
+### Dashboard
+
+A web UI for managing captures without CLI commands.
+
+```bash
+# Install dashboard dependency
+pip install fastapi uvicorn python-multipart
+
+# Start dashboard
+cd TrafficTracer
+python dashboard/server.py
+# or: python -m uvicorn dashboard.server:app --host 127.0.0.1 --port 5080
+```
+
+Then open `http://127.0.0.1:5080` in browser:
+- **Config** — edit sites.yaml, save, and run capture with live log
+- **Sessions** — browse capture history, view stats and correlation results
+- **Session detail** — per-flow pre/post proxy 5-tuples, run analysis
+
 ## Mihomo Proxy Operations
 
 The capture pipeline automatically starts and stops mihomo. This section explains how to manage mihomo manually for testing, debugging, or custom workflows.
