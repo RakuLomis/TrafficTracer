@@ -71,9 +71,54 @@ make  # or go build
 
 ## Quick Start
 
-### 1. Write a config file
+A minimal working example — capture bilibili.com traffic and run correlation.
 
-Copy the example and fill in your environment:
+### 1. Prepare Mihomo config
+
+Mihomo must be configured with proxy rules, TUN mode, and tracing. Start from your existing proxy config:
+
+```bash
+mkdir -p /tmp/mihomo-test
+
+# Use your proxy config as the base (proxies, rules, DNS, etc.)
+cp ~/data/tools/mihomo-config.yaml /tmp/mihomo-test/config.yaml
+
+# Copy geodata files so mihomo doesn't try to download them
+cp /path/to/existing/mihomo/geosite.dat /tmp/mihomo-test/
+cp /path/to/existing/mihomo/geoip.dat   /tmp/mihomo-test/
+cp /path/to/existing/mihomo/geoip.metadb /tmp/mihomo-test/
+
+# Append TUN + tracing sections
+cat >> /tmp/mihomo-test/config.yaml << 'EOF'
+tun:
+  enable: true
+  stack: gvisor
+  device: utun
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack:
+    - any:53
+
+experimental:
+  tracing: true
+EOF
+
+# Grant TUN capability (one-time)
+sudo setcap cap_net_admin+eip /path/to/mihomo-linux-amd64
+
+# Validate
+/path/to/mihomo-linux-amd64 -t -d /tmp/mihomo-test
+# Expected: configuration file ... test is successful
+```
+
+Key config fields that matter:
+- `mixed-port: 7890` — HTTP/SOCKS proxy port (Chrome will connect here in non-TUN setups)
+- `external-controller: 127.0.0.1:9099` — REST API port (pipeline uses this for tracing)
+- `tun.enable: true` + `tun.stack: gvisor` — TUN virtual NIC
+- `experimental.tracing: true` — required by TrafficTracer branch
+- In the `rules:` section, your target domain (e.g. bilibili.com) should route to `DIRECT` for domestic sites
+
+### 2. Write sites.yaml
 
 ```bash
 cp sites.example.yaml sites.yaml
@@ -84,36 +129,39 @@ Edit `sites.yaml`:
 ```yaml
 global:
   mihomo:
-    binary: /path/to/mihomo              # compiled from TrafficTracer branch
-    config: /path/to/mihomo.yaml         # TUN mode config with tracing: true
-    api: "http://127.0.0.1:9090"
+    binary: /data/ytluo/projects/mihomo/bin/mihomo-linux-amd64
+    config: /tmp/mihomo-test/config.yaml
+    api: "http://127.0.0.1:9099"
   chrome:
     binary: google-chrome
     user_data_dir: /tmp/chrome-profile
-    headless: false                       # set true for headless server
+    headless: true
   network:
-    tun_interface: utun                   # TUN virtual NIC name
-    phys_interface: eth0                  # physical NIC name
+    tun_interface: utun
+    phys_interface: eno1
   output:
-    base_dir: ./output
+    base_dir: /data/datasets/ttTest-0705
 
 sites:
   - domain: bilibili.com
     url: "https://www.bilibili.com"
-    wait: 10
-    traffic_type: all
-  - domain: youtube.com
-    url: "https://www.youtube.com"
     wait: 15
-    traffic_type: tcp
+    traffic_type: video-mainpage
 ```
 
-### 2. Run capture
+> **Chrome without sudo:** If you extracted Chrome from a `.deb` without installing, create a wrapper (`--no-sandbox` required):
+> ```bash
+> echo '#!/bin/bash
+> exec /tmp/chrome-extract/opt/google/chrome/chrome --no-sandbox "$@"' > /tmp/chrome-wrapper.sh
+> chmod +x /tmp/chrome-wrapper.sh
+> ```
+> Then set `binary: /tmp/chrome-wrapper.sh` in sites.yaml.
+
+### 3. Run capture
+
+The pipeline starts mihomo (TUN mode), enables tracing, captures on both interfaces, launches Chrome, waits, then stops everything.
 
 ```bash
-# Capture all sites in config
-python capture.py --config sites.yaml
-
 # Capture a single site
 python capture.py --config sites.yaml --only bilibili.com
 ```
@@ -121,41 +169,55 @@ python capture.py --config sites.yaml --only bilibili.com
 This produces a session directory:
 
 ```
-output/
-  2025-07-05_14-30-00/
-    captures/
-      bilibili.com/
-        tun.pcap              # raw TUN interface capture
-        phys.pcap             # raw physical interface capture
-    logs/
-      netlog_bilibili.com.json   # Chrome NetLog
-      mihomo_trace_bilibili.com.jsonl  # Mihomo tracing log
-```
-
-### 3. Run analysis
-
-```bash
-python analyze.py --session output/2025-07-05_14-30-00/
-```
-
-This enriches the session with:
-
-```
-output/2025-07-05_14-30-00/
+output/2026-07-05_21-45-51/
   captures/
     bilibili.com/
-      flows/                       # per-flow filtered pcaps
-        bilibili.com/
-          www.bilibili.com/
-            pre_proxy.pcap         # traffic before proxy
-            post_proxy.pcap        # traffic after proxy
-  results/
-    correlation.json               # full correlation table
+      tun.pcap              # raw TUN interface capture (pre-proxy)
+      phys.pcap             # raw physical interface capture (post-proxy)
+  logs/
+    netlog_bilibili.com.json          # Chrome NetLog
+    mihomo_trace_bilibili.com.jsonl   # Mihomo connection trace (JSONL)
 ```
 
-### 4. Read correlation results
+> **Note:** If your terminal loses connectivity when TUN mode activates (all traffic redirects through TUN), see [Handling TUN auto-route](#handling-tun-auto-route).
 
-`correlation.json` maps each domain's connections to their pre- and post-proxy 5-tuples:
+### 4. Run analysis
+
+```bash
+python analyze.py --session output/2026-07-05_21-45-51/
+```
+
+This enriches the session with per-flow pcaps and a correlation table:
+
+```
+session/
+  captures/bilibili.com/flows/
+    bilibili.com/
+      www.bilibili.com/
+        pre_proxy.pcap      # traffic entering proxy
+        post_proxy.pcap     # traffic leaving proxy
+      api.bilibili.com/
+        pre_proxy.pcap
+        post_proxy.pcap
+      ...
+  results/
+    correlation.json         # full correlation table
+```
+
+### 5. Read correlation results
+
+```bash
+python3 -c "
+import json
+with open('session/results/correlation.json') as f:
+    data = json.load(f)
+for domain, flows in data.items():
+    print(f'{domain}: {len(flows)} flows')
+"
+# bilibili.com: 17 flows
+```
+
+`correlation.json` maps each connection to its pre- and post-proxy 5-tuples:
 
 ```json
 {
@@ -163,11 +225,554 @@ output/2025-07-05_14-30-00/
     {
       "name": "https://www.bilibili.com",
       "relation": "same_site",
-      "pre_proxy": {"src": "127.0.0.1:51891", "dst": "127.0.0.1:7890", "proto": "tcp"},
-      "post_proxy": {"src": "192.168.1.100:41234", "dst": "1.2.3.4:443", "proto": "tcp"}
+      "pre_proxy":  {"src": "198.18.0.1:32772", "dst": "116.207.163.65:443"},
+      "post_proxy": {"src": "192.168.5.101:33188", "dst": "116.207.163.65:443"}
     }
   ]
 }
+```
+
+- **pre_proxy** — traffic seen on the TUN interface (fake-ip `198.18.0.1`)
+- **post_proxy** — traffic leaving the physical NIC (real machine IP)
+- **relation** — `same_site` (main domain) or `cross_site` (third-party sub-resources)
+
+## Mihomo Proxy Operations
+
+The capture pipeline automatically starts and stops mihomo. This section explains how to manage mihomo manually for testing, debugging, or custom workflows.
+
+### Configuring the proxy
+
+A mihomo config directory must contain:
+
+```
+/tmp/mihomo-test/
+├── config.yaml       # main config (ports, TUN, proxies, rules, tracing)
+├── geosite.dat       # domain categorization rules
+├── geoip.dat         # IP geo-location data
+└── geoip.metadb      # MaxMind GeoIP database
+```
+
+Key sections in `config.yaml`:
+
+```yaml
+# ——— Ports ———
+mixed-port: 7890                 # HTTP(S) + SOCKS5 proxy (Chrome connects here)
+external-controller: 127.0.0.1:9099  # REST API (tracing control)
+
+# ——— DNS ———
+dns:
+  enable: true
+  enhanced-mode: fake-ip         # returns 198.18.0.x for proxied domains
+  nameserver: [223.5.5.5, 119.29.29.29]
+  fallback: ['https://cloudflare-dns.com/dns-query', ...]
+
+# ——— Proxies ———
+proxies:
+  - { name: 'HK-BGP1', type: vless, server: ..., port: ..., uuid: ..., ... }
+  - { name: 'JP-Tokyo-01', type: vless, server: ..., port: ..., uuid: ..., ... }
+
+# ——— Proxy Groups ———
+proxy-groups:
+  - { name: '🚀 节点选择', type: select, proxies: ['♻️ Auto', 'HK-BGP1', ...] }
+  - { name: '🐟 漏网之鱼', type: select, proxies: ['🚀 节点选择', DIRECT] }
+
+# ——— Rules ———
+rules:
+  - DOMAIN-SUFFIX,bilibili.com,DIRECT    # domestic site → direct
+  - GEOIP,cn,DIRECT                       # China IP → direct
+  - MATCH,🐟 漏网之鱼                      # everything else → proxy
+
+# ——— TUN (traffic interception) ———
+tun:
+  enable: true
+  stack: gvisor                  # userspace TCP/IP stack (requires cap_net_admin)
+  device: utun                   # virtual NIC name
+  auto-route: true               # redirect all system traffic through TUN
+  auto-detect-interface: true    # auto-detect physical NIC
+  dns-hijack:
+    - any:53                     # intercept all DNS queries
+
+# ——— Tracing (TrafficTracer) ———
+experimental:
+  tracing: true
+```
+
+### Starting mihomo
+
+```bash
+# Start with a config directory (NOT -f for single file — geodata won't load)
+/path/to/mihomo-linux-amd64 -d /tmp/mihomo-test &
+
+# Wait for startup (~2-3 seconds for large configs)
+sleep 3
+```
+
+### Checking mihomo status
+
+```bash
+API="http://127.0.0.1:9099"
+
+# Version
+curl -s $API/version
+# {"meta":true,"version":"0897f41f"}
+
+# Current proxy node
+curl -s $API/proxies | python3 -c "import json,sys; d=json.load(sys.stdin);
+print(d['proxies']['GLOBAL']['now'])"
+
+# Tracing status
+curl -s $API/experimental/tracing
+# {"enabled":false}
+```
+
+### Selecting a proxy node
+
+```bash
+# List available proxies in a group
+curl -s $API/proxies | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+for k in d['proxies']['🚀 节点选择']['all']:
+    print(k)
+"
+
+# Switch to a specific node
+curl -s -X PUT $API/proxies/🚀%20节点选择 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"HK-BGP1"}'
+```
+
+### Testing proxy connectivity
+
+```bash
+# Test HTTP proxy directly
+curl -s -x http://127.0.0.1:7890 -o /dev/null -w "%{http_code}" \
+  --connect-timeout 5 https://www.google.com
+# Expected: 200 (or 302 redirect)
+
+# Test domestic site (should go DIRECT per rules)
+curl -s -x http://127.0.0.1:7890 -o /dev/null -w "%{http_code}" \
+  --connect-timeout 5 https://www.baidu.com
+# Expected: 200
+```
+
+### Enabling TUN mode
+
+TUN mode is configured in `config.yaml` at startup — it cannot be toggled at runtime. After starting mihomo with TUN enabled:
+
+```bash
+# Check TUN virtual NIC
+ip link show utun
+# utun: <POINTOPOINT,MULTICAST,NOARP,UP,LOWER_UP> ...
+
+# With auto-route:true, ALL system traffic goes through TUN.
+# Test connectivity through TUN:
+curl -so /dev/null -w "%{http_code}" https://www.baidu.com       # → 200 (DIRECT)
+curl -so /dev/null -w "%{http_code}" https://www.google.com      # → 200 (via proxy)
+curl -so /dev/null -w "%{http_code}" https://github.com          # → 200 (via proxy)
+```
+
+### Disabling TUN mode temporarily
+
+If you need mihomo as a regular proxy without TUN, remove the `tun:` and `experimental:` sections from the config and restart:
+
+```bash
+python3 -c "
+with open('/tmp/mihomo-test/config.yaml') as f:
+    lines = f.readlines()
+skip = False
+result = []
+for line in lines:
+    if line.startswith('tun:') or line.startswith('experimental:'):
+        skip = True; continue
+    if skip and line[0] not in (' ', '\t'):
+        skip = False
+    if not skip:
+        result.append(line)
+with open('/tmp/mihomo-test/config.yaml', 'w') as f:
+    f.writelines(result)
+"
+
+# Restart mihomo without TUN
+pkill mihomo-linux-amd64
+mihomo-linux-amd64 -d /tmp/mihomo-test &
+```
+
+### Stopping mihomo
+
+```bash
+# Graceful shutdown
+pkill mihomo-linux-amd64
+
+# Wait for TUN device cleanup
+sleep 2
+ip link show utun   # should show "Device not found"
+```
+
+### Tracing API (TrafficTracer-specific)
+
+```bash
+API="http://127.0.0.1:9099"
+
+# Enable tracing (writes JSONL events to file)
+curl -s -X PATCH $API/experimental/tracing \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"output":"/tmp/trace.jsonl"}'
+
+# ... run your traffic ...
+
+# Disable tracing (finalizes the file)
+curl -s -X PATCH $API/experimental/tracing \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false}'
+
+# Read trace
+head -3 /tmp/trace.jsonl
+# {"ts":"...","type":"tcp_connect","conn_id":"...","src":"198.18.0.1:48126","dst":"180.163.151.33:443"}
+# {"ts":"...","type":"tcp_proxy_dial","conn_id":"...","out_src":"192.168.5.101:51496","proxy_addr":"..."}
+# {"ts":"...","type":"tcp_close","conn_id":"...","bytes_up":...,"bytes_down":...,"duration_ms":...}
+```
+
+Each TCP connection produces three events: `tcp_connect` (client side), `tcp_proxy_dial` (proxy side), `tcp_close` (summary). These are cross-referenced with Chrome NetLog 5-tuples to produce the correlation table.
+
+### Handling TUN auto-route
+
+When `auto-route: true`, mihomo redirects **all** system traffic through the TUN interface. This means:
+
+- Your terminal/SSH sessions' new connections go through TUN
+- If mihomo is healthy (proxy chains working), everything works transparently
+- If you kill mihomo, TUN routing is removed and traffic falls back to the default gateway
+
+**If your session loses connectivity during TUN activation**, run capture commands as a background script:
+
+```bash
+# Write capture commands to a script
+cat > /tmp/capture.sh << 'EOF'
+# ... capture steps ...
+EOF
+
+# Run in background (survives TUN routing changes)
+nohup bash /tmp/capture.sh &>/tmp/capture.log &
+```
+
+**If you cannot tolerate TUN routing at all**, skip TUN and use explicit proxy mode:
+- Remove `tun:` and `experimental:` sections from config (see above)
+- Set `tun_interface: lo` in sites.yaml (capture loopback instead of TUN)
+- Chrome will use system proxy or `--proxy-server` to connect to `127.0.0.1:7890`
+
+## End-to-End Operation Guide
+
+This section documents a complete capture-and-correlation test session, including environment setup, proxy handling, and all commands executed.
+
+### Environment
+
+| Item | Value |
+|------|-------|
+| Physical NIC | `eno1` (10.201.22.219), also `wlp2s0` (192.168.5.101) |
+| Mihomo binary | `../mihomo/bin/mihomo-linux-amd64` (gvisor TUN, cap_net_admin=eip) |
+| Mihomo proxy config | `~/data/tools/mihomo-config.yaml` (9368 lines, VLESS/Hysteria2 proxies) |
+| Output base | `/data/datasets/ttTest-0705` |
+| Target | `www.bilibili.com`, 15s wait, traffic_type=video-mainpage |
+
+### Step 1: Prepare Mihomo TUN config
+
+Create a mihomo config directory with TUN mode, tracing, geodata files, and proxy rules.
+
+```bash
+# Create config directory
+mkdir -p /tmp/mihomo-test
+
+# Copy your full proxy config (proxies, proxy-groups, rules) as the base
+cp ~/data/tools/mihomo-config.yaml /tmp/mihomo-test/config.yaml
+
+# Copy geodata files from an existing mihomo installation
+cp /home/ytluo/.local/share/io.github.clash-verge-rev.clash-verge-rev/{geosite.dat,geoip.dat,Country.mmdb} /tmp/mihomo-test/
+cp /etc/mihomo/geoip.metadb /tmp/mihomo-test/
+
+# Append TUN and tracing sections to the config
+cat >> /tmp/mihomo-test/config.yaml << 'EOF'
+tun:
+  enable: true
+  stack: gvisor
+  device: utun
+  auto-route: true
+  auto-detect-interface: true
+  dns-hijack:
+    - any:53
+
+experimental:
+  tracing: true
+EOF
+```
+
+> **TUN requires `CAP_NET_ADMIN`.** Grant the capability:
+> ```bash
+> sudo setcap cap_net_admin+eip /path/to/mihomo-linux-amd64
+> # or with pkexec if sudo needs password:
+> pkexec setcap cap_net_admin+eip /path/to/mihomo-linux-amd64
+> ```
+
+> **Use `-d` (directory mode), not `-f` (single file).** When the config references geodata files, mihomo must run in directory mode so it can find `geoip.dat`, `geosite.dat`, `geoip.metadb` alongside `config.yaml`. The capture pipeline's `mihomo.py` has been updated accordingly.
+
+Validate the config:
+
+```bash
+mihomo-linux-amd64 -t -d /tmp/mihomo-test
+# Expected: configuration file /tmp/mihomo-test/config.yaml test is successful
+```
+
+### Step 2: Install Chrome (without sudo)
+
+If `dpkg -i` is unavailable, extract Chrome from the `.deb`:
+
+```bash
+wget --no-proxy -O /tmp/google-chrome.deb \
+  https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+
+mkdir -p /tmp/chrome-extract
+dpkg-deb -x /tmp/google-chrome.deb /tmp/chrome-extract
+
+# Chrome needs --no-sandbox when run without suid installation
+cat > /tmp/chrome-wrapper.sh << 'EOF'
+#!/bin/bash
+exec /tmp/chrome-extract/opt/google/chrome/chrome --no-sandbox "$@"
+EOF
+chmod +x /tmp/chrome-wrapper.sh
+
+# Verify
+/tmp/chrome-wrapper.sh --version
+# Google Chrome 150.0.7871.46
+```
+
+### Step 3: Write sites.yaml
+
+```yaml
+global:
+  mihomo:
+    binary: /data/ytluo/projects/mihomo/bin/mihomo-linux-amd64
+    config: /tmp/mihomo-test/config.yaml
+    api: "http://127.0.0.1:9099"
+  chrome:
+    binary: /tmp/chrome-wrapper.sh
+    user_data_dir: /tmp/chrome-profile-tt
+    headless: true
+  network:
+    tun_interface: utun
+    phys_interface: eno1
+  output:
+    base_dir: /data/datasets/ttTest-0705
+
+sites:
+  - domain: bilibili.com
+    url: "https://www.bilibili.com"
+    wait: 15
+    traffic_type: video-mainpage
+```
+
+### Step 4: Handle proxy environment
+
+The running opencode/terminal session may have `http_proxy=http://127.0.0.1:7897` inherited from `~/.bashrc`. When TUN mode activates, mihomo takes over routing — the old proxy address becomes dead.
+
+**Option A: Remove proxy from bashrc (recommended)**
+
+```bash
+# In ~/.bashrc, comment out:
+#export http_proxy=http://127.0.0.1:7897
+#export https_proxy=http://127.0.0.1:7897
+#export all_proxy=socks5://127.0.0.1:7897
+
+# Restart terminal session, verify direct connectivity:
+curl -s https://api.deepseek.com/v1/models
+# Expected: HTTP 401 (reachable without proxy)
+```
+
+**Option B: Port forwarding (if proxy cannot be removed)**
+
+```bash
+# Start mihomo on port 7890 first, then forward legacy 7897 → 7890
+python3 -c "
+import socket, select
+srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+srv.bind(('127.0.0.1', 7897))
+srv.listen(32)
+while True:
+    c, _ = srv.accept()
+    r = socket.create_connection(('127.0.0.1', 7890))
+    # ... bidirectional forward
+" &
+```
+
+### Step 5: Verify TUN mode connectivity
+
+Before running the full capture, confirm TUN mode routes traffic correctly:
+
+```bash
+# Start mihomo in background
+mihomo-linux-amd64 -d /tmp/mihomo-test &>/tmp/mihomo.log &
+sleep 3
+
+# Check API and TUN device
+curl -s http://127.0.0.1:9099/version
+ip link show utun
+
+# Connectivity test through TUN
+curl -so /dev/null -w "%{http_code}" --connect-timeout 8 https://www.baidu.com     # → 200 (DIRECT)
+curl -so /dev/null -w "%{http_code}" --connect-timeout 8 https://www.bilibili.com  # → 200 (DIRECT)
+curl -so /dev/null -w "%{http_code}" --connect-timeout 8 https://www.google.com    # → 200 (via proxy)
+curl -so /dev/null -w "%{http_code}" --connect-timeout 8 https://github.com        # → 200 (via proxy)
+```
+
+All targets should respond. If any fail, check mihomo logs at `/tmp/mihomo.log`.
+
+### Step 6: Run capture
+
+Because TUN auto-route redirects all system traffic, in-line bash commands may time out. Use a **background capture script**:
+
+```bash
+cat > /tmp/capture_run.sh << 'SCRIPT'
+#!/bin/bash
+SESSION_DIR="/data/datasets/ttTest-0705/$(date +%Y-%m-%d_%H-%M-%S)"
+mkdir -p "$SESSION_DIR/captures/bilibili.com" "$SESSION_DIR/logs"
+
+# Enable mihomo tracing via API
+curl -s -X PATCH http://127.0.0.1:9099/experimental/tracing \
+  -H "Content-Type: application/json" \
+  -d "{\"enabled\":true,\"output\":\"$SESSION_DIR/logs/mihomo_trace_bilibili.com.jsonl\"}"
+
+# Start tshark on both interfaces
+tshark -i utun -w "$SESSION_DIR/captures/bilibili.com/tun.pcap" &>/dev/null &
+TUN_PID=$!
+tshark -i eno1 -w "$SESSION_DIR/captures/bilibili.com/phys.pcap" &>/dev/null &
+PHYS_PID=$!
+sleep 1
+
+# Launch Chrome with NetLog
+/tmp/chrome-wrapper.sh --headless=new --no-first-run --no-default-browser-check \
+  --user-data-dir=/tmp/chrome-profile-tt \
+  --log-net-log="$SESSION_DIR/logs/netlog_bilibili.com.json" \
+  "https://www.bilibili.com" &>/tmp/chrome.log &
+CHROME_PID=$!
+
+# Wait for page load + traffic
+sleep 15
+
+# Graceful shutdown
+kill $CHROME_PID 2>/dev/null && sleep 2
+kill -SIGTERM $TUN_PID $PHYS_PID 2>/dev/null && sleep 3
+
+# Disable tracing
+curl -s -X PATCH http://127.0.0.1:9099/experimental/tracing \
+  -H "Content-Type: application/json" -d '{"enabled":false}'
+
+echo "DONE: $SESSION_DIR"
+SCRIPT
+
+# Run in background to survive TUN routing activation
+nohup bash /tmp/capture_run.sh &>/tmp/capture_output.log &
+```
+
+After ~25 seconds, check results:
+
+```bash
+cat /tmp/capture_output.log
+# DONE: /data/datasets/ttTest-0705/2026-07-05_21-45-51
+```
+
+### Step 7: Fix truncated NetLog (if needed)
+
+When Chrome is killed with SIGTERM, `--log-net-log` may produce truncated JSON. Fix it:
+
+```bash
+python3 -c "
+path = 'SESSION_DIR/logs/netlog_bilibili.com.json'
+with open(path) as f:
+    data = f.read()
+fixed = data.rstrip().rstrip(',') + '\n]}\n'
+with open(path, 'w') as f:
+    f.write(fixed)
+"
+```
+
+### Step 8: Run analysis
+
+```bash
+cd /data/ytluo/projects/TrafficTracer
+python3 analyze.py --session SESSION_DIR
+```
+
+### Step 9: Verify output
+
+```bash
+SESSION=SESSION_DIR
+
+# Check file structure
+find $SESSION -type f | sort
+
+# View correlation summary
+python3 -c "
+import json
+with open('$SESSION/results/correlation.json') as f:
+    data = json.load(f)
+for domain, flows in data.items():
+    print(f'{domain}: {len(flows)} flows')
+    for f in flows[:2]:
+        pre = f['pre_proxy']
+        post = f['post_proxy']
+        print(f'  [{f[\"relation\"]}] {f[\"name\"]}')
+        print(f'    pre:  {pre[\"src\"]} -> {pre[\"dst\"]}')
+        print(f'    post: {post[\"src\"]} -> {post[\"dst\"]}')
+"
+```
+
+Expected output:
+
+```
+bilibili.com: 17 flows correlated across 6 subdomains:
+  - https://www.bilibili.com       (main page)
+  - https://api.bilibili.com       (API server)
+  - https://data.bilibili.com      (analytics)
+  - https://i0.hdslb.com           (static CDN)
+  - https://s1.hdslb.com           (static CDN)
+  - https://impression.biligame.com (ad/tracking)
+```
+
+### Step 10: Restore system state
+
+```bash
+# Kill TUN mihomo
+pkill -f "mihomo-linux-amd64"
+
+# Restore regular proxy (if applicable)
+/usr/bin/verge-mihomo -d ~/.local/share/io.github.clash-verge-rev.clash-verge-rev \
+  -f ~/.local/share/io.github.clash-verge-rev.clash-verge-rev/clash-verge.yaml \
+  -ext-ctl-unix /tmp/verge/verge-mihomo.sock &>/dev/null &
+
+# Optional: re-enable proxy in ~/.bashrc
+```
+
+### Key Files Produced
+
+```
+SESSION_DIR/
+├── captures/
+│   └── bilibili.com/
+│       ├── tun.pcap              # raw TUN interface (pre-proxy traffic)
+│       ├── phys.pcap             # raw physical interface (post-proxy traffic)
+│       └── flows/
+│           └── bilibili.com/
+│               ├── www.bilibili.com/
+│               │   ├── pre_proxy.pcap
+│               │   └── post_proxy.pcap
+│               ├── api.bilibili.com/
+│               │   ├── pre_proxy.pcap
+│               │   └── post_proxy.pcap
+│               └── ...
+├── logs/
+│   ├── mihomo_trace_bilibili.com.jsonl   # Mihomo connection trace (JSONL)
+│   └── netlog_bilibili.com.json          # Chrome NetLog (JSON)
+└── results/
+    └── correlation.json                  # full correlation table
 ```
 
 ## Configuration Reference
@@ -311,14 +916,35 @@ python test/test_parser.py
 **Chrome fails to start with "user data directory is already in use"**
 Kill any lingering Chrome processes and try again, or use a different `user_data_dir`.
 
+**Chrome needs `--no-sandbox` (extracted from .deb without suid)**
+Use a wrapper script: `exec /path/to/chrome --no-sandbox "$@"`. This is safe for headless testing on trusted machines.
+
 **tshark "Permission denied"**
 Run `sudo setcap cap_net_raw,cap_net_admin=eip $(which tshark)` or use `sudo`.
 
 **Mihomo API unreachable**
-Verify the `external-controller` address in your Mihomo config matches `api` in `sites.yaml`.
+Verify the `external-controller` address in your Mihomo config matches `api` in `sites.yaml`. Also ensure the mihomo process had enough time to start (at least 2-3 seconds for configs with many proxy groups).
+
+**Mihomo TUN creation fails: "operation not permitted"**
+The mihomo binary needs `CAP_NET_ADMIN`: `sudo setcap cap_net_admin+eip /path/to/mihomo-linux-amd64`.
+
+**Mihomo hangs on startup with `-f` flag**
+When the config references geodata files (GeoIP, GeoSite), use `-d <config_dir>` instead of `-f <config_file>`. The `-d` flag tells mihomo to look for `geoip.dat`, `geosite.dat`, `geoip.metadb` in the same directory as `config.yaml`. The capture pipeline's `mihomo.py` automatically derives the directory from the config path.
+
+**Bash commands time out when TUN mode activates**
+`auto-route: true` redirects all system traffic through the TUN interface. In-line bash calls may lose connectivity during the transition. Run capture as a background script (`nohup bash script.sh &`) and check the log file afterwards.
+
+**Chrome NetLog JSON is truncated**
+When Chrome is killed with SIGTERM, `--log-net-log` may produce incomplete JSON (missing closing `]}`). Fix by appending: `fixed = data.rstrip().rstrip(',') + '\n]}\n'`.
+
+**Mihomo can't download geodata files on startup**
+Without proxy, mihomo cannot reach GitHub to download `geoip.metadb` or `geosite.dat`. Copy these files from an existing mihomo installation into the config directory before starting.
 
 **Analysis produces empty correlation**
-Check that the Mihomo trace file contains `tcp_connect` events with `src`/`dst` matching the NetLog 5-tuples. The capture must use TUN mode with `tracing: true`.
+Check that the Mihomo trace file contains `tcp_connect` events with `src`/`dst` matching the NetLog 5-tuples. The capture must use TUN mode with `tracing: true`. Also verify that the NetLog JSON is well-formed (not truncated).
+
+**OpenCode API calls fail after killing old proxy**
+If opencode inherits `http_proxy=http://127.0.0.1:7897` from the shell, and that proxy is stopped, API calls will fail. Either remove the proxy env vars from `~/.bashrc` (if the API is directly reachable), or use port forwarding to bridge the old proxy port to the new one.
 
 ---
 
