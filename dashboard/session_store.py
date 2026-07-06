@@ -2,7 +2,6 @@
 
 from pathlib import Path
 import json
-import os
 
 
 def list_sessions(base_dir: str) -> list[dict]:
@@ -52,28 +51,28 @@ def get_session(base_dir: str, session_id: str) -> dict | None:
 
 def _session_stats(d: Path) -> dict:
     """Collect file sizes and flow counts for a session."""
-    stats = {"tun_pcap_bytes": 0, "phys_pcap_bytes": 0, "netlog_bytes": 0, "trace_bytes": 0, "total_flows": 0, "subdomains": []}
+    stats = {"tun_pcap_bytes": 0, "phys_pcap_bytes": 0, "netlog_bytes": 0,
+             "trace_bytes": 0, "total_flows": 0, "subdomains": []}
     caps_dir = d / "captures"
     logs_dir = d / "logs"
 
     for domain_dir in caps_dir.glob("*"):
-        if domain_dir.is_dir():
-            tun = domain_dir / "tun.pcap"
-            phys = domain_dir / "phys.pcap"
-            if tun.exists():
-                stats["tun_pcap_bytes"] += tun.stat().st_size
-            if phys.exists():
-                stats["phys_pcap_bytes"] += phys.stat().st_size
-            flows_dir = domain_dir / "flows"
-            if flows_dir.exists():
-                for subdomain_dir in flows_dir.glob("*/*"):
-                    if subdomain_dir.is_dir():
-                        stats["total_flows"] += 1
-                        stats["subdomains"].append(subdomain_dir.name)
-                        break
-                for subdomain_dir in flows_dir.glob("*/*"):
-                    if subdomain_dir.is_dir() and subdomain_dir.name not in stats["subdomains"]:
-                        stats["subdomains"].append(subdomain_dir.name)
+        if not domain_dir.is_dir():
+            continue
+        tun = domain_dir / "tun.pcap"
+        phys = domain_dir / "phys.pcap"
+        if tun.exists():
+            stats["tun_pcap_bytes"] += tun.stat().st_size
+        if phys.exists():
+            stats["phys_pcap_bytes"] += phys.stat().st_size
+        flows_dir = domain_dir / "flows"
+        if flows_dir.exists():
+            for pcap_file in flows_dir.rglob("*.pcap"):
+                subdomain_dir = pcap_file.parent
+                name = subdomain_dir.name
+                if name not in ("pre_proxy", "post_proxy"):
+                    stats["subdomains"].append(name)
+                    stats["total_flows"] += 1
 
     if logs_dir.exists():
         for f in logs_dir.glob("netlog_*.json"):
