@@ -242,7 +242,7 @@ A web UI for managing captures without CLI commands.
 
 ```bash
 # Install dashboard dependency
-pip install fastapi uvicorn python-multipart
+pip install fastapi uvicorn
 
 # Start dashboard
 cd TrafficTracer

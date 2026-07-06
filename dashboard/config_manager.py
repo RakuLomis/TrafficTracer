@@ -14,5 +14,7 @@ def load_config(path: str = DEFAULT_CONFIG_PATH) -> dict:
 
 def save_config(data: dict, path: str = DEFAULT_CONFIG_PATH) -> None:
     """Write dict back to sites.yaml, preserving structure."""
+    serialized = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    yaml.safe_load(serialized)
     with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        f.write(serialized)

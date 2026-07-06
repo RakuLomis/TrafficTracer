@@ -14,11 +14,16 @@ async def run_pipeline(ws_queue: asyncio.Queue, cmd: list[str], cwd: str | None 
         stderr=asyncio.subprocess.STDOUT,
         cwd=cwd,
     )
+    ws_queue._proc = proc
     async for line in proc.stdout:
         text = line.decode("utf-8", errors="replace").rstrip("\n")
         ws_queue.put_nowait({"line": text})
     await proc.wait()
-    ws_queue.put_nowait(None)  # signal end
+    if proc.returncode != 0:
+        ws_queue.put_nowait({"line": f"[ERROR] Process exited with code {proc.returncode}"})
+        ws_queue.put_nowait({"error": True, "code": proc.returncode})
+    else:
+        ws_queue.put_nowait(None)
 
 
 def run_capture(config_path: str, only_domain: str | None, cwd: str | None = None) -> asyncio.Queue:

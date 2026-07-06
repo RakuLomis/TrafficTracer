@@ -10,12 +10,12 @@ def list_sessions(base_dir: str) -> list[dict]:
     if not base.exists():
         return []
     sessions = []
-    for d in sorted(base.iterdir(), reverse=True):
+    for d in sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
         if not d.is_dir():
             continue
         sid = d.name
         stats = _session_stats(d)
-        status = _session_status(d, stats)
+        status = _session_status(d)
         sessions.append({
             "id": sid,
             "path": str(d),
@@ -31,7 +31,7 @@ def get_session(base_dir: str, session_id: str) -> dict | None:
     if not d.exists():
         return None
     stats = _session_stats(d)
-    status = _session_status(d, stats)
+    status = _session_status(d)
     correlation = None
     corr_path = d / "results" / "correlation.json"
     if corr_path.exists():
@@ -84,7 +84,7 @@ def _session_stats(d: Path) -> dict:
     return stats
 
 
-def _session_status(d: Path, stats: dict) -> str:
+def _session_status(d: Path) -> str:
     """Determine session status."""
     if (d / "results" / "correlation.json").exists():
         return "analyzed"

@@ -36,11 +36,6 @@ async def index():
     return RedirectResponse(url="/config")
 
 
-@app.get("/test-base")
-async def test_base(request: Request):
-    return templates.TemplateResponse(request, "base.html", {"content": "<p>OK</p>"})
-
-
 @app.get("/api/config")
 async def api_get_config():
     return load_config()
@@ -48,6 +43,8 @@ async def api_get_config():
 
 @app.put("/api/config")
 async def api_put_config(data: dict):
+    if "global" not in data or "sites" not in data:
+        return JSONResponse({"error": "missing required fields: global, sites"}, status_code=400)
     save_config(data)
     return {"ok": True}
 
@@ -81,7 +78,6 @@ async def api_session(session_id: str):
 
 @app.post("/api/capture/start")
 async def api_capture_start(data: dict):
-    cfg = load_config()
     config_path = data.get("config_path", str(ROOT / "sites.yaml"))
     only_domain = data.get("only")
     queue = run_capture(config_path, only_domain, cwd=str(ROOT))
@@ -104,11 +100,16 @@ async def ws_capture_log(websocket: WebSocket, session_id: str):
             if item is None:
                 await websocket.send_json({"line": "--- Capture complete ---"})
                 break
+            if isinstance(item, dict) and item.get("error"):
+                await websocket.send_json({"line": f"[ERROR] Capture failed with exit code {item['code']}"})
+                break
             await websocket.send_json(item)
     except asyncio.TimeoutError:
         await websocket.send_json({"line": "[ERROR] Timeout waiting for capture output"})
     except WebSocketDisconnect:
         pass
+    finally:
+        capture_queues.pop(session_id, None)
 
 
 @app.post("/api/session/{session_id}/analyze")
@@ -137,11 +138,16 @@ async def ws_session_log(websocket: WebSocket, session_id: str):
             if item is None:
                 await websocket.send_json({"line": "--- Analysis complete ---"})
                 break
+            if isinstance(item, dict) and item.get("error"):
+                await websocket.send_json({"line": f"[ERROR] Analysis failed with exit code {item['code']}"})
+                break
             await websocket.send_json(item)
     except asyncio.TimeoutError:
         await websocket.send_json({"line": "[ERROR] Timeout waiting for analysis output"})
     except WebSocketDisconnect:
         pass
+    finally:
+        analysis_queues.pop(session_id, None)
 
 
 @app.get("/session/{session_id}")
