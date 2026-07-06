@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -21,6 +21,11 @@ async def index():
     """Redirect to dashboard home."""
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/config")
+
+
+@app.get("/test-base")
+async def test_base(request: Request):
+    return templates.TemplateResponse(request, "base.html", {"content": "<p>OK</p>"})
 
 
 @app.get("/api/config")
