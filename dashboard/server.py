@@ -46,6 +46,11 @@ async def page_config(request: Request):
     return templates.TemplateResponse(request, "config.html")
 
 
+@app.get("/sessions")
+async def page_sessions(request: Request):
+    return templates.TemplateResponse(request, "sessions.html")
+
+
 @app.get("/api/sessions")
 async def api_sessions():
     cfg = load_config()
