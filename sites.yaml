@@ -1,7 +1,7 @@
 global:
   mihomo:
-    binary: /data/ytluo/projects/mihomo/bin/mihomo-linux-amd64
-    config: /tmp/mihomo-test/config.yaml
+    binary: ../mihomo/bin/mihomo-traffictracer
+    config: mihomo-configs/config.yaml
     api: "http://127.0.0.1:9099"
   chrome:
     binary: /tmp/chrome-wrapper.sh
