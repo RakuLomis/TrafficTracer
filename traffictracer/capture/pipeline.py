@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -69,6 +70,12 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
 
     try:
         mihomo.enable_tracing(mihomo_trace_path)
+
+        proxy_info = mihomo.get_proxy_info()
+        proxy_info_path = os.path.join(logs_dir, f"proxy_info_{domain}.json")
+        with open(proxy_info_path, "w") as f:
+            json.dump(proxy_info, f, indent=2, ensure_ascii=False)
+        logger.info("Proxy info saved to %s", proxy_info_path)
 
         tun_path = os.path.join(domain_dir, "tun.pcap")
         phys_path = os.path.join(domain_dir, "phys.pcap")

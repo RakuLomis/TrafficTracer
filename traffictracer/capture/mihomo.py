@@ -68,3 +68,25 @@ class MihomoManager:
         return self._api_request("PATCH", "/experimental/tracing", {
             "enabled": False,
         })
+
+    def get_proxy_info(self) -> list[dict]:
+        """Return protocol details for all currently selected proxy nodes."""
+        groups = self._api_request("GET", "/proxies").get("proxies", {})
+        result = []
+        for group_name, group in groups.items():
+            node_name = group.get("now", "")
+            if not node_name:
+                continue
+            try:
+                detail = self._api_request("GET", f"/proxies/{node_name}")
+            except Exception:
+                continue
+            result.append({
+                "group": group_name,
+                "node": node_name,
+                "type": detail.get("type", ""),
+                "server": detail.get("server", ""),
+                "port": detail.get("port", ""),
+                "network": detail.get("network", ""),
+            })
+        return result
