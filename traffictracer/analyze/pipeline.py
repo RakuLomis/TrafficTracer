@@ -13,6 +13,25 @@ from .correlator import correlate, CorrelationResult
 from .pcap_splitter import split_flows
 
 
+def _fix_netlog(path: str) -> None:
+    """Auto-fix truncated Chrome NetLog JSON by appending missing closing brackets."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = f.read().rstrip()
+    if data.endswith("}]"):
+        fixed = data + "\n}\n"
+    elif data.endswith("},"):
+        fixed = data[:-1] + "\n]}\n"
+    elif data.endswith("}"):
+        fixed = data + "\n]}\n"
+    else:
+        fixed = data + "\n]}\n"
+    import json
+    json.loads(fixed)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(fixed)
+    logger.info("Auto-fixed truncated NetLog: %s", path)
+
+
 def run_analysis(session_dir: str) -> str:
     setup_logging()
 
@@ -57,9 +76,13 @@ def run_analysis(session_dir: str) -> str:
 
             try:
                 netlog_conns = extract_five_tuples(str(netlog_path), domain)
-            except Exception as e:
-                logger.error("Failed to parse NetLog for %s: %s", tag, e)
-                continue
+            except Exception:
+                _fix_netlog(str(netlog_path))
+                try:
+                    netlog_conns = extract_five_tuples(str(netlog_path), domain)
+                except Exception as e:
+                    logger.error("Failed to parse NetLog for %s: %s", tag, e)
+                    continue
 
             result = correlate(netlog_conns, mihomo_conns, domain)
             all_correlations.setdefault(domain, []).extend(_result_to_dict(result))
