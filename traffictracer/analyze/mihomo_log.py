@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import NamedTuple
+
+
+_ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
+
+
+def _clean_addr(raw: str) -> str:
+    return _ADDR_ANNOTATION_RE.sub("", raw)
 
 
 class TcpConnect(NamedTuple):
@@ -65,8 +73,8 @@ def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
                 connections[conn_id]["connect"] = TcpConnect(
                     ts=event.get("ts", ""),
                     conn_id=conn_id,
-                    src=event.get("src", ""),
-                    dst=event.get("dst", ""),
+                    src=_clean_addr(event.get("src", "")),
+                    dst=_clean_addr(event.get("dst", "")),
                     host=event.get("host", ""),
                 )
             elif etype == "tcp_proxy_dial":

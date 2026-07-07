@@ -14,20 +14,24 @@ global:
     base_dir: /data/datasets/ttTest
 
 sites:
-  - domain: bilibili.com
-    url: "https://www.bilibili.com"
-    wait: 15
-    traffic_type: video-mainpage
-  - domain: bilibili.com 
-    url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
-    wait: 15
-    traffic_type: video-play
-  - domain: bilibili.com 
-    url: "https://www.bilibili.com/video/BV1HEf2YWEvs/"
-    wait: 15
-    traffic_type: video-play 
+  # - domain: bilibili.com
+  #   url: "https://www.bilibili.com"
+  #   wait: 15
+  #   traffic_type: video-mainpage
+  # - domain: bilibili.com 
+  #   url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
+  #   wait: 15
+  #   traffic_type: video-play
+  # - domain: bilibili.com 
+  #   url: "https://www.bilibili.com/video/BV1HEf2YWEvs/"
+  #   wait: 15
+  #   traffic_type: video-play 
 
   - domain: youtube.com
     url: "https://www.youtube.com/" 
     wait: 15
     traffic_type: video-mainpage
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
+    wait: 15
+    traffic_type: video-play 
