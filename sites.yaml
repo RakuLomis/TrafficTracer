@@ -1,10 +1,10 @@
 global:
   mihomo:
-    binary: ../mihomo/bin/mihomo-traffictracer
+    binary: ../mihomo-core/mihomo-traffictracer
     config: mihomo-configs/config.yaml
     api: "http://127.0.0.1:9099"
   chrome:
-    binary: /tmp/chrome-wrapper.sh
+    binary: tools/chrome-wrapper.sh
     user_data_dir: /tmp/chrome-profile-tt
     headless: true
   network:
