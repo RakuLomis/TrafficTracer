@@ -3,7 +3,6 @@
 import os
 import sys
 import subprocess
-import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.capture.chrome import (

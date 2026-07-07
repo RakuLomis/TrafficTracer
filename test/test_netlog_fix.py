@@ -87,6 +87,7 @@ def test_repair_value_list_truncated():
     path = _write_temp('["events", [')
     try:
         result = repair_truncated_netlog(path)
+        assert result is False
         bak = path + ".truncated.bak"
         assert os.path.exists(bak)
         os.unlink(bak)

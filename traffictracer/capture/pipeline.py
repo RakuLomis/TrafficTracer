@@ -118,19 +118,20 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
             time.sleep(3)
 
             cdp_client = SyncCDPClient(debugging_port=cdp_port)
-            cdp_client.enable_domains()
-            cdp_client.navigate(site.url, load_timeout=site.wait_load_timeout)
+            try:
+                cdp_client.enable_domains()
+                cdp_client.navigate(site.url, load_timeout=site.wait_load_timeout)
 
-            logger.info("Collecting CDP events for %ds...", site.wait)
-            cdp_events = cdp_client.collect(site.wait)
+                logger.info("Collecting CDP events for %ds...", site.wait)
+                cdp_events = cdp_client.collect(site.wait)
 
-            with open(cdp_log_path, "w") as f:
-                json.dump(cdp_events, f, indent=2, ensure_ascii=False)
-            logger.info("CDP events saved to %s (%d events)",
-                        cdp_log_path, len(cdp_events))
-
-            cdp_client.close_browser()
-            cdp_client.close()
+                with open(cdp_log_path, "w") as f:
+                    json.dump(cdp_events, f, indent=2, ensure_ascii=False)
+                logger.info("CDP events saved to %s (%d events)",
+                            cdp_log_path, len(cdp_events))
+            finally:
+                cdp_client.close_browser()
+                cdp_client.close()
 
             if not wait_chrome_exit(chrome_proc, timeout=g.chrome.graceful_close_timeout):
                 terminate_chrome(chrome_proc)
