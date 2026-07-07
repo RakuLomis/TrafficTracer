@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-import signal
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -56,19 +56,21 @@ def launch_chrome(
 
 def _interact_page_with_timeout(url: str) -> None:
     """Run CDP interaction with a hard timeout so it never blocks the pipeline."""
+    result = {"ok": False, "error": "timeout"}
 
-    def _handler(signum, frame):
-        raise TimeoutError("CDP interaction timed out")
+    def _run():
+        try:
+            _interact_page(url)
+            result["ok"] = True
+        except Exception as e:
+            result["error"] = str(e)
 
-    old = signal.signal(signal.SIGALRM, _handler)
-    signal.alarm(15)
-    try:
-        _interact_page(url)
-    except Exception as e:
-        logger.warning("CDP interaction failed: %s", e)
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=15)
+    if not result["ok"]:
+        logger.warning("CDP interaction failed: %s", result["error"])
+
 
 
 def _interact_page(url: str, timeout: float = 8.0) -> None:
