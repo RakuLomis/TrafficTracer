@@ -87,7 +87,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
             binary=g.chrome.binary,
             url=site.url,
             netlog_path=netlog_path,
-            user_data_dir=g.chrome.user_data_dir,
+            user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
             headless=g.chrome.headless,
         )
 
