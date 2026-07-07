@@ -9,7 +9,7 @@ global:
     headless: true
   network:
     tun_interface: utun
-    phys_interface: eno1
+    phys_interface: wlp2s0
   output:
     base_dir: /data/datasets/ttTest-0705
 

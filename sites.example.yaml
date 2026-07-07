@@ -9,7 +9,7 @@ global:
     headless: false
   network:
     tun_interface: utun
-    phys_interface: eth0
+    phys_interface: eth0                # run 'ip route show default' to find yours
   output:
     base_dir: ./output
 
