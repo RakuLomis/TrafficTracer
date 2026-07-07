@@ -71,29 +71,18 @@ make  # or go build
 
 ## Quick Start
 
-A minimal working example — capture bilibili.com traffic and run correlation. Everything lives inside this repo.
+A minimal working example — capture bilibili.com traffic and run correlation. **The capture pipeline auto-starts and stops mihomo** — no manual start needed.
 
-### 1. Start Mihomo
-
-All proxy rules, TUN settings, and geodata are pre-configured in `mihomo-configs/`. Edit `mihomo-configs/config.yaml` if you need to change proxy nodes or rules. Then start:
+### 1. One-Time Setup
 
 ```bash
-bash scripts/start-mihomo.sh
-# mihomo started (PID 12345)
-# TUN device utun ready
+# Grant TUN capability to mihomo binary
+sudo setcap cap_net_admin+eip ../mihomo/bin/mihomo-traffictracer
+
+# Find your active physical NIC (use this for phys_interface)
+ip route show default
+# default via 192.168.5.1 dev wlp2s0 ...  ← your phys_interface
 ```
-
-> **One-time setup:** mihomo TUN mode requires `CAP_NET_ADMIN`. Grant it once:
-> ```bash
-> sudo setcap cap_net_admin+eip ../mihomo/bin/mihomo-traffictracer
-> ```
-
-Ports after startup:
-
-| Port | Service |
-|------|---------|
-| `127.0.0.1:7890` | HTTP/SOCKS proxy |
-| `127.0.0.1:9099` | REST API (tracing, config) |
 
 ### 2. Write sites.yaml
 
@@ -104,12 +93,12 @@ global:
     config: mihomo-configs/config.yaml
     api: "http://127.0.0.1:9099"
   chrome:
-    binary: google-chrome          # or /tmp/chrome-wrapper.sh
-    user_data_dir: /tmp/chrome-profile
+    binary: google-chrome
+    user_data_dir: chrome-profile
     headless: true
   network:
     tun_interface: utun
-    phys_interface: eno1
+    phys_interface: wlp2s0        # from 'ip route show default'
   output:
     base_dir: /data/datasets/ttTest-0705
 
@@ -120,15 +109,9 @@ sites:
     traffic_type: video-mainpage
 ```
 
-> **Chrome without sudo:** extract from `.deb` and use a `--no-sandbox` wrapper:
-> ```bash
-> echo 'exec /tmp/chrome-extract/opt/google/chrome/chrome --no-sandbox "$@"' > /tmp/chrome-wrapper.sh
-> chmod +x /tmp/chrome-wrapper.sh
-> ```
-
 ### 3. Run Capture
 
-The pipeline starts its own mihomo instance with TUN, enables tracing, launches Chrome, and captures on both TUN and physical interfaces.
+The pipeline auto-starts mihomo (TUN mode), enables tracing, captures on both interfaces, launches Chrome, waits 15s, then stops everything.
 
 ```bash
 python capture.py --config sites.yaml --only bilibili.com
@@ -137,20 +120,31 @@ python capture.py --config sites.yaml --only bilibili.com
 Produces a session directory:
 
 ```
-output/2026-07-05_21-45-51/
+output/2026-07-07_10-35-05/
   captures/bilibili.com/
     tun.pcap              # raw TUN interface capture (pre-proxy)
     phys.pcap             # raw physical interface capture (post-proxy)
   logs/
     netlog_bilibili.com.json          # Chrome NetLog
     mihomo_trace_bilibili.com.jsonl   # Mihomo connection trace (JSONL)
+    proxy_info_bilibili.com.json      # proxy node info at capture time
 ```
 
 ### 4. Run Analysis
 
 ```bash
-python analyze.py --session output/2026-07-05_21-45-51/
+python analyze.py --session output/2026-07-07_10-35-05/
 ```
+
+> **NetLog truncated?** If Chrome was killed before finalizing the JSON, fix it:
+> ```bash
+> python3 -c "
+> path='output/.../logs/netlog_bilibili.com.json'
+> with open(path) as f: data=f.read()
+> fixed=data.rstrip().rstrip(',')+'\n]}\n'
+> with open(path,'w') as f: f.write(fixed)
+> "
+> ```
 
 Enriches the session with per-flow pcaps and a correlation table:
 
@@ -189,8 +183,8 @@ for domain, flows in data.items():
     {
       "name": "https://www.bilibili.com",
       "relation": "same_site",
-      "pre_proxy":  {"src": "198.18.0.1:32772", "dst": "116.207.163.65:443"},
-      "post_proxy": {"src": "192.168.5.101:33188", "dst": "116.207.163.65:443"}
+      "pre_proxy":  {"src": "198.18.0.1:49812", "dst": "223.111.250.57:443"},
+      "post_proxy": {"src": "192.168.5.101:53652", "dst": "223.111.250.57:443"}
     }
   ]
 }
@@ -200,12 +194,13 @@ for domain, flows in data.items():
 - **post_proxy** — traffic leaving the physical NIC (real machine IP)
 - **relation** — `same_site` (main domain) or `cross_site` (third-party sub-resources)
 
-### 6. Stop Mihomo
+### 6. Manual Mihomo Control
+
+The capture pipeline manages mihomo automatically. Use these scripts when you need to start/stop mihomo independently (e.g. for testing proxy connectivity):
 
 ```bash
-bash scripts/stop-mihomo.sh
-# Original routes restored
-# mihomo stopped (PID 12345)
+bash scripts/start-mihomo.sh   # start with TUN (saves routes)
+bash scripts/stop-mihomo.sh    # safe stop (restores routes first)
 ```
 
 The stop script **restores original network routes before killing mihomo**, so your terminal's network connection stays alive.
@@ -219,7 +214,7 @@ The capture pipeline automatically starts and stops mihomo. This section explain
 A mihomo config directory must contain:
 
 ```
-/tmp/mihomo-test/
+mihomo-configs/
 ├── config.yaml       # main config (ports, TUN, proxies, rules, tracing)
 ├── geosite.dat       # domain categorization rules
 ├── geoip.dat         # IP geo-location data
