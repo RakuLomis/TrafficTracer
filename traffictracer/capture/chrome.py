@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -33,6 +34,7 @@ def launch_chrome(
     if headless:
         cmd.append("--headless=new")
         cmd.append(f"--remote-debugging-port={CDP_PORT}")
+        cmd.append("--remote-allow-origins=*")
         cmd.append("--autoplay-policy=no-user-gesture-required")
         cmd.append("--disable-features=PreloadMediaEngagementData,MediaEngagementBypassAutoplayPolicies")
         cmd.append("--disable-background-timer-throttling")
@@ -48,8 +50,25 @@ def launch_chrome(
     )
     if headless:
         time.sleep(3)
-        _interact_page(url)
+        _interact_page_with_timeout(url)
     return proc
+
+
+def _interact_page_with_timeout(url: str) -> None:
+    """Run CDP interaction with a hard timeout so it never blocks the pipeline."""
+
+    def _handler(signum, frame):
+        raise TimeoutError("CDP interaction timed out")
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.alarm(15)
+    try:
+        _interact_page(url)
+    except Exception as e:
+        logger.warning("CDP interaction failed: %s", e)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
 
 
 def _interact_page(url: str, timeout: float = 8.0) -> None:
