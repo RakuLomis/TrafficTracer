@@ -1,46 +1,41 @@
-# Final Fix Report — TrafficTracer Dashboard
+# Final Fix Report
 
-## Critical Fixes
+**Branch**: `alpha`
+**Commit**: `727c85f` — `fix: cdp cleanup safety, unused imports, test assertion`
+**Date**: 2026-07-07
 
-### 1. Subprocess tracking + exit code checking — `dashboard/runner.py`
-- Store `proc` handle on the queue (`ws_queue._proc = proc`) so it can be cancelled externally
-- Check `proc.returncode` after `await proc.wait()`:
-  - Non-zero: push `{"line": "[ERROR] ..."}` then `{"error": True, "code": N}`
-  - Zero: push `None` (success signal, unchanged)
+## Changes Applied
 
-### 2. Resource leak with capture_queues — `dashboard/server.py`
-- Added `finally` blocks in both WebSocket handlers (`ws_capture_log`, `ws_session_log`) that call `capture_queues.pop(session_id, None)` / `analysis_queues.pop(session_id, None)`
-- Prevents unbounded growth of queue dicts on disconnect/timeout/completion
+### Important 1: CDP client lifecycle in try/finally
+**File**: `traffictracer/capture/pipeline.py:120-137`
 
-### 3. Config PUT validation — `dashboard/server.py` + `dashboard/config_manager.py`
-- `api_put_config`: validates `"global"` and `"sites"` keys, returns 400 with error message if missing
-- `save_config`: performs `yaml.dump` then `yaml.safe_load` round-trip to verify data is YAML-safe before writing
+Wrapped the entire SyncCDPClient usage (enable_domains, navigate, collect, dump) in a nested `try/finally` block so that `cdp_client.close_browser()` and `cdp_client.close()` are always called, preventing event-loop leaks on exception.
 
-## Important Fixes
+### Minor 4: Unused import `Path` in netlog_fix.py
+**File**: `traffictracer/capture/netlog_fix.py`
 
-### 4. Removed unused `cfg` variable — `dashboard/server.py:api_capture_start`
-- Removed the unnecessary `cfg = load_config()` line
+Removed `from pathlib import Path` — never used.
 
-### 5. Sort sessions by modification time — `dashboard/session_store.py:list_sessions`
-- Changed `sorted(base.iterdir(), reverse=True)` to `sorted(base.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)`
+### Minor 5: Unused import `tempfile` in test_chrome.py
+**File**: `test/test_chrome.py`
 
-### 6. Removed unused `stats` parameter — `dashboard/session_store.py:_session_status`
-- Removed the unused `stats` param from `_session_status` signature and all call sites
+Removed `import tempfile` — never used.
 
-### 7. Removed debugging `/test-base` endpoint — `dashboard/server.py`
-- Removed the `@app.get("/test-base")` endpoint
+### Minor 6: Missing assertion in test_repair_value_list_truncated
+**File**: `test/test_netlog_fix.py:89`
 
-### 8. Removed `python-multipart` from README
-- Changed `pip install fastapi uvicorn python-multipart` to `pip install fastapi uvicorn`
+Added `assert result is False` after calling `repair_truncated_netlog(path)` to verify the return value.
 
 ## Test Results
 
 ```
-test/test_dashboard.py::test_config_api PASSED
-test/test_dashboard.py::test_session_api PASSED
-test/test_dashboard.py::test_session_detail PASSED
-test/test_dashboard.py::test_session_not_found PASSED
-test/test_dashboard.py::test_pages_render PASSED
+$ python3 test/test_netlog_fix.py && python3 test/test_chrome.py && python3 test/test_capture_pipeline.py && python3 test/test_cdp.py && python3 test/test_config.py
+
+✓ All NetLog fix tests passed!
+✓ All Chrome manager tests passed!
+✓ All capture pipeline tests passed!
+✓ All CDP client tests passed!
+✓ All config tests passed!
 ```
 
-All 5 tests passed.
+All 5 test suites pass.

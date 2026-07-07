@@ -24,28 +24,36 @@ class CDPClient:
         self._reader_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
 
-    async def connect_to_page(self) -> None:
-        ws_url = self._get_ws_url()
-        if not ws_url:
-            raise RuntimeError(
-                f"Failed to get CDP WebSocket URL from port {self._port}"
-            )
-        logger.info("Connecting CDP to %s", ws_url)
-        self._ws = await websockets.connect(
-            ws_url,
-            ping_interval=None,
-            max_size=2 ** 26,
+    async def connect_to_page(self, retries: int = 10, delay: float = 0.5) -> None:
+        for attempt in range(retries):
+            ws_url = self._get_ws_url()
+            if ws_url:
+                logger.info("Connecting CDP to %s", ws_url)
+                self._ws = await websockets.connect(
+                    ws_url,
+                    ping_interval=None,
+                    max_size=2 ** 26,
+                )
+                self._reader_task = asyncio.create_task(self._reader_loop())
+                return
+            if attempt < retries - 1:
+                await asyncio.sleep(delay)
+        raise RuntimeError(
+            f"Failed to get CDP WebSocket URL from port {self._port} "
+            f"after {retries} attempts"
         )
-        self._reader_task = asyncio.create_task(self._reader_loop())
 
     def _get_ws_url(self) -> str | None:
         try:
             resp = urllib.request.urlopen(
-                f"http://127.0.0.1:{self._port}/json/version",
+                f"http://127.0.0.1:{self._port}/json",
                 timeout=5,
             )
-            data = json.loads(resp.read().decode())
-            return data.get("webSocketDebuggerUrl")
+            targets = json.loads(resp.read().decode())
+            for target in targets:
+                if target.get("type") == "page":
+                    return target.get("webSocketDebuggerUrl")
+            return None
         except Exception as e:
             logger.warning("Failed to get CDP URL: %s", e)
             return None
