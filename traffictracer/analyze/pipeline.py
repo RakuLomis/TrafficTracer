@@ -45,14 +45,6 @@ def run_analysis(session_dir: str) -> str:
 
     all_correlations: dict[str, list[dict]] = {}
 
-    trace_files = sorted(logs_dir.glob("mihomo_trace_*.jsonl"))
-    mihomo_conns: dict = {}
-    if trace_files:
-        for tf in trace_files:
-            mihomo_conns.update(parse_tracing_log(str(tf)))
-    else:
-        logger.warning("No Mihomo trace files found in %s", logs_dir)
-
     for domain_dir in sorted(captures_dir.iterdir()):
         if not domain_dir.is_dir():
             continue
@@ -74,6 +66,9 @@ def run_analysis(session_dir: str) -> str:
 
             logger.info("Analyzing %s...", tag)
 
+            trace_path = logs_dir / f"mihomo_trace_{domain}_{run_tag}.jsonl"
+            run_mihomo_conns = parse_tracing_log(str(trace_path)) if trace_path.exists() else {}
+
             try:
                 netlog_conns = extract_five_tuples(str(netlog_path), domain)
             except Exception:
@@ -84,7 +79,7 @@ def run_analysis(session_dir: str) -> str:
                     logger.error("Failed to parse NetLog for %s: %s", tag, e)
                     continue
 
-            result = correlate(netlog_conns, mihomo_conns, domain)
+            result = correlate(netlog_conns, run_mihomo_conns, domain)
             all_correlations.setdefault(domain, []).extend(_result_to_dict(result))
 
             tun_pcap = str(run_dir / "tun.pcap")
