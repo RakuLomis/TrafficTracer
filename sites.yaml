@@ -5,7 +5,7 @@ global:
     api: "http://127.0.0.1:9099"
   chrome:
     binary: google-chrome
-    user_data_dir: /tmp/chrome-profile-tt
+    user_data_dir: chrome-profile
     headless: true
   network:
     tun_interface: utun
