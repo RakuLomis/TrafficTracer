@@ -81,7 +81,7 @@ class CDPClient:
             msg = {"id": cmd_id, "method": method}
             if params:
                 msg["params"] = params
-            future: asyncio.Future = asyncio.get_event_loop().create_future()
+            future: asyncio.Future = asyncio.get_running_loop().create_future()
             self._pending[cmd_id] = future
             await self._ws.send(json.dumps(msg))
         try:
@@ -98,10 +98,14 @@ class CDPClient:
                        load_timeout: float = 30.0) -> dict:
         await self.send("Page.navigate", {"url": url})
         deadline = time.time() + load_timeout
+        seen = 0
         while time.time() < deadline:
-            for evt in self._events:
+            events = self._events
+            for i in range(seen, len(events)):
+                evt = events[i]
                 if evt.get("method") == "Page.loadEventFired":
                     return evt
+            seen = len(events)
             await asyncio.sleep(0.5)
         logger.warning("Page.loadEventFired not received within %ss", load_timeout)
         return {}
