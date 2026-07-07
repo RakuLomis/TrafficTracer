@@ -19,6 +19,10 @@ class ChromeConfig:
     binary: str = "google-chrome"
     user_data_dir: str = "/tmp/chrome-profile"
     headless: bool = False
+    enable_cdp: bool = True
+    remote_debugging_port: int = 9222
+    netlog_capture_mode: str = "Default"
+    graceful_close_timeout: int = 20
 
 
 @dataclass
@@ -46,6 +50,7 @@ class SiteConfig:
     url: str
     wait: int = 10
     traffic_type: str = "all"
+    wait_load_timeout: int = 30
 
 
 @dataclass
@@ -77,6 +82,10 @@ def load_config(path: str) -> Config:
         binary=c.get("binary", "google-chrome"),
         user_data_dir=c.get("user_data_dir", "/tmp/chrome-profile"),
         headless=c.get("headless", False),
+        enable_cdp=c.get("enable_cdp", True),
+        remote_debugging_port=c.get("remote_debugging_port", 9222),
+        netlog_capture_mode=c.get("netlog_capture_mode", "Default"),
+        graceful_close_timeout=c.get("graceful_close_timeout", 20),
     )
 
     n = g.get("network", {})
@@ -104,6 +113,7 @@ def load_config(path: str) -> Config:
             url=s["url"],
             wait=s.get("wait", 10),
             traffic_type=s.get("traffic_type", "all"),
+            wait_load_timeout=s.get("wait_load_timeout", 30),
         ))
 
     if not sites:
