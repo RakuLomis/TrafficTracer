@@ -113,7 +113,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
                 netlog_capture_mode=g.chrome.netlog_capture_mode,
                 open_url=False,
             )
-            _active_procs.append(chrome_proc)
+            _active_procs.extend([tun_proc, phys_proc, chrome_proc])
 
             time.sleep(3)
 
@@ -124,8 +124,6 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
             logger.info("Collecting CDP events for %ds...", site.wait)
             cdp_events = cdp_client.collect(site.wait)
 
-            cdp_log_dir = os.path.dirname(cdp_log_path)
-            ensure_dir(cdp_log_dir)
             with open(cdp_log_path, "w") as f:
                 json.dump(cdp_events, f, indent=2, ensure_ascii=False)
             logger.info("CDP events saved to %s (%d events)",
@@ -144,7 +142,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
                 user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
                 headless=g.chrome.headless,
             )
-            _active_procs.append(chrome_proc)
+            _active_procs.extend([tun_proc, phys_proc, chrome_proc])
 
             logger.info("Waiting %ds for %s...", site.wait, site.url)
             time.sleep(site.wait)
