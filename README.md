@@ -655,18 +655,7 @@ cat /tmp/capture_output.log
 
 ### Step 7: Fix truncated NetLog (if needed)
 
-When Chrome is killed with SIGTERM, `--log-net-log` may produce truncated JSON. Fix it:
-
-```bash
-python3 -c "
-path = 'SESSION_DIR/logs/netlog_bilibili.com.json'
-with open(path) as f:
-    data = f.read()
-fixed = data.rstrip().rstrip(',') + '\n]}\n'
-with open(path, 'w') as f:
-    f.write(fixed)
-"
-```
+When Chrome is killed with SIGTERM, `--log-net-log` may produce truncated JSON. TrafficTracer now closes Chrome through CDP `Browser.close` when CDP is enabled, which reduces truncation. If NetLog is still truncated, TrafficTracer backs up the original file as `*.truncated.bak` and attempts conservative repair automatically. No manual fix needed.
 
 ### Step 8: Run analysis
 
@@ -744,7 +733,8 @@ SESSION_DIR/
 │               └── ...
 ├── logs/
 │   ├── mihomo_trace_bilibili.com.jsonl   # Mihomo connection trace (JSONL)
-│   └── netlog_bilibili.com.json          # Chrome NetLog (JSON)
+│   ├── netlog_bilibili.com.json          # Chrome NetLog (JSON)
+│   └── cdp_bilibili.com.json             # CDP request events
 └── results/
     └── correlation.json                  # full correlation table
 ```
@@ -869,7 +859,9 @@ TrafficTracer/
 │   │   ├── pipeline.py                # Capture orchestrator (per-domain loop)
 │   │   ├── mihomo.py                  # Mihomo process manager & tracing API
 │   │   ├── tshark.py                  # tshark subprocess (SIGTERM→wait→SIGKILL)
-│   │   └── chrome.py                  # Chrome launch (--log-net-log) & kill
+│   │   ├── chrome.py                  # Chrome launch (--log-net-log) & kill
+│   │   ├── cdp.py                     # CDP client (request-level event collection)
+│   │   └── netlog_fix.py              # NetLog JSON validation and repair
 │   └── analyze/
 │       ├── pipeline.py                # Analysis orchestrator
 │       ├── netlog.py                  # NetLog → 5-tuple extraction
@@ -941,7 +933,7 @@ When the config references geodata files (GeoIP, GeoSite), use `-d <config_dir>`
 `auto-route: true` redirects all system traffic through the TUN interface. In-line bash calls may lose connectivity during the transition. Run capture as a background script (`nohup bash script.sh &`) and check the log file afterwards.
 
 **Chrome NetLog JSON is truncated**
-When Chrome is killed with SIGTERM, `--log-net-log` may produce incomplete JSON (missing closing `]}`). Fix by appending: `fixed = data.rstrip().rstrip(',') + '\n]}\n'`.
+Chrome is now closed through CDP `Browser.close` when CDP is enabled. If NetLog is still truncated, TrafficTracer backs up the original file as `*.truncated.bak` and attempts conservative repair automatically. No manual fix needed.
 
 **Mihomo can't download geodata files on startup**
 Without proxy, mihomo cannot reach GitHub to download `geoip.metadb` or `geosite.dat`. Copy these files from an existing mihomo installation into the config directory before starting.
