@@ -2,6 +2,16 @@
 
 Capture and correlate network traffic before and after Mihomo proxy at domain-level granularity. Orchestrates Chrome NetLog capture, dual-interface packet sniffing, and Mihomo connection tracing to produce per-flow correlation tables and filtered pcap files.
 
+TrafficTracer now supports CDP-based request-level logging.
+
+CDP is used to collect browser-side request semantics:
+tab/page request, URL, resource type, frameId, requestId, response status and timestamps.
+
+NetLog is still used for Chrome network-stack information:
+URL_REQUEST, DNS, socket, TLS, QUIC, cache and proxy events.
+
+pcap is still used for real packet-level traffic.
+
 ## Architecture
 
 TrafficTracer consists of two independent pipelines:
@@ -126,6 +136,7 @@ output/2026-07-07_10-35-05/
     phys.pcap             # raw physical interface capture (post-proxy)
   logs/
     netlog_bilibili.com.json          # Chrome NetLog
+    cdp_bilibili.com.json             # CDP request events
     mihomo_trace_bilibili.com.jsonl   # Mihomo connection trace (JSONL)
     proxy_info_bilibili.com.json      # proxy node info at capture time
 ```
@@ -136,15 +147,9 @@ output/2026-07-07_10-35-05/
 python analyze.py --session output/2026-07-07_10-35-05/
 ```
 
-> **NetLog truncated?** If Chrome was killed before finalizing the JSON, fix it:
-> ```bash
-> python3 -c "
-> path='output/.../logs/netlog_bilibili.com.json'
-> with open(path) as f: data=f.read()
-> fixed=data.rstrip().rstrip(',')+'\n]}\n'
-> with open(path,'w') as f: f.write(fixed)
-> "
-> ```
+> **NetLog truncated?** Chrome is now closed through CDP `Browser.close` when CDP is enabled.
+> If NetLog is still truncated, TrafficTracer backs up the original file as `*.truncated.bak`
+> and attempts conservative repair automatically. No manual fix needed.
 
 Enriches the session with per-flow pcaps and a correlation table:
 
@@ -744,6 +749,33 @@ SESSION_DIR/
     └── correlation.json                  # full correlation table
 ```
 
+## Data Pipeline
+
+After a CDP-enabled capture, one visit sample contains:
+
+```
+CDP:
+  Page request semantics, URL, resourceType, requestId, frameId, timestamp
+
+NetLog:
+  Chrome network stack events, DNS, socket, TLS, QUIC, cache, proxy
+
+Mihomo trace:
+  pre-proxy / post-proxy connection mapping
+
+pcap:
+  TUN and physical NIC real packet sequences
+```
+
+Correlation target:
+
+```
+CDP request
+  → NetLog URL_REQUEST / socket / QUIC session
+  → Mihomo pre/post proxy mapping
+  → pcap flow
+```
+
 ## Configuration Reference
 
 ### `global`
@@ -756,6 +788,10 @@ SESSION_DIR/
 | `chrome.binary` | Chrome executable name or path |
 | `chrome.user_data_dir` | Dedicated profile directory (avoids polluting daily profile) |
 | `chrome.headless` | Run Chrome in headless mode (`true` for servers) |
+| `chrome.enable_cdp` | Enable CDP request-level collection (default: `true`) |
+| `chrome.remote_debugging_port` | Chrome DevTools debugging port (default: `9222`) |
+| `chrome.netlog_capture_mode` | NetLog capture mode for `--net-log-capture-mode` (default: `Default`) |
+| `chrome.graceful_close_timeout` | Seconds to wait for Chrome graceful exit (default: `20`) |
 | `network.tun_interface` | TUN virtual NIC name (e.g. `utun`, `tun0`) |
 | `network.phys_interface` | Physical NIC name (e.g. `eth0`, `enp0s3`) |
 | `output.base_dir` | Root directory for capture sessions |
@@ -768,6 +804,7 @@ SESSION_DIR/
 | `url` | Full URL to visit |
 | `wait` | Seconds to wait after page load before stopping capture (default: 10) |
 | `traffic_type` | `all`, `tcp`, or `udp` (filter hint, currently informational) |
+| `wait_load_timeout` | Max seconds to wait for Page.loadEventFired in CDP mode (default: `30`) |
 
 ## Mihomo Configuration
 

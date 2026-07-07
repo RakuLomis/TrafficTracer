@@ -7,6 +7,11 @@ global:
     binary: google-chrome               # or tools/chrome-wrapper.sh if no sudo
     user_data_dir: /tmp/chrome-profile
     headless: false
+
+    enable_cdp: true
+    remote_debugging_port: 9222
+    netlog_capture_mode: Default
+    graceful_close_timeout: 20
   network:
     tun_interface: utun
     phys_interface: eth0                # run 'ip route show default' to find yours
@@ -18,6 +23,7 @@ sites:
     url: "https://www.bilibili.com"
     wait: 10
     traffic_type: all
+    wait_load_timeout: 30
   - domain: youtube.com
     url: "https://www.youtube.com"
     wait: 15
