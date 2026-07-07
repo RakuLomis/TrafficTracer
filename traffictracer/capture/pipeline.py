@@ -14,7 +14,9 @@ from ..config import Config, GlobalConfig, SiteConfig
 from ..utils import logger, ensure_dir, setup_logging
 from .mihomo import MihomoManager
 from .tshark import start_tshark, stop_tshark
-from .chrome import launch_chrome, kill_chrome
+from .chrome import launch_chrome, wait_chrome_exit, terminate_chrome
+from .cdp import SyncCDPClient
+from .netlog_fix import repair_truncated_netlog
 
 _active_procs: list[subprocess.Popen] = []
 
@@ -63,7 +65,6 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
     domain_dir = ensure_dir(os.path.join(session_dir, "captures", domain))
     logs_dir = ensure_dir(os.path.join(session_dir, "logs"))
 
-    # auto-number subdirectories by traffic_type
     i = 1
     while True:
         sub = f"{traffic_type}_{i}"
@@ -76,10 +77,12 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
 
     mihomo_trace_path = os.path.join(logs_dir, f"mihomo_trace_{domain}_{run_tag}.jsonl")
     netlog_path = os.path.join(logs_dir, f"netlog_{domain}_{run_tag}.json")
+    cdp_log_path = os.path.join(logs_dir, f"cdp_{domain}_{run_tag}.json")
 
     tun_proc = None
     phys_proc = None
     chrome_proc = None
+    cdp_client = None
 
     try:
         mihomo.enable_tracing(mihomo_trace_path)
@@ -96,23 +99,66 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
         tun_proc = start_tshark(g.network.tun_interface, tun_path)
         phys_proc = start_tshark(g.network.phys_interface, phys_path)
 
-        chrome_proc = launch_chrome(
-            binary=g.chrome.binary,
-            url=site.url,
-            netlog_path=netlog_path,
-            user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
-            headless=g.chrome.headless,
-        )
+        use_cdp = g.chrome.enable_cdp and g.chrome.headless
 
-        _active_procs.extend([tun_proc, phys_proc, chrome_proc])
+        if use_cdp:
+            cdp_port = g.chrome.remote_debugging_port
+            chrome_proc = launch_chrome(
+                binary=g.chrome.binary,
+                url=site.url,
+                netlog_path=netlog_path,
+                user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
+                headless=g.chrome.headless,
+                remote_debugging_port=cdp_port,
+                netlog_capture_mode=g.chrome.netlog_capture_mode,
+                open_url=False,
+            )
+            _active_procs.append(chrome_proc)
 
-        logger.info("Waiting %ds for %s...", site.wait, site.url)
-        time.sleep(site.wait)
+            time.sleep(3)
+
+            cdp_client = SyncCDPClient(debugging_port=cdp_port)
+            cdp_client.enable_domains()
+            cdp_client.navigate(site.url, load_timeout=site.wait_load_timeout)
+
+            logger.info("Collecting CDP events for %ds...", site.wait)
+            cdp_events = cdp_client.collect(site.wait)
+
+            cdp_log_dir = os.path.dirname(cdp_log_path)
+            ensure_dir(cdp_log_dir)
+            with open(cdp_log_path, "w") as f:
+                json.dump(cdp_events, f, indent=2, ensure_ascii=False)
+            logger.info("CDP events saved to %s (%d events)",
+                        cdp_log_path, len(cdp_events))
+
+            cdp_client.close_browser()
+            cdp_client.close()
+
+            if not wait_chrome_exit(chrome_proc, timeout=g.chrome.graceful_close_timeout):
+                terminate_chrome(chrome_proc)
+        else:
+            chrome_proc = launch_chrome(
+                binary=g.chrome.binary,
+                url=site.url,
+                netlog_path=netlog_path,
+                user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
+                headless=g.chrome.headless,
+            )
+            _active_procs.append(chrome_proc)
+
+            logger.info("Waiting %ds for %s...", site.wait, site.url)
+            time.sleep(site.wait)
+
+            terminate_chrome(chrome_proc)
+
+        repair_truncated_netlog(netlog_path)
+
     finally:
         if chrome_proc:
-            kill_chrome(chrome_proc)
             if chrome_proc in _active_procs:
                 _active_procs.remove(chrome_proc)
+            if chrome_proc.poll() is None:
+                terminate_chrome(chrome_proc)
         if tun_proc:
             stop_tshark(tun_proc)
             if tun_proc in _active_procs:
