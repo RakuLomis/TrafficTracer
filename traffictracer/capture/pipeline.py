@@ -57,12 +57,25 @@ def run_capture(config: Config, only_domain: str | None = None) -> str:
 
 def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, session_dir: str) -> None:
     domain = site.domain
-    logger.info("=== Capturing %s ===", domain)
+    traffic_type = site.traffic_type or "all"
+    logger.info("=== Capturing %s (%s) ===", domain, traffic_type)
 
     domain_dir = ensure_dir(os.path.join(session_dir, "captures", domain))
     logs_dir = ensure_dir(os.path.join(session_dir, "logs"))
-    mihomo_trace_path = os.path.join(logs_dir, f"mihomo_trace_{domain}.jsonl")
-    netlog_path = os.path.join(logs_dir, f"netlog_{domain}.json")
+
+    # auto-number subdirectories by traffic_type
+    i = 1
+    while True:
+        sub = f"{traffic_type}_{i}"
+        run_dir = os.path.join(domain_dir, sub)
+        if not os.path.exists(run_dir):
+            break
+        i += 1
+    run_dir = ensure_dir(run_dir)
+    run_tag = f"{traffic_type}_{i}"
+
+    mihomo_trace_path = os.path.join(logs_dir, f"mihomo_trace_{domain}_{run_tag}.jsonl")
+    netlog_path = os.path.join(logs_dir, f"netlog_{domain}_{run_tag}.json")
 
     tun_proc = None
     phys_proc = None
@@ -72,13 +85,13 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
         mihomo.enable_tracing(mihomo_trace_path)
 
         proxy_info = mihomo.get_proxy_info()
-        proxy_info_path = os.path.join(logs_dir, f"proxy_info_{domain}.json")
+        proxy_info_path = os.path.join(logs_dir, f"proxy_info_{domain}_{run_tag}.json")
         with open(proxy_info_path, "w") as f:
             json.dump(proxy_info, f, indent=2, ensure_ascii=False)
         logger.info("Proxy info saved to %s", proxy_info_path)
 
-        tun_path = os.path.join(domain_dir, "tun.pcap")
-        phys_path = os.path.join(domain_dir, "phys.pcap")
+        tun_path = os.path.join(run_dir, "tun.pcap")
+        phys_path = os.path.join(run_dir, "phys.pcap")
 
         tun_proc = start_tshark(g.network.tun_interface, tun_path)
         phys_proc = start_tshark(g.network.phys_interface, phys_path)

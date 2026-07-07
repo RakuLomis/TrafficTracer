@@ -39,32 +39,40 @@ def run_analysis(session_dir: str) -> str:
             continue
 
         domain = domain_dir.name
-        netlog_path = logs_dir / f"netlog_{domain}.json"
 
-        if not netlog_path.exists():
-            logger.warning("No NetLog for %s, skipping", domain)
-            continue
+        for run_dir in sorted(domain_dir.glob("*")):
+            if not run_dir.is_dir():
+                continue
+            run_tag = run_dir.name
 
-        logger.info("Analyzing %s...", domain)
+            netlog_path = logs_dir / f"netlog_{domain}_{run_tag}.json"
 
-        try:
-            netlog_conns = extract_five_tuples(str(netlog_path), domain)
-        except Exception as e:
-            logger.error("Failed to parse NetLog for %s: %s", domain, e)
-            continue
+            tag = f"{domain}_{run_tag}"
 
-        result = correlate(netlog_conns, mihomo_conns, domain)
-        all_correlations[domain] = _result_to_dict(result)
+            if not netlog_path.exists():
+                logger.warning("No NetLog for %s, skipping", tag)
+                continue
 
-        tun_pcap = str(domain_dir / "tun.pcap")
-        phys_pcap = str(domain_dir / "phys.pcap")
-        flows_base = str(domain_dir / "flows")
+            logger.info("Analyzing %s...", tag)
 
-        if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
             try:
-                split_flows(result, tun_pcap, phys_pcap, flows_base)
+                netlog_conns = extract_five_tuples(str(netlog_path), domain)
             except Exception as e:
-                logger.error("pcap splitting failed for %s: %s", domain, e)
+                logger.error("Failed to parse NetLog for %s: %s", tag, e)
+                continue
+
+            result = correlate(netlog_conns, mihomo_conns, domain)
+            all_correlations.setdefault(domain, []).extend(_result_to_dict(result))
+
+            tun_pcap = str(run_dir / "tun.pcap")
+            phys_pcap = str(run_dir / "phys.pcap")
+            flows_base = str(run_dir / "flows")
+
+            if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
+                try:
+                    split_flows(result, tun_pcap, phys_pcap, flows_base)
+                except Exception as e:
+                    logger.error("pcap splitting failed for %s: %s", tag, e)
 
     corr_path = str(results_dir / "correlation.json")
     with open(corr_path, "w", encoding="utf-8") as f:
