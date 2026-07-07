@@ -30,8 +30,7 @@ def split_flows(
 ) -> None:
     for flow in result.flows:
         rel_name = _sanitize_name(flow.name)
-        root_name = result.domain
-        flow_dir = ensure_dir(str(Path(output_base) / root_name / rel_name))
+        flow_dir = ensure_dir(str(Path(output_base) / rel_name))
 
         pre_filter = build_tshark_filter(flow.pre_proxy, "src")
         if pre_filter:
