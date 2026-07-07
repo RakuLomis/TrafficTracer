@@ -4,7 +4,7 @@ global:
     config: mihomo-configs/config.yaml
     api: "http://127.0.0.1:9099"
   chrome:
-    binary: tools/chrome-wrapper.sh
+    binary: google-chrome
     user_data_dir: /tmp/chrome-profile-tt
     headless: true
   network:
