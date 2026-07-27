@@ -6,7 +6,7 @@ from typing import NamedTuple
 
 from .netlog import FiveTupleData, DomainConnections, _parse_addr
 from .mihomo_log import MihomoConnection
-from ..models import TransportConnection, VisitCorrelation, CorrelatedFlowV2
+from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2
 
 
 class CorrelatedFlow(NamedTuple):
@@ -169,6 +169,73 @@ def _find_matching_mihomo_v2(
             return mconn
 
     return None
+
+
+def correlate_cdp_direct(
+    requests: list[AttributedRequest],
+    mihomo_conns: dict[str, MihomoConnection],
+    domain: str,
+    covered_request_ids: set[str] | None = None,
+) -> list[CorrelatedFlowV2]:
+    if covered_request_ids is None:
+        covered_request_ids = set()
+
+    endpoints: dict[str, list[AttributedRequest]] = {}
+    for req in requests:
+        if req.request_id in covered_request_ids:
+            continue
+        if not req.remote_ip or not req.remote_port:
+            continue
+        key = f"{req.remote_ip}:{req.remote_port}"
+        endpoints.setdefault(key, []).append(req)
+
+    mihomo_by_dst: dict[str, list[MihomoConnection]] = {}
+    for mconn in mihomo_conns.values():
+        if mconn.connect is None:
+            continue
+        dst = mconn.connect.dst
+        mihomo_by_dst.setdefault(dst, []).append(mconn)
+
+    flows: list[CorrelatedFlowV2] = []
+    for endpoint, reqs in endpoints.items():
+        candidates = mihomo_by_dst.get(endpoint, [])
+        if not candidates:
+            continue
+
+        mconn = candidates[0]
+
+        pre_src = mconn.connect.src if mconn.connect else ""
+        pre_dst = endpoint
+
+        post_src = ""
+        post_dst = ""
+        if mconn.proxy_dial:
+            out_ip, out_port = _parse_addr(mconn.proxy_dial.out_src)
+            proxy_ip, proxy_port = _parse_addr(mconn.proxy_dial.proxy_addr)
+            post_src = f"{out_ip}:{out_port}" if out_ip else ""
+            post_dst = f"{proxy_ip}:{proxy_port}" if proxy_ip else ""
+        elif mconn.connect:
+            dst_ip, dst_port = _parse_addr(mconn.connect.dst)
+            post_dst = f"{dst_ip}:{dst_port}" if dst_ip else ""
+
+        rep = reqs[0]
+        relation = _infer_relation(rep.url, domain)
+
+        flows.append(CorrelatedFlowV2(
+            url=rep.url,
+            resource_type=rep.resource_type,
+            target_type=rep.target_type,
+            relation=relation,
+            pre_proxy_src=pre_src,
+            pre_proxy_dst=pre_dst,
+            post_proxy_src=post_src,
+            post_proxy_dst=post_dst,
+            protocol="QUIC" if rep.connection_reused else "",
+            request_ids=[r.request_id for r in reqs],
+            connection_reused=rep.connection_reused,
+        ))
+
+    return flows
 
 
 def _infer_relation(url: str, domain: str) -> str:

@@ -10,7 +10,7 @@ from ..utils import logger, ensure_dir, setup_logging
 from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
 from .mihomo_log import parse_tracing_log
-from .correlator import correlate, correlate_v2, CorrelationResult
+from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
 from .pcap_splitter import split_flows
 from .cdp_attribution import parse_cdp_attribution
 from .netlog_transport import trace_transport
@@ -140,14 +140,29 @@ def _analyze_cdp_path(
             transport_conns = trace_transport(attributed, netlog_path)
         except Exception as e:
             logger.error("Failed to trace transport for %s: %s", tag, e)
-            return None
+            transport_conns = []
 
-    return correlate_v2(
+    result = correlate_v2(
         transport_conns, mihomo_conns,
         visit_url=visit_url,
         domain=domain,
         cdp_request_count=len(attributed),
     )
+
+    covered_ids: set[str] = set()
+    for flow in result.flows:
+        covered_ids.update(flow.request_ids)
+
+    cdp_direct_flows = correlate_cdp_direct(
+        attributed, mihomo_conns, domain,
+        covered_request_ids=covered_ids,
+    )
+    if cdp_direct_flows:
+        logger.info("CDP-direct correlation added %d flows for %s",
+                    len(cdp_direct_flows), tag)
+        result.flows.extend(cdp_direct_flows)
+
+    return result
 
 
 def _analyze_domain_path(
