@@ -9,6 +9,8 @@ from traffictracer.analyze.mihomo_log import (
     MihomoConnection, TcpConnect, TcpProxyDial, TcpClose,
 )
 from traffictracer.analyze.correlator import correlate, CorrelationResult, CorrelatedFlow
+from traffictracer.models import TransportConnection, VisitCorrelation, CorrelatedFlowV2
+from traffictracer.analyze.correlator import correlate_v2
 
 
 def test_correlate_matching():
@@ -113,8 +115,130 @@ def test_correlate_no_match():
     assert len(result.flows) == 0
 
 
+def test_correlate_v2_proxy_match():
+    transport_conns = [
+        TransportConnection(
+            netlog_source_id=300,
+            url="https://cdn.example.net/video.m4s",
+            src_ip="198.18.0.1", src_port=49812,
+            dst_ip="1.2.3.4", dst_port=443,
+            protocol="HTTP2",
+            request_ids=["1.1", "1.2"],
+        ),
+    ]
+
+    mihomo_conns = {
+        "c1": MihomoConnection(
+            conn_id="c1",
+            connect=TcpConnect(
+                ts="", conn_id="c1",
+                src="198.18.0.1:49812", dst="1.2.3.4:443",
+                host="cdn.example.net",
+            ),
+            proxy_dial=TcpProxyDial(
+                ts="", conn_id="c1",
+                proxy="HK", proxy_type="vless",
+                proxy_addr="10.0.0.1:443",
+                out_src="192.168.5.101:53652",
+            ),
+            close=None,
+        ),
+    }
+
+    result = correlate_v2(
+        transport_conns, mihomo_conns,
+        visit_url="https://www.bilibili.com",
+        domain="bilibili.com",
+        cdp_request_count=2,
+    )
+
+    assert isinstance(result, VisitCorrelation)
+    assert result.domain == "bilibili.com"
+    assert len(result.flows) == 1
+    flow = result.flows[0]
+    assert isinstance(flow, CorrelatedFlowV2)
+    assert flow.pre_proxy_src == "198.18.0.1:49812"
+    assert flow.pre_proxy_dst == "1.2.3.4:443"
+    assert flow.post_proxy_src == "192.168.5.101:53652"
+    assert flow.post_proxy_dst == "10.0.0.1:443"
+    assert set(flow.request_ids) == {"1.1", "1.2"}
+
+
+def test_correlate_v2_direct_connection():
+    transport_conns = [
+        TransportConnection(
+            netlog_source_id=100,
+            url="https://www.bilibili.com/",
+            src_ip="198.18.0.1", src_port=50000,
+            dst_ip="223.111.250.57", dst_port=443,
+            protocol="TCP",
+            request_ids=["2.1"],
+        ),
+    ]
+
+    mihomo_conns = {
+        "c2": MihomoConnection(
+            conn_id="c2",
+            connect=TcpConnect(
+                ts="", conn_id="c2",
+                src="198.18.0.1:50000", dst="223.111.250.57:443",
+                host="www.bilibili.com",
+            ),
+            proxy_dial=None,
+            close=None,
+        ),
+    }
+
+    result = correlate_v2(
+        transport_conns, mihomo_conns,
+        visit_url="https://www.bilibili.com",
+        domain="bilibili.com",
+        cdp_request_count=1,
+    )
+
+    assert len(result.flows) == 1
+    flow = result.flows[0]
+    assert flow.post_proxy_src == ""
+    assert flow.post_proxy_dst == "223.111.250.57:443"
+
+
+def test_correlate_v2_no_match():
+    transport_conns = [
+        TransportConnection(
+            netlog_source_id=100,
+            url="https://nomatch.com/",
+            src_ip="10.0.0.1", src_port=99999,
+            dst_ip="10.0.0.2", dst_port=80,
+            protocol="TCP",
+            request_ids=["3.1"],
+        ),
+    ]
+    mihomo_conns = {
+        "c1": MihomoConnection(
+            conn_id="c1",
+            connect=TcpConnect(
+                ts="", conn_id="c1",
+                src="10.0.0.1:11111", dst="10.0.0.2:80",
+                host="other.com",
+            ),
+            proxy_dial=None, close=None,
+        ),
+    }
+
+    result = correlate_v2(
+        transport_conns, mihomo_conns,
+        visit_url="https://nomatch.com",
+        domain="nomatch.com",
+        cdp_request_count=1,
+    )
+    assert len(result.flows) == 0
+
+
 if __name__ == "__main__":
     test_correlate_matching()
     test_correlate_connect_only()
     test_correlate_no_match()
+    test_correlate_v2_proxy_match()
+    test_correlate_v2_direct_connection()
+    test_correlate_v2_no_match()
     print("\n✓ All correlator tests passed!")
