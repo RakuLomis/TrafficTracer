@@ -20,11 +20,17 @@ class MihomoManager:
 
     def start(self, ready_timeout: float = 30.0) -> subprocess.Popen:
         if self._api_reachable():
-            logger.warning(
-                "Mihomo API already reachable at %s — using existing instance. "
-                "Stop it first if you want a fresh launch.", self.api_url,
-            )
-            return None
+            if self._tracing_reachable():
+                logger.info("TrafficTracer Mihomo already running at %s, reusing", self.api_url)
+                return None
+            else:
+                logger.error(
+                    "A non-TrafficTracer Mihomo is already on %s — "
+                    "stop it first or change the api port in config.", self.api_url,
+                )
+                raise RuntimeError(
+                    f"Non-TrafficTracer Mihomo occupying {self.api_url}"
+                )
 
         config_dir = str(Path(self.config_path).parent)
         logger.info("Starting Mihomo: %s -d %s", self.binary, config_dir)
@@ -39,6 +45,14 @@ class MihomoManager:
     def _api_reachable(self) -> bool:
         try:
             url = f"{self.api_url}/version"
+            with urllib.request.urlopen(url, timeout=3):
+                return True
+        except Exception:
+            return False
+
+    def _tracing_reachable(self) -> bool:
+        try:
+            url = f"{self.api_url}/experimental/tracing"
             with urllib.request.urlopen(url, timeout=3):
                 return True
         except Exception:
