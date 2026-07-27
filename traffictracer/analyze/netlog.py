@@ -48,6 +48,41 @@ def extract_five_tuples(netlog_path: str, domain: str) -> list[DomainConnections
     return output
 
 
+def extract_all_five_tuples(netlog_path: str) -> list[FiveTupleData]:
+    from parser.constants import NetLogConstants
+    from parser.event_processor import process_events
+    from parser.dependency_graph import (
+        build_connection_chain,
+        _build_children_index,
+    )
+    from parser.constants import SRC_URL_REQUEST
+    import json
+
+    with open(netlog_path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    constants = NetLogConstants(raw.get("constants") or {})
+    events = raw.get("events") or []
+    entries = process_events(events, constants)
+    children_index = _build_children_index(entries)
+
+    results: list[FiveTupleData] = []
+    for sid, entry in entries.items():
+        if entry.source_type != SRC_URL_REQUEST:
+            continue
+        chain = build_connection_chain(sid, entries, children_index)
+        ft = chain.five_tuple
+        if ft.src_ip or ft.dst_ip:
+            results.append(FiveTupleData(
+                src_ip=ft.src_ip or "",
+                src_port=ft.src_port or 0,
+                dst_ip=ft.dst_ip or "",
+                dst_port=ft.dst_port or 0,
+                protocol=ft.protocol or "",
+            ))
+    return results
+
+
 def _parse_addr(addr: str) -> tuple[str, int]:
     if not addr:
         return ("", 0)
