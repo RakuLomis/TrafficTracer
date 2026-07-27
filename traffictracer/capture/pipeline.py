@@ -15,7 +15,7 @@ from ..utils import logger, ensure_dir, setup_logging
 from .mihomo import MihomoManager
 from .tshark import start_tshark, stop_tshark
 from .chrome import launch_chrome, wait_chrome_exit, terminate_chrome
-from .cdp import SyncCDPClient
+from .cdp import SyncCDPCollector
 from .netlog_fix import repair_truncated_netlog
 
 _active_procs: list[subprocess.Popen] = []
@@ -82,7 +82,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
     tun_proc = None
     phys_proc = None
     chrome_proc = None
-    cdp_client = None
+    cdp_collector = None
 
     try:
         mihomo.enable_tracing(mihomo_trace_path)
@@ -100,6 +100,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
         phys_proc = start_tshark(g.network.phys_interface, phys_path)
 
         use_cdp = g.chrome.enable_cdp and g.chrome.headless
+        visit_profile = os.path.join(g.chrome.user_data_dir, domain, run_tag)
 
         if use_cdp:
             cdp_port = g.chrome.remote_debugging_port
@@ -107,31 +108,34 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
                 binary=g.chrome.binary,
                 url=site.url,
                 netlog_path=netlog_path,
-                user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
+                user_data_dir=visit_profile,
                 headless=g.chrome.headless,
                 remote_debugging_port=cdp_port,
                 netlog_capture_mode=g.chrome.netlog_capture_mode,
                 open_url=False,
+                disable_background_networking=g.chrome.disable_background_networking,
             )
             _active_procs.extend([tun_proc, phys_proc, chrome_proc])
 
-            time.sleep(3)
-
-            cdp_client = SyncCDPClient(debugging_port=cdp_port)
+            cdp_collector = SyncCDPCollector(debugging_port=cdp_port)
             try:
-                cdp_client.enable_domains()
-                cdp_client.navigate(site.url, load_timeout=site.wait_load_timeout)
+                cdp_collector.connect()
+                cdp_collector.setup()
+                cdp_collector.navigate(site.url, load_timeout=site.wait_load_timeout)
 
                 logger.info("Collecting CDP events for %ds...", site.wait)
-                cdp_events = cdp_client.collect(site.wait)
+                cdp_collector.collect(site.wait)
+                cdp_collector.stop_collecting()
 
+                cdp_data = cdp_collector.get_structured_data()
                 with open(cdp_log_path, "w") as f:
-                    json.dump(cdp_events, f, indent=2, ensure_ascii=False)
-                logger.info("CDP events saved to %s (%d events)",
-                            cdp_log_path, len(cdp_events))
+                    json.dump(cdp_data, f, indent=2, ensure_ascii=False)
+                logger.info("CDP structured data saved to %s (%d requests)",
+                            cdp_log_path,
+                            cdp_data.get("metadata", {}).get("request_count", 0))
             finally:
-                cdp_client.close_browser()
-                cdp_client.close()
+                cdp_collector.close_browser()
+                cdp_collector.close()
 
             if not wait_chrome_exit(chrome_proc, timeout=g.chrome.graceful_close_timeout):
                 terminate_chrome(chrome_proc)
@@ -140,8 +144,9 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
                 binary=g.chrome.binary,
                 url=site.url,
                 netlog_path=netlog_path,
-                user_data_dir=os.path.join(g.chrome.user_data_dir, domain),
+                user_data_dir=visit_profile,
                 headless=g.chrome.headless,
+                disable_background_networking=g.chrome.disable_background_networking,
             )
             _active_procs.extend([tun_proc, phys_proc, chrome_proc])
 
