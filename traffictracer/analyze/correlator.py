@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from .netlog import FiveTupleData, DomainConnections, _parse_addr
-from .mihomo_log import MihomoConnection
+from .mihomo_log import MihomoConnection, UdpConnect, UdpClose
 from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2
 
 
@@ -176,6 +176,7 @@ def correlate_cdp_direct(
     mihomo_conns: dict[str, MihomoConnection],
     domain: str,
     covered_request_ids: set[str] | None = None,
+    udp_conns: dict[str, tuple[UdpConnect, UdpClose | None]] | None = None,
 ) -> list[CorrelatedFlowV2]:
     if covered_request_ids is None:
         covered_request_ids = set()
@@ -197,6 +198,8 @@ def correlate_cdp_direct(
         mihomo_by_dst.setdefault(dst, []).append(mconn)
 
     flows: list[CorrelatedFlowV2] = []
+    matched_rids: set[str] = set()
+
     for endpoint, reqs in endpoints.items():
         candidates = mihomo_by_dst.get(endpoint, [])
         if not candidates:
@@ -220,6 +223,8 @@ def correlate_cdp_direct(
 
         rep = reqs[0]
         relation = _infer_relation(rep.url, domain)
+        rids = [r.request_id for r in reqs]
+        matched_rids.update(rids)
 
         flows.append(CorrelatedFlowV2(
             url=rep.url,
@@ -231,8 +236,62 @@ def correlate_cdp_direct(
             post_proxy_src=post_src,
             post_proxy_dst=post_dst,
             protocol="QUIC" if rep.connection_reused else "",
-            request_ids=[r.request_id for r in reqs],
+            request_ids=rids,
             connection_reused=rep.connection_reused,
+        ))
+
+    if udp_conns:
+        flows.extend(_correlate_cdp_udp(requests, udp_conns, domain, covered_request_ids | matched_rids))
+
+    return flows
+
+
+def _correlate_cdp_udp(
+    requests: list[AttributedRequest],
+    udp_conns: dict[str, tuple[UdpConnect, UdpClose | None]],
+    domain: str,
+    covered_request_ids: set[str],
+) -> list[CorrelatedFlowV2]:
+    from urllib.parse import urlparse
+
+    udp_by_host: dict[str, list[UdpConnect]] = {}
+    for conn_key, (uc, _) in udp_conns.items():
+        host = uc.host
+        if host:
+            udp_by_host.setdefault(host, []).append(uc)
+
+    host_requests: dict[str, list[AttributedRequest]] = {}
+    for req in requests:
+        if req.request_id in covered_request_ids:
+            continue
+        host = urlparse(req.url).netloc.split(":")[0]
+        if not host:
+            continue
+        host_requests.setdefault(host, []).append(req)
+
+    flows: list[CorrelatedFlowV2] = []
+    for host, reqs in host_requests.items():
+        uc_list = udp_by_host.get(host, [])
+        if not uc_list:
+            continue
+
+        uc = uc_list[0]
+        pre_src = uc.src
+        pre_dst = uc.dst
+        relation = _infer_relation(reqs[0].url, domain)
+
+        flows.append(CorrelatedFlowV2(
+            url=reqs[0].url,
+            resource_type=reqs[0].resource_type,
+            target_type=reqs[0].target_type,
+            relation=relation,
+            pre_proxy_src=pre_src,
+            pre_proxy_dst=pre_dst,
+            post_proxy_src="",
+            post_proxy_dst=pre_dst,
+            protocol="QUIC",
+            request_ids=[r.request_id for r in reqs],
+            connection_reused=reqs[0].connection_reused,
         ))
 
     return flows

@@ -9,7 +9,7 @@ from pathlib import Path
 from ..utils import logger, ensure_dir, setup_logging
 from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
-from .mihomo_log import parse_tracing_log
+from .mihomo_log import parse_tracing_log, parse_udp_connections
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
 from .pcap_splitter import split_flows, split_flows_v2
 from .cdp_attribution import parse_cdp_attribution
@@ -73,7 +73,8 @@ def run_analysis(session_dir: str) -> str:
 
             if cdp_path.exists():
                 result_v2 = _analyze_cdp_path(
-                    str(cdp_path), str(netlog_path), run_mihomo_conns, domain, tag,
+                    str(cdp_path), str(netlog_path), str(trace_path),
+                    run_mihomo_conns, domain, tag,
                 )
                 if result_v2 is not None:
                     existing = all_correlations.get(domain)
@@ -116,6 +117,7 @@ def run_analysis(session_dir: str) -> str:
 def _analyze_cdp_path(
     cdp_path: str,
     netlog_path: str,
+    trace_path: str,
     mihomo_conns: dict,
     domain: str,
     tag: str,
@@ -155,9 +157,19 @@ def _analyze_cdp_path(
     for flow in result.flows:
         covered_ids.update(flow.request_ids)
 
+    udp_conns = None
+    if os.path.exists(trace_path):
+        try:
+            udp_conns = parse_udp_connections(trace_path)
+            if udp_conns:
+                logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
+        except Exception:
+            pass
+
     cdp_direct_flows = correlate_cdp_direct(
         attributed, mihomo_conns, domain,
         covered_request_ids=covered_ids,
+        udp_conns=udp_conns,
     )
     if cdp_direct_flows:
         logger.info("CDP-direct correlation added %d flows for %s",

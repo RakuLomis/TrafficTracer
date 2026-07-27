@@ -46,6 +46,25 @@ class MihomoConnection(NamedTuple):
     close: TcpClose | None
 
 
+class UdpConnect(NamedTuple):
+    ts: str
+    conn_key: str
+    src: str
+    dst: str
+    host: str
+    process: str = ""
+    process_path: str = ""
+    in_name: str = ""
+
+
+class UdpClose(NamedTuple):
+    ts: str
+    conn_key: str
+    bytes_up: int
+    bytes_down: int
+    duration_ms: int
+
+
 def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
     connections: dict[str, dict[str, TcpConnect | TcpProxyDial | TcpClose | None]] = {}
 
@@ -103,4 +122,49 @@ def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
             close=conn["close"],
         )
         for cid, conn in connections.items()
+    }
+
+
+def parse_udp_connections(path: str) -> dict[str, tuple[UdpConnect, UdpClose | None]]:
+    connects: dict[str, UdpConnect] = {}
+    closes: dict[str, UdpClose] = {}
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            etype = event.get("type", "")
+            conn_key = event.get("conn_key", "")
+            if not conn_key:
+                continue
+
+            if etype == "udp_connect":
+                connects[conn_key] = UdpConnect(
+                    ts=event.get("ts", ""),
+                    conn_key=conn_key,
+                    src=_clean_addr(event.get("src", "")),
+                    dst=_clean_addr(event.get("dst", "")),
+                    host=event.get("host", ""),
+                    process=event.get("process", ""),
+                    process_path=event.get("process_path", ""),
+                    in_name=event.get("in_name", ""),
+                )
+            elif etype == "udp_close":
+                closes[conn_key] = UdpClose(
+                    ts=event.get("ts", ""),
+                    conn_key=conn_key,
+                    bytes_up=event.get("bytes_up", 0),
+                    bytes_down=event.get("bytes_down", 0),
+                    duration_ms=event.get("duration_ms", 0),
+                )
+
+    return {
+        key: (conn, closes.get(key))
+        for key, conn in connects.items()
     }
