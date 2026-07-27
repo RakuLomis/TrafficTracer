@@ -1,127 +1,235 @@
-"""Tests for CDP client (mocked WebSocket)."""
+"""Tests for structured CDP collector."""
 
-import json
-import os
 import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from unittest.mock import patch
+import json
 import asyncio
+from unittest.mock import patch, MagicMock
 
-from traffictracer.capture.cdp import CDPClient, SyncCDPClient
+from traffictracer.capture.cdp import CDPCollector
 
 
 class FakeWS:
-    def __init__(self, send_queue=None):
-        self.sent = []
-        self._recv = asyncio.Queue()
+    def __init__(self):
+        self.sent: list[dict] = []
+        self._recv: asyncio.Queue = asyncio.Queue()
         self.closed = False
-        if send_queue:
-            for item in send_queue:
-                self._recv.put_nowait(json.dumps(item))
 
-    async def send(self, msg):
-        parsed = json.loads(msg)
+    def push_response(self, cmd_id: int, result: dict | None = None):
+        msg = {"id": cmd_id, "result": result or {}}
+        self._recv.put_nowait(json.dumps(msg))
+
+    def push_event(self, method: str, params: dict, session_id: str = ""):
+        msg = {"method": method, "params": params}
+        if session_id:
+            msg["sessionId"] = session_id
+        self._recv.put_nowait(json.dumps(msg))
+
+    async def send(self, raw: str):
+        parsed = json.loads(raw)
         self.sent.append(parsed)
-        cmd_id = parsed.get("id")
-        if cmd_id is not None:
-            await self._recv.put(json.dumps({"id": cmd_id, "result": {}}))
 
     async def close(self):
         self.closed = True
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
         try:
-            return await self._recv.get()
-        except Exception:
+            return await asyncio.wait_for(self._recv.get(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
             raise StopAsyncIteration
 
 
-def make_mock_info_response(ws_url):
-    async def mock_get(*args, **kwargs):
-        class FakeResp:
-            async def read(self):
-                return json.dumps({
-                    "webSocketDebuggerUrl": ws_url,
-                }).encode()
-            async def __aenter__(self):
-                return self
-            async def __aexit__(self, *args):
-                pass
-        return FakeResp()
-    return mock_get
+def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
+    collector = CDPCollector.__new__(CDPCollector)
+    collector._port = 9222
+    collector._ws = ws
+    collector._cmd_id = 0
+    collector._pending = {}
+    collector._reader_task = None
+    collector._lock = asyncio.Lock()
+    collector._targets: dict[str, dict] = {}
+    collector._session_to_target: dict[str, str] = {}
+    collector._requests: list[dict] = []
+    collector._responses: dict[str, dict] = {}
+    collector._websockets: list[dict] = []
+    collector._visit_url = ""
+    collector._collecting = True
+    return collector
 
 
-def test_sync_cdp_client_events_collected():
-    events = []
-
-    async def connect_side(client_self):
-        pass
-
-    async def enable_side(client_self):
-        events.append(("send", "Network.enable"))
-        events.append(("send", "Page.enable"))
-
-    async def navigate_side(client_self, url, load_timeout=30.0):
-        events.append(("navigate", url))
-
-    async def collect_side(client_self, seconds):
-        events.append(("collect", seconds))
-        return [
-            {"method": "Network.requestWillBeSent", "params": {"request": {"url": "https://example.com"}}},
-            {"method": "Network.responseReceived", "params": {"response": {"url": "https://example.com", "status": 200}}},
-            {"method": "Page.loadEventFired", "params": {}},
-        ]
-
-    with patch.object(CDPClient, 'connect_to_page', connect_side):
-        with patch.object(CDPClient, 'enable_domains', enable_side):
-            with patch.object(CDPClient, 'navigate', navigate_side):
-                with patch.object(CDPClient, '_collect_events', collect_side):
-                    client = SyncCDPClient(debugging_port=9222)
-                    client.enable_domains()
-                    client.navigate("https://example.com")
-                    result = client.collect(5)
-                    client.close()
-
-    assert len(result) == 3
-    assert result[0]["method"] == "Network.requestWillBeSent"
-    assert result[1]["method"] == "Network.responseReceived"
-    assert result[2]["method"] == "Page.loadEventFired"
-    assert ("navigate", "https://example.com") in events
-    assert ("collect", 5) in events
-
-
-def test_cdp_client_send_receives_response():
+def test_collector_parses_request_will_be_sent():
     async def run():
         ws = FakeWS()
-        client = CDPClient(9222)
-        client._ws = ws
-        reader_task = asyncio.ensure_future(client._reader_loop())
-        await asyncio.sleep(0.05)
-        result = await client.send("Network.enable", timeout=2)
-        reader_task.cancel()
+        collector = _make_collector_with_ws(ws)
+        collector._targets["T1"] = {"type": "page", "url": "https://www.bilibili.com"}
+        collector._session_to_target["S1"] = "T1"
+
+        ws.push_event("Network.requestWillBeSent", {
+            "requestId": "921.18",
+            "loaderId": "L1",
+            "frameId": "F1",
+            "documentURL": "https://www.bilibili.com",
+            "request": {
+                "url": "https://cdn.example.net/video.m4s",
+                "method": "GET",
+            },
+            "type": "Media",
+            "initiator": {"type": "script"},
+            "timestamp": 123456.123,
+            "wallTime": 1720000000.0,
+        }, session_id="S1")
+
+        collector._reader_task = asyncio.create_task(collector._reader_loop())
+        await asyncio.sleep(0.1)
+        collector._reader_task.cancel()
         try:
-            await reader_task
+            await collector._reader_task
         except asyncio.CancelledError:
             pass
-        assert result == {}
-        assert len(ws.sent) == 1
-        assert ws.sent[0]["method"] == "Network.enable"
-        assert ws.sent[0]["id"] == 1
+
+        assert len(collector._requests) == 1
+        req = collector._requests[0]
+        assert req["request_id"] == "921.18"
+        assert req["url"] == "https://cdn.example.net/video.m4s"
+        assert req["resource_type"] == "Media"
+        assert req["target_id"] == "T1"
+
+    asyncio.run(run())
+
+
+def test_collector_parses_response_received():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+
+        ws.push_event("Network.responseReceived", {
+            "requestId": "921.18",
+            "response": {
+                "url": "https://cdn.example.net/video.m4s",
+                "status": 200,
+                "connectionId": 17,
+                "connectionReused": True,
+                "remoteIPAddress": "1.2.3.4",
+                "remotePort": 443,
+            },
+        }, session_id="S1")
+
+        collector._reader_task = asyncio.create_task(collector._reader_loop())
+        await asyncio.sleep(0.1)
+        collector._reader_task.cancel()
+        try:
+            await collector._reader_task
+        except asyncio.CancelledError:
+            pass
+
+        assert "921.18" in collector._responses
+        resp = collector._responses["921.18"]
+        assert resp["connection_id"] == 17
+        assert resp["remote_ip"] == "1.2.3.4"
+        assert resp["remote_port"] == 443
+        assert resp["connection_reused"] is True
+
+    asyncio.run(run())
+
+
+def test_collector_structured_data_output():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+        collector._visit_url = "https://www.bilibili.com"
+        collector._targets["T1"] = {"type": "page", "url": "https://www.bilibili.com"}
+        collector._requests.append({
+            "request_id": "1.1",
+            "target_id": "T1",
+            "frame_id": "F1",
+            "loader_id": "L1",
+            "url": "https://api.bilibili.com/x",
+            "resource_type": "XHR",
+            "timestamp": 100.0,
+            "initiator_type": "script",
+        })
+        collector._responses["1.1"] = {
+            "connection_id": 5,
+            "remote_ip": "10.0.0.1",
+            "remote_port": 443,
+            "connection_reused": False,
+            "status": 200,
+        }
+
+        data = collector.get_structured_data()
+        assert data["visit_url"] == "https://www.bilibili.com"
+        assert len(data["targets"]) == 1
+        assert len(data["requests"]) == 1
+        req = data["requests"][0]
+        assert req["connection_id"] == 5
+        assert req["remote_ip"] == "10.0.0.1"
+        assert req["connection_reused"] is False
+
+    asyncio.run(run())
+
+
+def test_collector_target_attached():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+
+        ws.push_event("Target.attachedToTarget", {
+            "sessionId": "S2",
+            "targetInfo": {
+                "targetId": "T2",
+                "type": "iframe",
+                "url": "https://ads.example.com/frame",
+            },
+        })
+
+        collector._reader_task = asyncio.create_task(collector._reader_loop())
+        await asyncio.sleep(0.1)
+        collector._reader_task.cancel()
+        try:
+            await collector._reader_task
+        except asyncio.CancelledError:
+            pass
+
+        assert "T2" in collector._targets
+        assert collector._targets["T2"]["type"] == "iframe"
+
+    asyncio.run(run())
+
+
+def test_collector_websocket_created():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+
+        ws.push_event("Network.webSocketCreated", {
+            "requestId": "WS1",
+            "url": "wss://live.bilibili.com/ws",
+            "initiator": {"type": "script"},
+        }, session_id="S1")
+
+        collector._reader_task = asyncio.create_task(collector._reader_loop())
+        await asyncio.sleep(0.1)
+        collector._reader_task.cancel()
+        try:
+            await collector._reader_task
+        except asyncio.CancelledError:
+            pass
+
+        assert len(collector._websockets) == 1
+        assert collector._websockets[0]["url"] == "wss://live.bilibili.com/ws"
 
     asyncio.run(run())
 
 
 if __name__ == "__main__":
-    test_sync_cdp_client_events_collected()
-    test_cdp_client_send_receives_response()
-    print("\n✓ All CDP client tests passed!")
+    test_collector_parses_request_will_be_sent()
+    test_collector_parses_response_received()
+    test_collector_structured_data_output()
+    test_collector_target_attached()
+    test_collector_websocket_created()
+    print("\n✓ All CDP collector tests passed!")
