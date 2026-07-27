@@ -58,7 +58,7 @@ class CDPCollector:
             info = json.loads(resp.read().decode())
             return info.get("webSocketDebuggerUrl")
         except Exception as e:
-            logger.warning("Failed to get CDP browser URL: %s", e)
+            logger.debug("Failed to get CDP browser URL (retrying): %s", e)
             return None
 
     async def _reader_loop(self) -> None:

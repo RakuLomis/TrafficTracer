@@ -19,6 +19,13 @@ class MihomoManager:
         self.api_url = api_url.rstrip("/")
 
     def start(self, ready_timeout: float = 30.0) -> subprocess.Popen:
+        if self._api_reachable():
+            logger.warning(
+                "Mihomo API already reachable at %s — using existing instance. "
+                "Stop it first if you want a fresh launch.", self.api_url,
+            )
+            return None
+
         config_dir = str(Path(self.config_path).parent)
         logger.info("Starting Mihomo: %s -d %s", self.binary, config_dir)
         proc = subprocess.Popen(
@@ -28,6 +35,14 @@ class MihomoManager:
         )
         self._wait_ready(proc, ready_timeout)
         return proc
+
+    def _api_reachable(self) -> bool:
+        try:
+            url = f"{self.api_url}/version"
+            with urllib.request.urlopen(url, timeout=3):
+                return True
+        except Exception:
+            return False
 
     def _wait_ready(self, proc: subprocess.Popen, timeout: float) -> None:
         deadline = time.time() + timeout

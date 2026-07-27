@@ -28,12 +28,16 @@ def _build_filter_from_addr(src: str, dst: str) -> str:
     parts = []
     src_ip, src_port = _split_addr(src)
     dst_ip, dst_port = _split_addr(dst)
-    if src_ip and src_port:
-        parts.append(f"ip.addr=={src_ip} and tcp.port=={src_port}")
-    elif dst_ip and dst_port:
-        parts.append(f"ip.addr=={dst_ip} and tcp.port=={dst_port}")
-    elif dst_ip:
-        parts.append(f"ip.addr=={dst_ip}")
+
+    addr = src_ip or dst_ip
+    port = src_port or dst_port
+
+    if addr and port:
+        parts.append(
+            f"(ip.addr=={addr} and (tcp.port=={port} or udp.port=={port}))"
+        )
+    elif addr:
+        parts.append(f"ip.addr=={addr}")
     return " and ".join(parts)
 
 
@@ -104,4 +108,10 @@ def _run_tshark_extract(input_pcap: str, display_filter: str,
 
 
 def _sanitize_name(name: str) -> str:
-    return name.replace("https://", "").replace("http://", "").rstrip("/")
+    import re
+    name = name.replace("https://", "").replace("http://", "").rstrip("/")
+    name = name.split("?")[0]
+    name = re.sub(r'[<>\"|?*\\%]', "_", name)
+    if len(name) > 120:
+        name = name[:120]
+    return name.rstrip("/_.")
