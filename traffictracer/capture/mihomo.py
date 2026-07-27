@@ -18,7 +18,7 @@ class MihomoManager:
         self.config_path = config_path
         self.api_url = api_url.rstrip("/")
 
-    def start(self) -> subprocess.Popen:
+    def start(self, ready_timeout: float = 30.0) -> subprocess.Popen:
         config_dir = str(Path(self.config_path).parent)
         logger.info("Starting Mihomo: %s -d %s", self.binary, config_dir)
         proc = subprocess.Popen(
@@ -26,8 +26,27 @@ class MihomoManager:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        time.sleep(2)
+        self._wait_ready(proc, ready_timeout)
         return proc
+
+    def _wait_ready(self, proc: subprocess.Popen, timeout: float) -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Mihomo exited prematurely with code {proc.returncode}"
+                )
+            try:
+                url = f"{self.api_url}/version"
+                with urllib.request.urlopen(url, timeout=3) as resp:
+                    data = json.loads(resp.read().decode())
+                    logger.info("Mihomo ready: %s", data.get("version", "unknown"))
+                    return
+            except Exception:
+                time.sleep(1)
+        raise RuntimeError(
+            f"Mihomo API not reachable at {self.api_url} after {timeout}s"
+        )
 
     def stop(self, proc: subprocess.Popen) -> None:
         if proc is None or proc.poll() is not None:

@@ -11,7 +11,7 @@ from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
 from .mihomo_log import parse_tracing_log
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
-from .pcap_splitter import split_flows
+from .pcap_splitter import split_flows, split_flows_v2
 from .cdp_attribution import parse_cdp_attribution
 from .netlog_transport import trace_transport
 
@@ -83,6 +83,7 @@ def run_analysis(session_dir: str) -> str:
                         existing["flows"].extend(
                             _result_v2_to_dict(result_v2)["flows"]
                         )
+                    _try_split_v2(result_v2, run_dir)
                     continue
 
             logger.info("No CDP data for %s, using domain-based fallback", tag)
@@ -102,6 +103,7 @@ def run_analysis(session_dir: str) -> str:
                     all_correlations[domain] = v1_dict
                 else:
                     existing["flows"].extend(v1_dict["flows"])
+                _try_split_v1(result_v1, run_dir)
 
     corr_path = str(results_dir / "correlation.json")
     with open(corr_path, "w", encoding="utf-8") as f:
@@ -182,6 +184,28 @@ def _analyze_domain_path(
             return None
 
     return correlate(netlog_conns, mihomo_conns, domain)
+
+
+def _try_split_v2(result: VisitCorrelation, run_dir: Path) -> None:
+    tun_pcap = str(run_dir / "tun.pcap")
+    phys_pcap = str(run_dir / "phys.pcap")
+    flows_base = str(run_dir / "flows")
+    if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
+        try:
+            split_flows_v2(result, tun_pcap, phys_pcap, flows_base)
+        except Exception as e:
+            logger.error("pcap splitting failed: %s", e)
+
+
+def _try_split_v1(result: CorrelationResult, run_dir: Path) -> None:
+    tun_pcap = str(run_dir / "tun.pcap")
+    phys_pcap = str(run_dir / "phys.pcap")
+    flows_base = str(run_dir / "flows")
+    if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
+        try:
+            split_flows(result, tun_pcap, phys_pcap, flows_base)
+        except Exception as e:
+            logger.error("pcap splitting failed: %s", e)
 
 
 def _result_to_dict(result: CorrelationResult) -> list[dict]:
