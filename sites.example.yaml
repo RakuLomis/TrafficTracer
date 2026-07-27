@@ -3,6 +3,7 @@ global:
     binary: /path/to/mihomo-traffictracer-v2
     config: /path/to/mihomo.yaml
     api: "http://127.0.0.1:9090"
+    managed: true                     # false = mihomo managed externally via scripts
   chrome:
     binary: google-chrome               # or tools/chrome-wrapper.sh if no sudo
     user_data_dir: /tmp/chrome-profile

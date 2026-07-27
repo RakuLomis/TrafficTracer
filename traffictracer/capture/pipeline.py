@@ -41,7 +41,14 @@ def run_capture(config: Config, only_domain: str | None = None) -> str:
         mihomo_api = _extract_api_from_config(g.mihomo.config) or mihomo_api
 
     mihomo = MihomoManager(g.mihomo.binary, g.mihomo.config, mihomo_api)
-    mihomo_proc = mihomo.start()
+
+    if g.mihomo.managed:
+        mihomo_proc = mihomo.start()
+    else:
+        mihomo_proc = None
+        logger.info("Using externally-managed Mihomo at %s", mihomo_api)
+        if not mihomo._api_reachable():
+            logger.warning("Mihomo API not reachable at %s — tracing will fail", mihomo_api)
 
     original_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, lambda s, f: (_cleanup(mihomo_proc, _active_procs), exit(1)))
@@ -51,7 +58,8 @@ def run_capture(config: Config, only_domain: str | None = None) -> str:
             _capture_domain(site, g, mihomo, session_dir)
     finally:
         signal.signal(signal.SIGINT, original_handler)
-        mihomo.stop(mihomo_proc)
+        if g.mihomo.managed:
+            mihomo.stop(mihomo_proc)
         logger.info("Capture session complete: %s", session_dir)
 
     return str(session_dir)

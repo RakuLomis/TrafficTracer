@@ -3,6 +3,7 @@ global:
     binary: ../mihomo-core/mihomo-traffictracer-v2
     config: mihomo-configs/config.yaml
     api: "http://127.0.0.1:9090"
+    managed: false
   chrome:
     binary: google-chrome
     user_data_dir: chrome-profile
