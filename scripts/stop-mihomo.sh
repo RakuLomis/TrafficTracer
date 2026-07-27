@@ -44,5 +44,5 @@ if [ -f "$PID_FILE" ]; then
     fi
     rm -f "$PID_FILE"
 else
-    pkill -f "mihomo-traffictracer" 2>/dev/null && echo "mihomo stopped" || echo "No mihomo process found"
+    pkill -f "mihomo-traffictracer-v2" 2>/dev/null && echo "mihomo stopped" || echo "No mihomo process found"
 fi

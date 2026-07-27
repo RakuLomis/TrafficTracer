@@ -40,7 +40,7 @@ ip route show default > "$ROUTE_FILE" 2>/dev/null
 echo "Original routes saved to $ROUTE_FILE"
 
 # Start mihomo
-nohup "$MIHOMO_BIN" -d "$CFG_DIR" &>/tmp/mihomo-traffictracer.log &
+nohup "$MIHOMO_BIN" -d "$CFG_DIR" &>/tmp/mihomo-traffictracer-v2.log &
 PID=$!
 echo "$PID" > "$PID_FILE"
 echo "mihomo started (PID $PID)"
