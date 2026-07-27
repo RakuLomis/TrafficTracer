@@ -23,6 +23,7 @@ class ChromeConfig:
     remote_debugging_port: int = 9222
     netlog_capture_mode: str = "Default"
     graceful_close_timeout: int = 20
+    disable_background_networking: bool = False
 
 
 @dataclass
@@ -86,6 +87,7 @@ def load_config(path: str) -> Config:
         remote_debugging_port=c.get("remote_debugging_port", 9222),
         netlog_capture_mode=c.get("netlog_capture_mode", "Default"),
         graceful_close_timeout=c.get("graceful_close_timeout", 20),
+        disable_background_networking=c.get("disable_background_networking", False),
     )
 
     n = g.get("network", {})

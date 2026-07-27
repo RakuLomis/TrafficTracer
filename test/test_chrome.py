@@ -3,6 +3,7 @@
 import os
 import sys
 import subprocess
+from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.capture.chrome import (
@@ -61,10 +62,45 @@ def test_launch_chrome_minimal():
     assert proc.poll() == 0
 
 
+def test_launch_chrome_background_flags():
+    with patch("subprocess.Popen") as mock_popen:
+        mock_popen.return_value = MagicMock()
+        launch_chrome(
+            binary="google-chrome",
+            url="https://example.com",
+            netlog_path="/tmp/nl.json",
+            user_data_dir="/tmp/prof",
+            headless=True,
+            disable_background_networking=True,
+            open_url=False,
+        )
+        cmd = mock_popen.call_args[0][0]
+        assert "--disable-background-networking" in cmd
+        assert "--disable-component-update" in cmd
+        assert "--disable-sync" in cmd
+
+
+def test_launch_chrome_no_background_flags_by_default():
+    with patch("subprocess.Popen") as mock_popen:
+        mock_popen.return_value = MagicMock()
+        launch_chrome(
+            binary="google-chrome",
+            url="https://example.com",
+            netlog_path="/tmp/nl.json",
+            user_data_dir="/tmp/prof",
+            headless=True,
+            open_url=False,
+        )
+        cmd = mock_popen.call_args[0][0]
+        assert "--disable-background-networking" not in cmd
+
+
 if __name__ == "__main__":
     test_terminate_chrome()
     test_terminate_chrome_already_exited()
     test_wait_chrome_exit_exits()
     test_wait_chrome_exit_timeout()
     test_launch_chrome_minimal()
+    test_launch_chrome_background_flags()
+    test_launch_chrome_no_background_flags_by_default()
     print("\n✓ All Chrome manager tests passed!")

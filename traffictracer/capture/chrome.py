@@ -19,6 +19,7 @@ def launch_chrome(
     netlog_capture_mode: str = "Default",
     open_url: bool = True,
     extra_args: list[str] | None = None,
+    disable_background_networking: bool = False,
 ) -> subprocess.Popen:
     Path(netlog_path).parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -42,6 +43,10 @@ def launch_chrome(
         cmd.append("--remote-allow-origins=*")
     if extra_args:
         cmd.extend(extra_args)
+    if disable_background_networking:
+        cmd.append("--disable-background-networking")
+        cmd.append("--disable-component-update")
+        cmd.append("--disable-sync")
     if open_url:
         cmd.append(url)
     else:
