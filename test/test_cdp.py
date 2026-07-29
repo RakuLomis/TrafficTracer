@@ -59,6 +59,10 @@ def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector._websockets: list[dict] = []
     collector._visit_url = ""
     collector._collecting = True
+    collector._setup_complete = False
+    collector._load_events: dict[str, asyncio.Event] = {}
+    collector._enabled_sessions: set[str] = set()
+    collector._enable_tasks: set[asyncio.Task] = set()
     return collector
 
 
@@ -226,10 +230,74 @@ def test_collector_websocket_created():
     asyncio.run(run())
 
 
+def test_late_attached_target_enables_network_and_page():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+        collector._setup_complete = True
+        sent = []
+
+        async def send(method, params=None, timeout=10.0, session_id=""):
+            sent.append((method, session_id))
+            return {}
+
+        collector.send = send
+        collector._on_target_attached({
+            "sessionId": "S2",
+            "targetInfo": {
+                "targetId": "T2",
+                "type": "iframe",
+                "url": "https://example.com/frame",
+            },
+        })
+        await asyncio.gather(*collector._enable_tasks)
+
+        assert ("Network.enable", "S2") in sent
+        assert ("Page.enable", "S2") in sent
+        assert "S2" in collector._enabled_sessions
+
+    asyncio.run(run())
+
+
+def test_navigate_uses_created_target_and_waits_for_load():
+    async def run():
+        ws = FakeWS()
+        collector = _make_collector_with_ws(ws)
+        sent = []
+
+        async def send(method, params=None, timeout=10.0, session_id=""):
+            sent.append((method, params, session_id))
+            if method == "Target.createTarget":
+                collector._session_to_target["S3"] = "T3"
+                collector._targets["T3"] = {
+                    "type": "page",
+                    "url": "about:blank",
+                }
+                return {"targetId": "T3"}
+            if method == "Page.navigate":
+                collector._dispatch_event({
+                    "method": "Page.loadEventFired",
+                    "params": {},
+                    "sessionId": session_id,
+                })
+            return {}
+
+        collector.send = send
+        await collector.navigate("https://example.com", load_timeout=0.2)
+
+        assert ("Page.navigate", {"url": "https://example.com"}, "S3") in sent
+        assert collector._visit_url == "https://example.com"
+        assert "S3" not in collector._load_events
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     test_collector_parses_request_will_be_sent()
     test_collector_parses_response_received()
     test_collector_structured_data_output()
     test_collector_target_attached()
     test_collector_websocket_created()
+    test_late_attached_target_enables_network_and_page()
+    test_navigate_uses_created_target_and_waits_for_load()
     print("\n✓ All CDP collector tests passed!")

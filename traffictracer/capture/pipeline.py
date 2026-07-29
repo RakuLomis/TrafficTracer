@@ -107,7 +107,7 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
         tun_proc = start_tshark(g.network.tun_interface, tun_path)
         phys_proc = start_tshark(g.network.phys_interface, phys_path)
 
-        use_cdp = g.chrome.enable_cdp and g.chrome.headless
+        use_cdp = g.chrome.enable_cdp
         visit_profile = os.path.join(g.chrome.user_data_dir, domain, run_tag)
 
         if use_cdp:

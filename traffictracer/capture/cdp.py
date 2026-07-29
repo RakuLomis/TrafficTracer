@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 import urllib.request
 
 import websockets
@@ -29,6 +28,10 @@ class CDPCollector:
         self._websockets: list[dict] = []
         self._visit_url = ""
         self._collecting = False
+        self._setup_complete = False
+        self._load_events: dict[str, asyncio.Event] = {}
+        self._enabled_sessions: set[str] = set()
+        self._enable_tasks: set[asyncio.Task] = set()
 
     async def connect(self, retries: int = 15, delay: float = 0.5) -> None:
         for attempt in range(retries):
@@ -98,12 +101,21 @@ class CDPCollector:
         elif method == "Target.targetDestroyed":
             tid = params.get("targetId", "")
             self._targets.pop(tid, None)
+            for sid, target_id in list(self._session_to_target.items()):
+                if target_id == tid:
+                    self._session_to_target.pop(sid, None)
+                    self._load_events.pop(sid, None)
+                    self._enabled_sessions.discard(sid)
         elif method == "Network.requestWillBeSent":
             self._on_request_will_be_sent(params, session_id)
         elif method == "Network.responseReceived":
             self._on_response_received(params, session_id)
         elif method == "Network.webSocketCreated":
             self._on_websocket_created(params, session_id)
+        elif method == "Page.loadEventFired":
+            load_event = self._load_events.get(session_id)
+            if load_event is not None:
+                load_event.set()
 
     def _on_target_attached(self, params: dict) -> None:
         info = params.get("targetInfo", {})
@@ -116,6 +128,12 @@ class CDPCollector:
             }
             if sid:
                 self._session_to_target[sid] = tid
+                if self._setup_complete:
+                    task = asyncio.create_task(
+                        self._enable_session(sid, info.get("type", "unknown"))
+                    )
+                    self._enable_tasks.add(task)
+                    task.add_done_callback(self._enable_tasks.discard)
             logger.debug("Target attached: %s (%s)", tid, info.get("type"))
 
     def _on_target_created(self, params: dict) -> None:
@@ -194,64 +212,74 @@ class CDPCollector:
             "flatten": True,
         })
         await self.send("Target.setDiscoverTargets", {"discover": True})
+        self._setup_complete = True
+
+        for session_id, target_id in list(self._session_to_target.items()):
+            target_type = self._targets.get(target_id, {}).get("type", "unknown")
+            await self._enable_session(session_id, target_type)
+
+    async def _enable_session(self, session_id: str, target_type: str) -> None:
+        if not session_id or session_id in self._enabled_sessions:
+            return
+        try:
+            await self.send("Network.enable", session_id=session_id)
+            if target_type in {"page", "iframe"}:
+                await self.send("Page.enable", session_id=session_id)
+            self._enabled_sessions.add(session_id)
+        except Exception as e:
+            logger.warning(
+                "Failed to enable CDP domains for %s target: %s",
+                target_type,
+                e,
+            )
+
+    async def _wait_for_session(self, target_id: str, timeout: float) -> str:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline:
+            for session_id, attached_target_id in self._session_to_target.items():
+                if attached_target_id == target_id:
+                    return session_id
+            await asyncio.sleep(0.05)
+        return ""
 
     async def navigate(self, url: str, load_timeout: float = 30.0) -> None:
         self._visit_url = url
         self._collecting = True
 
-        page_session = ""
-        for sid, tid in self._session_to_target.items():
-            info = self._targets.get(tid, {})
-            if info.get("type") == "page":
-                page_session = sid
-                break
-
-        if page_session:
-            try:
-                await self.send("Network.enable", session_id=page_session)
-                await self.send("Page.enable", session_id=page_session)
-            except Exception as e:
-                logger.warning("Failed to enable domains on page session: %s", e)
-
-        await self.send("Target.createTarget", {"url": "about:blank"})
-        await asyncio.sleep(0.5)
-
-        target_id = ""
-        for tid, info in self._targets.items():
-            if info.get("type") == "page" and info.get("url") in ("about:blank", ""):
-                target_id = tid
-                break
-
+        result = await self.send("Target.createTarget", {"url": "about:blank"})
+        target_id = result.get("targetId", "")
         if not target_id:
-            for tid, info in self._targets.items():
-                if info.get("type") == "page":
-                    target_id = tid
-                    break
+            raise RuntimeError("CDP Target.createTarget returned no targetId")
 
-        if target_id:
-            for sid, tid in self._session_to_target.items():
-                if tid == target_id:
-                    page_session = sid
-                    break
+        page_session = await self._wait_for_session(target_id, load_timeout)
+        if not page_session:
+            raise RuntimeError(
+                f"CDP did not attach to page target {target_id} "
+                f"within {load_timeout}s"
+            )
+
+        await self._enable_session(page_session, "page")
+        load_event = asyncio.Event()
+        self._load_events[page_session] = load_event
+        try:
+            await self.send(
+                "Page.navigate",
+                {"url": url},
+                session_id=page_session,
+            )
             try:
-                await self.send("Network.enable", session_id=page_session)
-                await self.send("Page.enable", session_id=page_session)
-                await self.send("Page.navigate", {"url": url},
-                                session_id=page_session)
-            except Exception as e:
-                logger.warning("Page.navigate via session failed: %s, trying browser-level", e)
-                await self.send("Page.navigate", {"url": url})
-        else:
-            logger.warning("No page target found, navigating at browser level")
-            await self.send("Page.navigate", {"url": url})
+                await asyncio.wait_for(load_event.wait(), timeout=load_timeout)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Page load event not received for %s within %.1fs",
+                    url,
+                    load_timeout,
+                )
+        finally:
+            self._load_events.pop(page_session, None)
 
-        deadline = time.time() + load_timeout
-        while time.time() < deadline:
-            await asyncio.sleep(0.5)
-            for req in self._requests:
-                pass
-            break
-        logger.info("Navigation to %s initiated, collecting events...", url)
+        logger.info("Navigation to %s complete, collecting events...", url)
 
     async def collect(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
@@ -295,6 +323,12 @@ class CDPCollector:
             logger.warning("Browser.close via CDP failed")
 
     async def close(self) -> None:
+        for task in list(self._enable_tasks):
+            task.cancel()
+        if self._enable_tasks:
+            await asyncio.gather(*self._enable_tasks, return_exceptions=True)
+        self._enable_tasks.clear()
+
         if self._reader_task:
             self._reader_task.cancel()
             try:
