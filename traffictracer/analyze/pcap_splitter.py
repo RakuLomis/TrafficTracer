@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..utils import logger, ensure_dir
-from ..models import VisitCorrelation
+from ..models import FlowTuple, VisitCorrelation
 from .correlator import CorrelationResult
 from .netlog import FiveTupleData
 
@@ -22,6 +22,20 @@ def build_tshark_filter(ft: FiveTupleData, direction: str) -> str:
     elif ft.src_ip:
         parts.append(f"ip.addr=={ft.src_ip}")
     return " and ".join(parts) if parts else ""
+
+
+def build_flow_tuple_filter(flow: FlowTuple) -> str:
+    """Build an exact bidirectional TCP/UDP display filter."""
+    proto = flow.network.lower()
+    if not flow.complete or proto not in {"tcp", "udp"}:
+        return ""
+    src_field = "ipv6" if ":" in flow.src_ip else "ip"
+    dst_field = "ipv6" if ":" in flow.dst_ip else "ip"
+    forward = (f"{src_field}.src=={flow.src_ip} and {proto}.srcport=={flow.src_port} and "
+               f"{dst_field}.dst=={flow.dst_ip} and {proto}.dstport=={flow.dst_port}")
+    reverse = (f"{dst_field}.src=={flow.dst_ip} and {proto}.srcport=={flow.dst_port} and "
+               f"{src_field}.dst=={flow.src_ip} and {proto}.dstport=={flow.src_port}")
+    return f"{proto} and (({forward}) or ({reverse}))"
 
 
 def _build_filter_from_addr(src: str, dst: str) -> str:
@@ -88,12 +102,14 @@ def split_flows_v2(
         rel_name = _sanitize_name(flow.url)
         flow_dir = ensure_dir(str(Path(output_base) / rel_name))
 
-        pre_filter = _build_filter_from_addr(flow.pre_proxy_src, flow.pre_proxy_dst)
+        pre_filter = (build_flow_tuple_filter(flow.pre_flow) if flow.pre_flow and flow.pre_flow.complete
+                      else _build_filter_from_addr(flow.pre_proxy_src, flow.pre_proxy_dst))
         if pre_filter:
             pre_path = str(Path(flow_dir) / "pre_proxy.pcap")
             _run_tshark_extract(tun_pcap, pre_filter, pre_path)
 
-        post_filter = _build_filter_from_addr(flow.post_proxy_src, flow.post_proxy_dst)
+        post_filter = (build_flow_tuple_filter(flow.post_flow) if flow.post_flow and flow.post_flow.complete
+                       else _build_filter_from_addr(flow.post_proxy_src, flow.post_proxy_dst))
         if post_filter:
             post_path = str(Path(flow_dir) / "post_proxy.pcap")
             _run_tshark_extract(phys_pcap, post_filter, post_path)

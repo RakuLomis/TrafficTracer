@@ -1,9 +1,38 @@
-# traffictracer/models.py
 """Shared data model types for TrafficTracer 2.0 CDP-attribution pipeline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class FlowTuple:
+    network: str
+    src_ip: str = ""
+    src_port: int = 0
+    dst_ip: str = ""
+    dst_port: int = 0
+    dst_host: str = ""
+    key: str = ""
+    complete: bool = False
+    source: str = ""
+    scope: str = ""
+    shared: bool = False
+
+    @property
+    def src(self) -> str:
+        return _format_endpoint(self.src_ip, self.src_port)
+
+    @property
+    def dst(self) -> str:
+        return _format_endpoint(self.dst_ip, self.dst_port)
+
+
+def _format_endpoint(ip: str, port: int) -> str:
+    if not ip:
+        return ""
+    host = f"[{ip}]" if ":" in ip else ip
+    return f"{host}:{port}" if port else host
 
 
 @dataclass
@@ -48,6 +77,12 @@ class CorrelatedFlowV2:
     protocol: str
     request_ids: list[str] = field(default_factory=list)
     connection_reused: bool = False
+    pre_flow: FlowTuple | None = None
+    post_flow: FlowTuple | None = None
+    match_status: str = "legacy"
+    match_confidence: float = 0.5
+    conn_id: str = ""
+    outer_conn_id: str = ""
 
 
 @dataclass

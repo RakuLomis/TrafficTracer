@@ -60,3 +60,24 @@ if __name__ == "__main__":
     test_parse_tracing_log()
     test_parse_empty_log()
     print("\n✓ All Mihomo log parser tests passed!")
+
+
+def test_parse_normalized_udp_proxy_dial(tmp_path):
+    import json
+    from traffictracer.analyze.mihomo_log import parse_udp_tracing_log
+    events = [
+        {"type": "udp_connect", "conn_key": "u1", "event_seq": 1,
+         "pre_flow": {"network": "udp", "src_ip": "198.18.0.1", "src_port": 50000,
+                      "dst_ip": "1.1.1.1", "dst_port": 443,
+                      "key": "udp|198.18.0.1:50000|1.1.1.1:443", "complete": True}},
+        {"type": "udp_proxy_dial", "conn_key": "u1", "outer_conn_id": "outer-u1",
+         "post_flow": {"network": "udp", "src_ip": "192.0.2.1", "src_port": 51000,
+                       "dst_ip": "203.0.113.1", "dst_port": 443,
+                       "key": "udp|192.0.2.1:51000|203.0.113.1:443", "complete": True}},
+    ]
+    path = tmp_path / "udp.jsonl"
+    path.write_text("\n".join(json.dumps(event) for event in events))
+    conn = parse_udp_tracing_log(str(path))["u1"]
+    assert conn.connect.pre_flow.key == "udp|198.18.0.1:50000|1.1.1.1:443"
+    assert conn.proxy_dial.post_flow.dst == "203.0.113.1:443"
+    assert conn.proxy_dial.outer_conn_id == "outer-u1"

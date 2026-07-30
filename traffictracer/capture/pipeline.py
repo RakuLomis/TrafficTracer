@@ -37,10 +37,14 @@ def run_capture(config: Config, only_domain: str | None = None) -> str:
             return str(session_dir)
 
     mihomo_api = g.mihomo.api
+    mihomo_secret = g.mihomo.secret
     if g.mihomo.config:
-        mihomo_api = _extract_api_from_config(g.mihomo.config) or mihomo_api
+        if g.mihomo.managed:
+            mihomo_api = _extract_api_from_config(g.mihomo.config) or mihomo_api
+        if not mihomo_secret:
+            mihomo_secret = _extract_secret_from_config(g.mihomo.config) or ""
 
-    mihomo = MihomoManager(g.mihomo.binary, g.mihomo.config, mihomo_api)
+    mihomo = MihomoManager(g.mihomo.binary, g.mihomo.config, mihomo_api, mihomo_secret)
 
     if g.mihomo.managed:
         mihomo_proc = mihomo.start()
@@ -91,8 +95,10 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
     phys_proc = None
     chrome_proc = None
     cdp_collector = None
+    previous_tracing = None
 
     try:
+        previous_tracing = mihomo.get_tracing_status()
         mihomo.enable_tracing(mihomo_trace_path)
 
         proxy_info = mihomo.get_proxy_info()
@@ -179,10 +185,11 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
             stop_tshark(phys_proc)
             if phys_proc in _active_procs:
                 _active_procs.remove(phys_proc)
-        try:
-            mihomo.disable_tracing()
-        except Exception:
-            pass
+        if previous_tracing is not None:
+            try:
+                mihomo.restore_tracing(previous_tracing)
+            except Exception as exc:
+                logger.warning("Failed to restore Mihomo tracing state: %s", exc)
 
     logger.info("=== Done capturing %s ===", domain)
 
@@ -193,9 +200,25 @@ def _extract_api_from_config(config_path: str) -> str | None:
             import yaml
             cfg = yaml.safe_load(f)
         if isinstance(cfg, dict):
+            unix = cfg.get("external-controller-unix", "")
+            if unix:
+                return f"unix://{unix}"
             ec = cfg.get("external-controller", "")
             if ec:
                 return f"http://{ec}" if "://" not in ec else ec
+    except Exception:
+        pass
+    return None
+
+
+def _extract_secret_from_config(config_path: str) -> str | None:
+    try:
+        with open(config_path, "r") as f:
+            import yaml
+            cfg = yaml.safe_load(f)
+        if isinstance(cfg, dict):
+            secret = cfg.get("secret", "")
+            return str(secret) if secret else None
     except Exception:
         pass
     return None

@@ -2,35 +2,55 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import http.client
 import json
+from pathlib import Path
+import socket
 import subprocess
 import time
-import urllib.request
-import urllib.error
-from pathlib import Path
+from urllib.parse import quote, urlparse
 
 from ..utils import logger
 
 
+class MihomoApiError(RuntimeError):
+    """An HTTP error returned by the Mihomo controller."""
+
+    def __init__(self, method: str, path: str, status: int, body: str):
+        super().__init__(f"Mihomo API {method} {path} returned {status}: {body}")
+        self.status = status
+        self.body = body
+
+
+class _UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: str, timeout: float):
+        super().__init__("localhost", timeout=timeout)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+
 class MihomoManager:
-    def __init__(self, binary: str, config_path: str, api_url: str):
+    def __init__(self, binary: str, config_path: str, api_url: str, secret: str = ""):
         self.binary = binary
         self.config_path = config_path
         self.api_url = api_url.rstrip("/")
+        self.secret = secret
 
-    def start(self, ready_timeout: float = 30.0) -> subprocess.Popen:
+    def start(self, ready_timeout: float = 30.0) -> subprocess.Popen | None:
         if self._api_reachable():
             if self._tracing_reachable():
                 logger.info("TrafficTracer Mihomo already running at %s, reusing", self.api_url)
                 return None
-            else:
-                logger.error(
-                    "A non-TrafficTracer Mihomo is already on %s — "
-                    "stop it first or change the api port in config.", self.api_url,
-                )
-                raise RuntimeError(
-                    f"Non-TrafficTracer Mihomo occupying {self.api_url}"
-                )
+            logger.error(
+                "A non-TrafficTracer Mihomo is already on %s — "
+                "stop it first or change the api endpoint in config.", self.api_url,
+            )
+            raise RuntimeError(f"Non-TrafficTracer Mihomo occupying {self.api_url}")
 
         config_dir = str(Path(self.config_path).parent)
         logger.info("Starting Mihomo: %s -d %s", self.binary, config_dir)
@@ -44,17 +64,15 @@ class MihomoManager:
 
     def _api_reachable(self) -> bool:
         try:
-            url = f"{self.api_url}/version"
-            with urllib.request.urlopen(url, timeout=3):
-                return True
+            self._api_request("GET", "/version", timeout=3)
+            return True
         except Exception:
             return False
 
     def _tracing_reachable(self) -> bool:
         try:
-            url = f"{self.api_url}/experimental/tracing"
-            with urllib.request.urlopen(url, timeout=3):
-                return True
+            self._api_request("GET", "/experimental/tracing", timeout=3)
+            return True
         except Exception:
             return False
 
@@ -66,18 +84,16 @@ class MihomoManager:
                     f"Mihomo exited prematurely with code {proc.returncode}"
                 )
             try:
-                url = f"{self.api_url}/version"
-                with urllib.request.urlopen(url, timeout=3) as resp:
-                    data = json.loads(resp.read().decode())
-                    logger.info("Mihomo ready: %s", data.get("version", "unknown"))
-                    return
+                data = self._api_request("GET", "/version", timeout=3)
+                logger.info("Mihomo ready: %s", data.get("version", "unknown"))
+                return
             except Exception:
                 time.sleep(1)
         raise RuntimeError(
             f"Mihomo API not reachable at {self.api_url} after {timeout}s"
         )
 
-    def stop(self, proc: subprocess.Popen) -> None:
+    def stop(self, proc: subprocess.Popen | None) -> None:
         if proc is None or proc.poll() is not None:
             return
         logger.info("Stopping Mihomo (PID %d)", proc.pid)
@@ -88,34 +104,79 @@ class MihomoManager:
             proc.kill()
             proc.wait()
 
-    def _api_request(self, method: str, path: str, body: dict | None = None) -> dict:
-        url = f"{self.api_url}{path}"
-        data = json.dumps(body).encode("utf-8") if body else None
-        req = urllib.request.Request(url, data=data, method=method)
-        req.add_header("Content-Type", "application/json")
+    def _connection(self, timeout: float) -> tuple[http.client.HTTPConnection, str]:
+        parsed = urlparse(self.api_url)
+        if parsed.scheme == "unix":
+            socket_path = parsed.path or f"/{parsed.netloc}"
+            if not socket_path:
+                raise ValueError("Unix Mihomo API must include a socket path")
+            return _UnixHTTPConnection(socket_path, timeout), ""
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("Mihomo API must use http://, https://, or unix://")
+        cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        return cls(parsed.hostname, parsed.port, timeout=timeout), parsed.path.rstrip("/")
+
+    def _api_request(
+        self,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        timeout: float = 10,
+    ) -> dict:
+        connection, base_path = self._connection(timeout)
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
+        headers = {"Accept": "application/json", "Host": "localhost"}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+        if self.secret:
+            headers["Authorization"] = f"Bearer {self.secret}"
         try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.URLError as e:
-            logger.error("Mihomo API error: %s %s: %s", method, path, e)
+            connection.request(method, f"{base_path}{path}", body=payload, headers=headers)
+            response = connection.getresponse()
+            text = response.read().decode("utf-8", errors="replace")
+            if not 200 <= response.status < 300:
+                raise MihomoApiError(method, path, response.status, text)
+            if not text:
+                return {}
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                return {"raw": text}
+        except (OSError, http.client.HTTPException) as exc:
+            logger.error("Mihomo API error: %s %s: %s", method, path, exc)
             raise
+        finally:
+            connection.close()
 
     def get_tracing_status(self) -> dict:
         return self._api_request("GET", "/experimental/tracing")
 
+    def patch_tracing(self, state: dict) -> dict:
+        return self._api_request("PATCH", "/experimental/tracing", state)
+
+    def restore_tracing(self, state: dict) -> dict:
+        patch = {key: state[key] for key in ("enabled", "output") if key in state}
+        return self.patch_tracing(patch)
+
     def enable_tracing(self, output_path: str) -> dict:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         logger.info("Enabling Mihomo tracing -> %s", output_path)
-        return self._api_request("PATCH", "/experimental/tracing", {
-            "enabled": True,
-            "output": output_path,
-        })
+        return self.patch_tracing({"enabled": True, "output": output_path})
 
     def disable_tracing(self) -> dict:
         logger.info("Disabling Mihomo tracing")
-        return self._api_request("PATCH", "/experimental/tracing", {
-            "enabled": False,
-        })
+        return self.patch_tracing({"enabled": False})
+
+    @contextmanager
+    def tracing_session(self, output_path: str):
+        """Enable tracing temporarily and restore the controller's prior state."""
+        previous = self.get_tracing_status()
+        self.enable_tracing(output_path)
+        try:
+            yield
+        finally:
+            logger.info("Restoring previous Mihomo tracing state")
+            self.restore_tracing(previous)
 
     def get_proxy_info(self) -> list[dict]:
         """Return protocol details for all currently selected proxy nodes."""
@@ -126,7 +187,7 @@ class MihomoManager:
             if not node_name:
                 continue
             try:
-                detail = self._api_request("GET", f"/proxies/{node_name}")
+                detail = self._api_request("GET", f"/proxies/{quote(node_name, safe='')}")
             except Exception:
                 continue
             result.append({

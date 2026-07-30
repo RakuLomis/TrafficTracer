@@ -14,7 +14,8 @@ global:
   mihomo:
     binary: /usr/bin/mihomo
     config: /etc/mihomo/config.yaml
-    api: "http://127.0.0.1:9090"
+    api: "unix:///tmp/verge/verge-mihomo.sock"
+    secret: test-secret
   chrome:
     binary: google-chrome
     user_data_dir: /tmp/chrome-profile
@@ -42,7 +43,8 @@ sites:
         cfg = load_config(tmp)
         assert isinstance(cfg, Config)
         assert cfg.global_config.mihomo.binary == "/usr/bin/mihomo"
-        assert cfg.global_config.mihomo.api == "http://127.0.0.1:9090"
+        assert cfg.global_config.mihomo.api == "unix:///tmp/verge/verge-mihomo.sock"
+        assert cfg.global_config.mihomo.secret == "test-secret"
         assert cfg.global_config.chrome.headless is True
         assert cfg.global_config.network.tun_interface == "utun"
         assert cfg.global_config.output.base_dir == "./output"

@@ -9,7 +9,7 @@ from traffictracer.analyze.mihomo_log import (
     MihomoConnection, TcpConnect, TcpProxyDial, TcpClose,
 )
 from traffictracer.analyze.correlator import correlate, CorrelationResult, CorrelatedFlow
-from traffictracer.models import TransportConnection, VisitCorrelation, CorrelatedFlowV2
+from traffictracer.models import FlowTuple, TransportConnection, VisitCorrelation, CorrelatedFlowV2
 from traffictracer.analyze.correlator import correlate_v2
 
 
@@ -242,3 +242,23 @@ if __name__ == "__main__":
     test_correlate_v2_direct_connection()
     test_correlate_v2_no_match()
     print("\n✓ All correlator tests passed!")
+
+
+def test_correlate_v2_prefers_normalized_key():
+    pre = FlowTuple("tcp", "198.18.0.1", 44000, "9.9.9.9", 443,
+                    key="tcp|198.18.0.1:44000|9.9.9.9:443", complete=True)
+    post = FlowTuple("tcp", "192.0.2.10", 55000, "203.0.113.8", 8443,
+                     key="tcp|192.0.2.10:55000|203.0.113.8:8443", complete=True)
+    transport = TransportConnection(1, "https://example.com", "198.18.0.1", 44000,
+                                    "9.9.9.9", 443, "HTTP2")
+    connection = MihomoConnection(
+        "normalized", TcpConnect("", "normalized", "legacy-wrong", "legacy-wrong", "example.com", pre_flow=pre),
+        TcpProxyDial("", "normalized", "P", "ss", "legacy-wrong", "legacy-wrong",
+                     post_flow=post, outer_conn_id="outer"), None,
+    )
+    flow = correlate_v2([transport], {"normalized": connection}, "https://example.com", "example.com").flows[0]
+    assert flow.match_status == "exact"
+    assert flow.match_confidence == 1.0
+    assert flow.post_proxy_src == "192.0.2.10:55000"
+    assert flow.post_proxy_dst == "203.0.113.8:8443"
+    assert flow.outer_conn_id == "outer"

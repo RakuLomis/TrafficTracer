@@ -12,6 +12,7 @@ class MihomoConfig:
     binary: str = "mihomo"
     config: str = ""
     api: str = "http://127.0.0.1:9090"
+    secret: str = ""
     managed: bool = True
 
 
@@ -77,6 +78,7 @@ def load_config(path: str) -> Config:
         binary=m.get("binary", "mihomo"),
         config=m.get("config", ""),
         api=m.get("api", "http://127.0.0.1:9090"),
+        secret=m.get("secret", ""),
         managed=m.get("managed", True),
     )
 

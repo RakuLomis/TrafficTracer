@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 
 from ..utils import logger, ensure_dir, setup_logging
 from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
-from .mihomo_log import parse_tracing_log, parse_udp_connections
+from .mihomo_log import parse_tracing_log, parse_udp_tracing_log
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
 from .pcap_splitter import split_flows, split_flows_v2
 from .cdp_attribution import parse_cdp_attribution
@@ -160,7 +161,7 @@ def _analyze_cdp_path(
     udp_conns = None
     if os.path.exists(trace_path):
         try:
-            udp_conns = parse_udp_connections(trace_path)
+            udp_conns = parse_udp_tracing_log(trace_path)
             if udp_conns:
                 logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
         except Exception:
@@ -257,6 +258,12 @@ def _result_v2_to_dict(result: VisitCorrelation) -> dict:
                 "protocol": f.protocol,
                 "request_ids": f.request_ids,
                 "connection_reused": f.connection_reused,
+                "pre_flow": asdict(f.pre_flow) if f.pre_flow else None,
+                "post_flow": asdict(f.post_flow) if f.post_flow else None,
+                "match_status": f.match_status,
+                "match_confidence": f.match_confidence,
+                "conn_id": f.conn_id,
+                "outer_conn_id": f.outer_conn_id,
             }
             for f in result.flows
         ],

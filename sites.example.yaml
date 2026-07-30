@@ -3,7 +3,8 @@ global:
     binary: /path/to/mihomo-traffictracer-v2
     config: /path/to/mihomo.yaml
     api: "http://127.0.0.1:9090"
-    managed: true                     # false = mihomo managed externally via scripts
+    secret: ""                         # optional Bearer secret for TCP controllers
+    managed: true                      # false = Clash Verge or another manager owns Mihomo
   chrome:
     binary: google-chrome               # or tools/chrome-wrapper.sh if no sudo
     user_data_dir: /tmp/chrome-profile
