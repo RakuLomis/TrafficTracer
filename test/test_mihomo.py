@@ -84,3 +84,15 @@ def test_api_error_preserves_status():
     error = MihomoApiError("GET", "/x", 401, "unauthorized")
     assert error.status == 401
     assert "401" in str(error)
+
+
+def test_enable_tracing_resolves_external_output_path(tmp_path, monkeypatch):
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    calls = []
+    mgr.patch_tracing = lambda state: calls.append(state) or state
+    monkeypatch.chdir(tmp_path)
+    mgr.enable_tracing("relative/trace.jsonl")
+    assert calls == [{
+        "enabled": True,
+        "output": str(tmp_path / "relative" / "trace.jsonl"),
+    }]

@@ -159,6 +159,7 @@ class MihomoManager:
         return self.patch_tracing(patch)
 
     def enable_tracing(self, output_path: str) -> dict:
+        output_path = str(Path(output_path).expanduser().resolve())
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         logger.info("Enabling Mihomo tracing -> %s", output_path)
         return self.patch_tracing({"enabled": True, "output": output_path})
