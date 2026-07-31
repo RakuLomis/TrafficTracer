@@ -1,0 +1,8 @@
+{
+  "api_version": 1,
+  "type": "response",
+  "id": "ui-1",
+  "result": {
+    "status": "ok"
+  }
+}

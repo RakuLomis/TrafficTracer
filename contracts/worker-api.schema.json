@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/worker-api.schema.json",
+  "title": "TrafficTracer Complete Worker API message",
+  "description": "One UTF-8 JSON object per stdout line. Diagnostic text belongs on stderr.",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/successResponse" },
+    { "$ref": "#/$defs/errorResponse" },
+    { "$ref": "#/$defs/notification" }
+  ],
+  "$defs": {
+    "requestId": {
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 128 },
+        { "type": "integer", "minimum": 0 }
+      ]
+    },
+    "requestMethod": {
+      "enum": [
+        "hello",
+        "environment.diagnose",
+        "job.start",
+        "job.cancel",
+        "job.status",
+        "analysis.start",
+        "session.list",
+        "session.get",
+        "session.delete",
+        "flow.query",
+        "worker.shutdown"
+      ]
+    },
+    "notificationMethod": {
+      "enum": [
+        "worker.ready",
+        "worker.log",
+        "job.progress",
+        "job.state_changed",
+        "job.completed"
+      ]
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "INVALID_REQUEST",
+            "PROTOCOL_VERSION_MISMATCH",
+            "METHOD_NOT_FOUND",
+            "INVALID_PARAMS",
+            "JOB_BUSY",
+            "JOB_NOT_FOUND",
+            "SESSION_NOT_FOUND",
+            "CAPTURE_PERMISSION_DENIED",
+            "CORE_UNAVAILABLE",
+            "CANCELLED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "data": { "type": "object" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "type", "id", "method", "params"],
+      "properties": {
+        "api_version": { "const": 1 },
+        "type": { "const": "request" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "method": { "$ref": "#/$defs/requestMethod" },
+        "params": { "type": "object" }
+      }
+    },
+    "successResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "type", "id", "result"],
+      "properties": {
+        "api_version": { "const": 1 },
+        "type": { "const": "response" },
+        "id": { "$ref": "#/$defs/requestId" },
+        "result": {}
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "type", "id", "error"],
+      "properties": {
+        "api_version": { "const": 1 },
+        "type": { "const": "response" },
+        "id": {
+          "oneOf": [
+            { "$ref": "#/$defs/requestId" },
+            { "type": "null" }
+          ]
+        },
+        "error": { "$ref": "#/$defs/error" }
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api_version", "type", "method", "params"],
+      "properties": {
+        "api_version": { "const": 1 },
+        "type": { "const": "notification" },
+        "method": { "$ref": "#/$defs/notificationMethod" },
+        "params": { "type": "object" }
+      }
+    }
+  }
+}

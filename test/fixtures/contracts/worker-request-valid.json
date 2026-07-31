@@ -1,0 +1,7 @@
+{
+  "api_version": 1,
+  "type": "request",
+  "id": "ui-1",
+  "method": "environment.diagnose",
+  "params": {}
+}

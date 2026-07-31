@@ -1,0 +1,12 @@
+{
+  "api_version": 1,
+  "type": "response",
+  "id": 7,
+  "error": {
+    "code": "INVALID_PARAMS",
+    "message": "duration_seconds must be at least 1",
+    "data": {
+      "path": ["duration_seconds"]
+    }
+  }
+}

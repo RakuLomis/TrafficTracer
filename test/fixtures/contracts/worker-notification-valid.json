@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "type": "notification",
+  "method": "job.progress",
+  "params": {
+    "job_id": "2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+    "stage": "capturing",
+    "progress": 0.4
+  }
+}
