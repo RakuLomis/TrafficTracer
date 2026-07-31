@@ -68,7 +68,12 @@ def test_unix_socket_request_and_bearer(tmp_path):
 def test_tracing_session_restores_exact_state(tmp_path):
     mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
     calls = []
-    previous = {"enabled": True, "output": "/old/trace.jsonl", "active_sessions": 2}
+    previous = {
+        "enabled": True,
+        "output": "/old/trace.jsonl",
+        "session_id": "previous-session",
+        "active_sessions": 2,
+    }
 
     def fake_request(method, path, body=None, timeout=10):
         calls.append((method, path, body))
@@ -77,7 +82,15 @@ def test_tracing_session_restores_exact_state(tmp_path):
     mgr._api_request = fake_request
     with mgr.tracing_session(str(tmp_path / "new.jsonl")):
         pass
-    assert calls[-1] == ("PATCH", "/experimental/tracing", {"enabled": True, "output": "/old/trace.jsonl"})
+    assert calls[-1] == (
+        "PATCH",
+        "/experimental/tracing",
+        {
+            "enabled": True,
+            "output": "/old/trace.jsonl",
+            "session_id": "previous-session",
+        },
+    )
 
 
 def test_api_error_preserves_status():
@@ -96,3 +109,23 @@ def test_enable_tracing_resolves_external_output_path(tmp_path, monkeypatch):
         "enabled": True,
         "output": str(tmp_path / "relative" / "trace.jsonl"),
     }]
+
+
+def test_enable_tracing_propagates_session_id(tmp_path):
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    calls = []
+    mgr.patch_tracing = lambda state: calls.append(state) or state
+    mgr.enable_tracing(str(tmp_path / "trace.jsonl"), session_id="session-1")
+    assert calls == [{
+        "enabled": True,
+        "output": str(tmp_path / "trace.jsonl"),
+        "session_id": "session-1",
+    }]
+
+
+def test_restore_tracing_clears_session_ownership_when_previously_absent():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    calls = []
+    mgr.patch_tracing = lambda state: calls.append(state) or state
+    mgr.restore_tracing({"enabled": False, "output": ""})
+    assert calls == [{"enabled": False, "output": "", "session_id": ""}]

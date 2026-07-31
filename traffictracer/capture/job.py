@@ -13,6 +13,12 @@ from traffictracer.jobs.models import CaptureJobResult, CaptureJobSpec, JobState
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import JobStage, ProgressReporter
 from traffictracer.session.atomic import write_json_atomic
+from traffictracer.session.recovery import (
+    RECOVERY_JOURNAL_NAME,
+    RecoveryJournal,
+    TracingSnapshot,
+)
+from traffictracer.session.store import SessionStore
 from traffictracer.utils import logger
 
 from .cdp import SyncCDPCollector
@@ -26,6 +32,7 @@ from .tshark import start_packet_capture, stop_packet_capture
 class CaptureSessionContext:
     session_id: str
     directory: Path
+    store: SessionStore | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +101,10 @@ class CaptureJob:
             self.cancellation.checkpoint()
             self.progress.emit(JobState.PREPARING, JobStage.CORE_CONFIGURE, 0.1)
             previous_tracing = self.mihomo.get_tracing_status()
-            self.mihomo.enable_tracing(str(paths["mihomo_trace"]))
+            self._persist_recovery(previous_tracing)
+            self.mihomo.enable_tracing(
+                str(paths["mihomo_trace"]), session_id=self.session.session_id
+            )
             self._record(paths["mihomo_trace"])
 
             proxy_info = self.mihomo.get_proxy_info()
@@ -110,10 +120,12 @@ class CaptureJob:
                     self.spec.interfaces.tun, paths["tun_pcap"]
                 )
                 self.registry.register(tun_capture.process, "tshark-tun")
+                self._persist_recovery(previous_tracing)
                 phys_capture = start_packet_capture(
                     self.spec.interfaces.physical, paths["phys_pcap"]
                 )
                 self.registry.register(phys_capture.process, "tshark-physical")
+                self._persist_recovery(previous_tracing)
                 self._record(paths["tun_pcap"])
                 self._record(paths["phys_pcap"])
 
@@ -134,6 +146,7 @@ class CaptureJob:
                 disable_background_networking=self.runtime.disable_background_networking,
             )
             self.registry.register(chrome_proc, "chrome")
+            self._persist_recovery(previous_tracing)
             self._record(paths["netlog"])
 
             if use_cdp:
@@ -218,8 +231,10 @@ class CaptureJob:
         if previous_tracing is not None:
             try:
                 self.mihomo.restore_tracing(previous_tracing)
+                self._clear_recovery()
             except Exception as exc:
                 logger.warning("Failed to restore Mihomo tracing state: %s", exc)
+                errors.append(exc)
         if errors and not suppress_errors:
             raise errors[0]
 
@@ -257,3 +272,36 @@ class CaptureJob:
         value = str(relative)
         if value not in self._artifacts:
             self._artifacts.append(value)
+
+    def _persist_recovery(self, previous_tracing: dict[str, Any]) -> None:
+        if self.session.store is None:
+            return
+        journal = RecoveryJournal.capture(
+            session_id=self.session.session_id,
+            tracing=TracingSnapshot(
+                enabled=previous_tracing.get("enabled") is True,
+                output=(
+                    previous_tracing.get("output", "")
+                    if isinstance(previous_tracing.get("output", ""), str)
+                    else ""
+                ),
+                session_id=(
+                    previous_tracing.get("session_id", "")
+                    if isinstance(previous_tracing.get("session_id", ""), str)
+                    else ""
+                ),
+            ),
+            processes=self.registry.snapshot(),
+        )
+        journal.persist(self.session.store)
+
+    def _clear_recovery(self) -> None:
+        if self.session.store is None:
+            return
+        path = self.session.store.artifact_path(
+            self.session.session_id, RECOVERY_JOURNAL_NAME
+        )
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass

@@ -155,24 +155,31 @@ class MihomoManager:
         return self._api_request("PATCH", "/experimental/tracing", state)
 
     def restore_tracing(self, state: dict) -> dict:
-        patch = {key: state[key] for key in ("enabled", "output") if key in state}
+        patch = {
+            "enabled": state.get("enabled", False),
+            "output": state.get("output", ""),
+            "session_id": state.get("session_id", ""),
+        }
         return self.patch_tracing(patch)
 
-    def enable_tracing(self, output_path: str) -> dict:
+    def enable_tracing(self, output_path: str, session_id: str = "") -> dict:
         output_path = str(Path(output_path).expanduser().resolve())
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         logger.info("Enabling Mihomo tracing -> %s", output_path)
-        return self.patch_tracing({"enabled": True, "output": output_path})
+        patch = {"enabled": True, "output": output_path}
+        if session_id:
+            patch["session_id"] = session_id
+        return self.patch_tracing(patch)
 
     def disable_tracing(self) -> dict:
         logger.info("Disabling Mihomo tracing")
         return self.patch_tracing({"enabled": False})
 
     @contextmanager
-    def tracing_session(self, output_path: str):
+    def tracing_session(self, output_path: str, session_id: str = ""):
         """Enable tracing temporarily and restore the controller's prior state."""
         previous = self.get_tracing_status()
-        self.enable_tracing(output_path)
+        self.enable_tracing(output_path, session_id=session_id)
         try:
             yield
         finally:

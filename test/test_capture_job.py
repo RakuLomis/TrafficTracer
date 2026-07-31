@@ -15,6 +15,7 @@ from traffictracer.jobs.models import (
 )
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import ProgressReporter
+from traffictracer.session.recovery import RECOVERY_JOURNAL_NAME, RecoveryJournal
 
 
 class FakeProcess:
@@ -52,7 +53,7 @@ class FakeMihomo:
         self.events.append("tracing:get")
         return {"enabled": False, "output": ""}
 
-    def enable_tracing(self, path):
+    def enable_tracing(self, path, session_id=""):
         self.events.append("tracing:enable")
 
     def get_proxy_info(self):
@@ -61,6 +62,15 @@ class FakeMihomo:
 
     def restore_tracing(self, state):
         self.events.append("tracing:restore")
+
+
+class FakeRecoveryStore:
+    def __init__(self, root):
+        self.root = root
+
+    def artifact_path(self, session_id, relative_path):
+        assert session_id == "session-1"
+        return self.root / relative_path
 
 
 def _spec(tmp_path):
@@ -78,7 +88,7 @@ def _spec(tmp_path):
     )
 
 
-def _job(tmp_path, monkeypatch, events, *, cancellation=None):
+def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=None):
     import traffictracer.capture.job as module
 
     def start(interface, path):
@@ -111,7 +121,7 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None):
         _spec(tmp_path),
         runtime=CaptureRuntime("/tmp/profile", enable_cdp=False, run_label="visit"),
         mihomo=FakeMihomo(events),
-        session=CaptureSessionContext("session-1", tmp_path),
+        session=CaptureSessionContext("session-1", tmp_path, recovery_store),
         registry=registry,
         progress=ProgressReporter("job-1", progress_events.append, min_interval=0),
         cancellation=cancellation or CancellationToken(),
@@ -150,6 +160,46 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert (tmp_path / "captures" / "example.com" / "visit_1").is_dir()
 
 
+def test_tracing_state_is_journaled_before_patch_and_cleared_after_restore(
+    tmp_path, monkeypatch
+):
+    events = []
+    store = FakeRecoveryStore(tmp_path)
+    job, registry, progress = _job(
+        tmp_path, monkeypatch, events, recovery_store=store
+    )
+    previous = {
+        "enabled": True,
+        "output": "/tmp/previous.jsonl",
+        "session_id": "previous-session",
+    }
+
+    class InspectingMihomo(FakeMihomo):
+        def get_tracing_status(self):
+            self.events.append("tracing:get")
+            return previous
+
+        def enable_tracing(self, path, session_id=""):
+            journal = RecoveryJournal.load(tmp_path / RECOVERY_JOURNAL_NAME)
+            assert journal.tracing.enabled is True
+            assert journal.tracing.output == "/tmp/previous.jsonl"
+            assert journal.tracing.session_id == "previous-session"
+            assert session_id == "session-1"
+            self.events.append("tracing:enable")
+
+        def restore_tracing(self, state):
+            assert state == previous
+            self.events.append("tracing:restore")
+
+    job.mihomo = InspectingMihomo(events)
+    job.run()
+    assert not (tmp_path / RECOVERY_JOURNAL_NAME).exists()
+    assert events.index("tracing:get") < events.index("tracing:enable")
+    assert events[-1] == "tracing:restore"
+    assert registry.closed
+    assert progress[-1].state is JobState.COMPLETED
+
+
 def test_capture_failure_still_stops_started_processes_and_restores_tracing(tmp_path, monkeypatch):
     events = []
     job, registry, progress = _job(tmp_path, monkeypatch, events)
@@ -160,6 +210,29 @@ def test_capture_failure_still_stops_started_processes_and_restores_tracing(tmp_
         job.run()
     assert registry.closed
     assert events[-3:] == ["stop:physical", "stop:tun", "tracing:restore"]
+    assert progress[-1].state is JobState.FAILED
+
+
+def test_capture_failure_restores_tracing_and_clears_recovery_journal(
+    tmp_path, monkeypatch
+):
+    events = []
+    store = FakeRecoveryStore(tmp_path)
+    job, registry, progress = _job(
+        tmp_path, monkeypatch, events, recovery_store=store
+    )
+    import traffictracer.capture.job as module
+
+    monkeypatch.setattr(
+        module,
+        "launch_chrome",
+        lambda **kwargs: (_ for _ in ()).throw(RuntimeError("launch failed")),
+    )
+    with pytest.raises(RuntimeError, match="launch failed"):
+        job.run()
+    assert not (tmp_path / RECOVERY_JOURNAL_NAME).exists()
+    assert events[-1] == "tracing:restore"
+    assert registry.closed
     assert progress[-1].state is JobState.FAILED
 
 
@@ -213,7 +286,13 @@ def test_cdp_cancellation_closes_browser_before_terminating_process(tmp_path, mo
 
     events = []
     token = CancellationToken()
-    job, registry, progress = _job(tmp_path, monkeypatch, events, cancellation=token)
+    job, registry, progress = _job(
+        tmp_path,
+        monkeypatch,
+        events,
+        cancellation=token,
+        recovery_store=FakeRecoveryStore(tmp_path),
+    )
     job.spec = replace(
         job.spec,
         options=replace(job.spec.options, collect_cdp=True),
@@ -251,5 +330,30 @@ def test_cdp_cancellation_closes_browser_before_terminating_process(tmp_path, mo
     assert time.monotonic() - started < 2.0
     assert events.index("cdp:Browser.close") < events.index("stop:chrome")
     assert events[-1] == "tracing:restore"
+    assert not (tmp_path / RECOVERY_JOURNAL_NAME).exists()
     assert registry.closed
     assert progress[-1].state is JobState.CANCELLED
+
+
+def test_restore_failure_keeps_journal_for_worker_recovery(tmp_path, monkeypatch):
+    events = []
+    job, registry, progress = _job(
+        tmp_path,
+        monkeypatch,
+        events,
+        recovery_store=FakeRecoveryStore(tmp_path),
+    )
+
+    class RestoreFails(FakeMihomo):
+        def restore_tracing(self, state):
+            self.events.append("tracing:restore-failed")
+            raise RuntimeError("controller unavailable")
+
+    job.mihomo = RestoreFails(events)
+    with pytest.raises(RuntimeError, match="controller unavailable"):
+        job.run()
+    journal = RecoveryJournal.load(tmp_path / RECOVERY_JOURNAL_NAME)
+    assert journal.tracing.enabled is False
+    assert journal.tracing.output == ""
+    assert registry.closed
+    assert progress[-1].state is JobState.FAILED
