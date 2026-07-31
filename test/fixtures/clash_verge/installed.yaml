@@ -1,0 +1,4 @@
+external-controller: ""
+external-controller-unix: /tmp/verge/verge-mihomo.sock
+secret: installed-generated-secret
+mode: rule

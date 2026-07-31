@@ -12,6 +12,7 @@ from pathlib import Path
 
 from ..config import Config, GlobalConfig, SiteConfig
 from ..utils import logger, ensure_dir, setup_logging
+from .controller_config import resolve_controller_config
 from .mihomo import MihomoManager
 from .tshark import start_tshark, stop_tshark
 from .chrome import launch_chrome, wait_chrome_exit, terminate_chrome
@@ -36,23 +37,21 @@ def run_capture(config: Config, only_domain: str | None = None) -> str:
             logger.error("Domain '%s' not found in config", only_domain)
             return str(session_dir)
 
-    mihomo_api = g.mihomo.api
-    mihomo_secret = g.mihomo.secret
-    if g.mihomo.config:
-        if g.mihomo.managed:
-            mihomo_api = _extract_api_from_config(g.mihomo.config) or mihomo_api
-        if not mihomo_secret:
-            mihomo_secret = _extract_secret_from_config(g.mihomo.config) or ""
-
-    mihomo = MihomoManager(g.mihomo.binary, g.mihomo.config, mihomo_api, mihomo_secret)
+    controller = resolve_controller_config(g.mihomo)
+    mihomo = MihomoManager(
+        g.mihomo.binary,
+        controller.generated_config,
+        controller.endpoint,
+        controller.secret,
+    )
 
     if g.mihomo.managed:
         mihomo_proc = mihomo.start()
     else:
         mihomo_proc = None
-        logger.info("Using externally-managed Mihomo at %s", mihomo_api)
+        logger.info("Using externally-managed Mihomo at %s", controller.endpoint)
         if not mihomo._api_reachable():
-            logger.warning("Mihomo API not reachable at %s — tracing will fail", mihomo_api)
+            logger.warning("Mihomo API not reachable at %s — tracing will fail", controller.endpoint)
 
     original_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, lambda s, f: (_cleanup(mihomo_proc, _active_procs), exit(1)))
@@ -192,36 +191,6 @@ def _capture_domain(site: SiteConfig, g: GlobalConfig, mihomo: MihomoManager, se
                 logger.warning("Failed to restore Mihomo tracing state: %s", exc)
 
     logger.info("=== Done capturing %s ===", domain)
-
-
-def _extract_api_from_config(config_path: str) -> str | None:
-    try:
-        with open(config_path, "r") as f:
-            import yaml
-            cfg = yaml.safe_load(f)
-        if isinstance(cfg, dict):
-            unix = cfg.get("external-controller-unix", "")
-            if unix:
-                return f"unix://{unix}"
-            ec = cfg.get("external-controller", "")
-            if ec:
-                return f"http://{ec}" if "://" not in ec else ec
-    except Exception:
-        pass
-    return None
-
-
-def _extract_secret_from_config(config_path: str) -> str | None:
-    try:
-        with open(config_path, "r") as f:
-            import yaml
-            cfg = yaml.safe_load(f)
-        if isinstance(cfg, dict):
-            secret = cfg.get("secret", "")
-            return str(secret) if secret else None
-    except Exception:
-        pass
-    return None
 
 
 def _cleanup(mihomo_proc, active_procs=None):

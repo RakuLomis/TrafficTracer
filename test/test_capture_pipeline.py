@@ -77,15 +77,3 @@ if __name__ == "__main__":
     test_site_filtering()
     test_cdp_collector_lifecycle_order()
     print("\n✓ All capture pipeline tests passed!")
-
-
-def test_extract_clash_verge_controller_settings(tmp_path):
-    from traffictracer.capture.pipeline import _extract_api_from_config, _extract_secret_from_config
-    config = tmp_path / "clash-verge.yaml"
-    config.write_text(
-        "external-controller: ''\n"
-        "external-controller-unix: /tmp/verge/verge-mihomo.sock\n"
-        "secret: generated-secret\n"
-    )
-    assert _extract_api_from_config(str(config)) == "unix:///tmp/verge/verge-mihomo.sock"
-    assert _extract_secret_from_config(str(config)) == "generated-secret"

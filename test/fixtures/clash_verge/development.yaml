@@ -1,0 +1,4 @@
+external-controller: 127.0.0.1:19090
+external-controller-unix: ""
+secret: development-generated-secret
+mode: direct
