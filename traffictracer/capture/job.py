@@ -138,7 +138,8 @@ class CaptureJob:
 
             if use_cdp:
                 collector = SyncCDPCollector(
-                    debugging_port=self.runtime.remote_debugging_port
+                    debugging_port=self.runtime.remote_debugging_port,
+                    cancellation=self.cancellation,
                 )
                 collector.connect()
                 collector.setup()
@@ -155,13 +156,15 @@ class CaptureJob:
                 collector.close()
                 collector = None
                 if not wait_chrome_exit(
-                    chrome_proc, timeout=self.runtime.graceful_close_timeout
+                    chrome_proc,
+                    timeout=self.runtime.graceful_close_timeout,
+                    cancellation=self.cancellation,
                 ):
-                    terminate_chrome(chrome_proc)
+                    terminate_chrome(chrome_proc, cancellation=self.cancellation)
             else:
                 time.sleep(self.spec.duration_seconds)
                 self.cancellation.checkpoint()
-                terminate_chrome(chrome_proc)
+                terminate_chrome(chrome_proc, cancellation=self.cancellation)
 
             if self.spec.options.collect_netlog:
                 repair_truncated_netlog(str(paths["netlog"]))
@@ -204,7 +207,7 @@ class CaptureJob:
             attempt("CDP browser close", collector.close_browser)
             attempt("CDP collector close", collector.close)
         if chrome_proc is not None and chrome_proc.poll() is None:
-            attempt("Chrome stop", lambda: terminate_chrome(chrome_proc))
+            attempt("Chrome stop", lambda: terminate_chrome(chrome_proc, cancellation=self.cancellation))
         if phys_capture is not None:
             attempt("physical packet capture stop", lambda: stop_packet_capture(phys_capture))
         if tun_capture is not None:

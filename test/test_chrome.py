@@ -104,3 +104,17 @@ if __name__ == "__main__":
     test_launch_chrome_background_flags()
     test_launch_chrome_no_background_flags_by_default()
     print("\n✓ All Chrome manager tests passed!")
+
+
+def test_cancelled_chrome_cleanup_uses_short_grace_before_kill():
+    from traffictracer.jobs.cancellation import CancellationToken
+
+    token = CancellationToken()
+    token.cancel("cancel navigation")
+    proc = MagicMock()
+    proc.pid = 123
+    proc.poll.return_value = None
+    proc.wait.side_effect = [subprocess.TimeoutExpired("chrome", 1), 0]
+    terminate_chrome(proc, timeout=15, cancellation=token)
+    proc.wait.assert_any_call(timeout=1.0)
+    proc.kill.assert_called_once()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ..jobs.cancellation import CancellationToken
 from ..utils import logger
 
 
@@ -61,10 +62,16 @@ def launch_chrome(
     )
 
 
-def wait_chrome_exit(proc: subprocess.Popen, timeout: float = 20) -> bool:
+def wait_chrome_exit(
+    proc: subprocess.Popen,
+    timeout: float = 20,
+    cancellation: CancellationToken | None = None,
+) -> bool:
     if proc is None or proc.poll() is not None:
         return True
     logger.info("Waiting for Chrome (PID %d) to exit...", proc.pid)
+    if cancellation is not None and cancellation.cancelled:
+        timeout = min(timeout, 1.0)
     try:
         proc.wait(timeout=timeout)
         logger.info("Chrome exited cleanly")
@@ -74,10 +81,16 @@ def wait_chrome_exit(proc: subprocess.Popen, timeout: float = 20) -> bool:
         return False
 
 
-def terminate_chrome(proc: subprocess.Popen, timeout: float = 15) -> None:
+def terminate_chrome(
+    proc: subprocess.Popen,
+    timeout: float = 15,
+    cancellation: CancellationToken | None = None,
+) -> None:
     if proc is None or proc.poll() is not None:
         return
     logger.info("Terminating Chrome (PID %d)", proc.pid)
+    if cancellation is not None and cancellation.cancelled:
+        timeout = min(timeout, 1.0)
     proc.terminate()
     try:
         proc.wait(timeout=timeout)

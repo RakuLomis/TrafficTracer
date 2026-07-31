@@ -95,7 +95,7 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None):
         events.append("launch:chrome")
         return FakeProcess("chrome", events)
 
-    def terminate(process):
+    def terminate(process, **kwargs):
         events.append("stop:chrome")
         process.returncode = 0
 
@@ -204,3 +204,52 @@ def test_packet_capture_stop_error_does_not_skip_restore(tmp_path, monkeypatch):
     assert events[-3:] == ["stop:physical", "stop:tun", "tracing:restore"]
     assert registry.closed
     assert progress[-1].state is JobState.FAILED
+
+
+def test_cdp_cancellation_closes_browser_before_terminating_process(tmp_path, monkeypatch):
+    from dataclasses import replace
+    import time
+    import traffictracer.capture.job as module
+
+    events = []
+    token = CancellationToken()
+    job, registry, progress = _job(tmp_path, monkeypatch, events, cancellation=token)
+    job.spec = replace(
+        job.spec,
+        options=replace(job.spec.options, collect_cdp=True),
+    )
+    job.runtime = replace(job.runtime, enable_cdp=True)
+
+    class CancellingCollector:
+        def __init__(self, debugging_port, cancellation):
+            self.token = cancellation
+
+        def connect(self):
+            events.append("cdp:connect")
+
+        def setup(self):
+            events.append("cdp:setup")
+
+        def navigate(self, url, load_timeout):
+            events.append("cdp:navigate")
+
+        def collect(self, seconds):
+            events.append("cdp:collect")
+            self.token.cancel("cancel during CDP")
+            self.token.checkpoint()
+
+        def close_browser(self):
+            events.append("cdp:Browser.close")
+
+        def close(self):
+            events.append("cdp:close")
+
+    monkeypatch.setattr(module, "SyncCDPCollector", CancellingCollector)
+    started = time.monotonic()
+    with pytest.raises(CancelledError, match="cancel during CDP"):
+        job.run()
+    assert time.monotonic() - started < 2.0
+    assert events.index("cdp:Browser.close") < events.index("stop:chrome")
+    assert events[-1] == "tracing:restore"
+    assert registry.closed
+    assert progress[-1].state is JobState.CANCELLED

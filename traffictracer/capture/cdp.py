@@ -9,12 +9,18 @@ import urllib.request
 import websockets
 from websockets.exceptions import ConnectionClosed
 
+from ..jobs.cancellation import CancellationToken
 from ..utils import logger
 
 
 class CDPCollector:
-    def __init__(self, debugging_port: int = 9222):
+    def __init__(
+        self,
+        debugging_port: int = 9222,
+        cancellation: CancellationToken | None = None,
+    ):
         self._port = debugging_port
+        self._cancellation = cancellation
         self._ws = None
         self._cmd_id = 0
         self._pending: dict[int, asyncio.Future] = {}
@@ -35,6 +41,7 @@ class CDPCollector:
 
     async def connect(self, retries: int = 15, delay: float = 0.5) -> None:
         for attempt in range(retries):
+            self._checkpoint()
             ws_url = self._get_browser_ws_url()
             if ws_url:
                 logger.info("CDP connecting to browser endpoint: %s", ws_url)
@@ -46,7 +53,7 @@ class CDPCollector:
                 self._reader_task = asyncio.create_task(self._reader_loop())
                 return
             if attempt < retries - 1:
-                await asyncio.sleep(delay)
+                await self._cancellable_sleep(delay)
         raise RuntimeError(
             f"Failed to get CDP browser WebSocket URL from port {self._port} "
             f"after {retries} attempts"
@@ -237,13 +244,15 @@ class CDPCollector:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while loop.time() < deadline:
+            self._checkpoint()
             for session_id, attached_target_id in self._session_to_target.items():
                 if attached_target_id == target_id:
                     return session_id
-            await asyncio.sleep(0.05)
+            await self._cancellable_sleep(0.05)
         return ""
 
     async def navigate(self, url: str, load_timeout: float = 30.0) -> None:
+        self._checkpoint()
         self._visit_url = url
         self._collecting = True
 
@@ -268,9 +277,18 @@ class CDPCollector:
                 {"url": url},
                 session_id=page_session,
             )
-            try:
-                await asyncio.wait_for(load_event.wait(), timeout=load_timeout)
-            except asyncio.TimeoutError:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + load_timeout
+            while not load_event.is_set() and loop.time() < deadline:
+                self._checkpoint()
+                try:
+                    await asyncio.wait_for(
+                        load_event.wait(),
+                        timeout=min(0.05, max(0.001, deadline - loop.time())),
+                    )
+                except asyncio.TimeoutError:
+                    pass
+            if not load_event.is_set():
                 logger.warning(
                     "Page load event not received for %s within %.1fs",
                     url,
@@ -282,7 +300,22 @@ class CDPCollector:
         logger.info("Navigation to %s complete, collecting events...", url)
 
     async def collect(self, seconds: float) -> None:
-        await asyncio.sleep(seconds)
+        await self._cancellable_sleep(seconds)
+
+    def _checkpoint(self) -> None:
+        cancellation = getattr(self, "_cancellation", None)
+        if cancellation is not None:
+            cancellation.checkpoint()
+
+    async def _cancellable_sleep(self, seconds: float) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, seconds)
+        while True:
+            self._checkpoint()
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(0.05, remaining))
 
     def stop_collecting(self) -> None:
         self._collecting = False
@@ -342,8 +375,12 @@ class CDPCollector:
 
 
 class SyncCDPCollector:
-    def __init__(self, debugging_port: int = 9222):
-        self._collector = CDPCollector(debugging_port)
+    def __init__(
+        self,
+        debugging_port: int = 9222,
+        cancellation: CancellationToken | None = None,
+    ):
+        self._collector = CDPCollector(debugging_port, cancellation)
         self._loop = asyncio.new_event_loop()
         self._thread = __import__("threading").Thread(
             target=self._run_loop, daemon=True,

@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 import asyncio
+import pytest
 from unittest.mock import patch, MagicMock
 
 from traffictracer.capture.cdp import CDPCollector
@@ -301,3 +302,34 @@ if __name__ == "__main__":
     test_late_attached_target_enables_network_and_page()
     test_navigate_uses_created_target_and_waits_for_load()
     print("\n✓ All CDP collector tests passed!")
+
+
+def test_collect_cancellation_enters_cleanup_window_quickly():
+    import time
+    from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+
+    async def scenario():
+        token = CancellationToken()
+        collector = CDPCollector(cancellation=token)
+        task = asyncio.create_task(collector.collect(30))
+        await asyncio.sleep(0.05)
+        started = time.monotonic()
+        token.cancel("cancel during collection")
+        with pytest.raises(CancelledError, match="cancel during collection"):
+            await task
+        return time.monotonic() - started
+
+    assert asyncio.run(scenario()) < 2.0
+
+
+def test_navigation_checks_pre_cancelled_token_before_cdp_commands():
+    from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+
+    async def scenario():
+        token = CancellationToken()
+        token.cancel("cancel before navigation")
+        collector = CDPCollector(cancellation=token)
+        with pytest.raises(CancelledError, match="cancel before navigation"):
+            await collector.navigate("https://example.com")
+
+    asyncio.run(scenario())
