@@ -1,0 +1,28 @@
+schema_version: 1
+product:
+  name: TrafficTracer Complete
+  version: 0.1.0-dev
+  branch: Complete
+  platforms:
+    - x86_64-unknown-linux-gnu
+components:
+  mihomo:
+    path: components/mihomo
+    repository: https://github.com/RakuLomis/mihomo.git
+    branch: TrafficTracer
+    commit: c24743d9259615c8420582714d1daee493ca58e8
+  clash_verge_rev:
+    path: components/clash-verge-rev
+    repository: https://github.com/RakuLomis/clash-verge-rev.git
+    branch: feat/traffic-tracer
+    commit: 5f5845c1a8a440619e2a4d84eb08ed9e60c7dbfd
+  traffictracer:
+    path: .
+    branch: Complete
+    version_source: traffictracer.version.COMPLETE_VERSION
+protocols:
+  worker_api: 1
+  session_manifest: 1
+  flow_result: 1
+  mihomo_tracing_api: 1
+  mihomo_event_schema: 1

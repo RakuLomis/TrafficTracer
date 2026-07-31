@@ -1,0 +1,8 @@
+"""Version constants shared by the Complete build and protocol handshakes."""
+
+COMPLETE_VERSION = "0.1.0-dev"
+WORKER_API_VERSION = 1
+SESSION_SCHEMA_VERSION = 1
+FLOW_SCHEMA_VERSION = 1
+MIHOMO_TRACING_API_VERSION = 1
+MIHOMO_EVENT_SCHEMA_VERSION = 1
