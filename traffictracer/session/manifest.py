@@ -14,7 +14,9 @@ from traffictracer.version import SESSION_SCHEMA_VERSION, WORKER_API_VERSION
 
 
 _TRANSITIONS: dict[JobState, frozenset[JobState]] = {
-    JobState.CREATED: frozenset({JobState.PREPARING, JobState.CANCELLED, JobState.FAILED}),
+    JobState.CREATED: frozenset(
+        {JobState.PREPARING, JobState.CANCELLED, JobState.FAILED, JobState.INTERRUPTED}
+    ),
     JobState.PREPARING: frozenset(
         {JobState.CAPTURING, JobState.CANCELLED, JobState.FAILED, JobState.INTERRUPTED}
     ),
