@@ -62,8 +62,14 @@ def test_analysis_job_completes_manifest_and_returns_artifact(tmp_path):
     result = _job(tmp_path, session_dir, events).run()
     assert result.state is JobState.COMPLETED
     assert result.session_id == manifest.session_id
-    assert result.artifacts == ("results/correlation.json",)
-    assert store.get(manifest.session_id).state is JobState.COMPLETED
+    assert result.artifacts == (
+        "results/correlation.json",
+        "results/flow-index.json",
+        "results/summary.json",
+    )
+    completed = store.get(manifest.session_id)
+    assert completed.state is JobState.COMPLETED
+    assert [artifact.path for artifact in completed.artifacts] == list(result.artifacts)
     assert events[-1].state is JobState.COMPLETED
 
 

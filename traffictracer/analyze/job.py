@@ -11,10 +11,11 @@ from traffictracer.jobs.models import (
     JobState,
 )
 from traffictracer.jobs.progress import ProgressReporter
-from traffictracer.session.manifest import SessionError, SessionManifest
+from traffictracer.session.manifest import Artifact, SessionError, SessionManifest
 from traffictracer.session.store import MANIFEST_NAME, SessionStore
 
 from .pipeline import run_analysis
+from .artifacts import persist_analysis_artifacts
 
 
 class AnalysisJob:
@@ -43,6 +44,16 @@ class AnalysisJob:
                 split_pcaps=self.spec.options.split_pcaps,
                 overwrite=self.spec.options.overwrite,
             )
+            artifact_paths = [Path(correlation_path)]
+            if self.spec.options.write_flow_index:
+                self.cancellation.checkpoint()
+                generated = persist_analysis_artifacts(
+                    self.spec.session_dir,
+                    self._manifest.session_id if self._manifest is not None else "",
+                )
+                artifact_paths.extend([generated.flow_index, generated.summary])
+                self.cancellation.checkpoint()
+            self._record_artifacts(artifact_paths)
         except CancelledError:
             self._finish_manifest(JobState.CANCELLED)
             self.progress.finish(JobState.CANCELLED, self.cancellation.reason)
@@ -58,12 +69,15 @@ class AnalysisJob:
 
         self._finish_manifest(JobState.COMPLETED)
         self.progress.finish(JobState.COMPLETED, "analysis complete")
-        artifact = _relative_artifact(self.spec.session_dir, correlation_path)
+        artifacts = tuple(
+            _relative_artifact(self.spec.session_dir, str(path))
+            for path in artifact_paths
+        )
         return CaptureJobResult(
             job_id=self.spec.job_id,
             state=JobState.COMPLETED,
             session_id=self._manifest.session_id if self._manifest is not None else "",
-            artifacts=(artifact,),
+            artifacts=artifacts,
         )
 
     def _begin_manifest(self) -> None:
@@ -90,6 +104,22 @@ class AnalysisJob:
         if self._store is None or self._manifest is None:
             return
         self._manifest = self._manifest.transition(state, error=error)
+        self._store.save(self._manifest)
+
+    def _record_artifacts(self, paths: list[Path]) -> None:
+        if self._store is None or self._manifest is None:
+            return
+        for path in paths:
+            relative = _relative_artifact(self.spec.session_dir, str(path))
+            self._manifest = self._manifest.with_artifact(
+                Artifact(
+                    name=path.name,
+                    kind="derived",
+                    path=relative,
+                    media_type="application/json",
+                    size_bytes=path.stat().st_size,
+                )
+            )
         self._store.save(self._manifest)
 
 
