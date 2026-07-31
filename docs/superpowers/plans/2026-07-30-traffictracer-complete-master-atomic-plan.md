@@ -18,8 +18,8 @@
 | 项目 | 文档 | 任务前缀 |
 |---|---|---|
 | TrafficTracer 总仓/Worker | `docs/superpowers/plans/2026-07-30-complete-worker-atomic-plan.md` | `TT-*` |
-| mihomo 核心 | `docs/superpowers/plans/2026-07-30-complete-core-atomic-plan.md` | `CORE-*` |
-| clash-verge-rev UI/编排 | `docs/traffictracer/2026-07-30-complete-ui-atomic-plan.md` | `UI-*` |
+| mihomo 核心 | `docs/superpowers/plans/components/mihomo-complete-core-atomic-plan.md` | `CORE-*` |
+| clash-verge-rev UI/编排 | `docs/superpowers/plans/components/clash-verge-complete-ui-atomic-plan.md` | `UI-*` |
 | 跨仓集成门禁 | 本文 | `INT-*` |
 
 ## 3. 固定协议版本
