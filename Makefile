@@ -18,9 +18,8 @@ test-contracts: ## Run cross-component contract tests (available after TT-009).
 	@echo "test-contracts is not available until TT-009 is complete" >&2
 	@exit 2
 
-check-toolchain: ## Check the Complete development toolchain (available after TT-005).
-	@echo "check-toolchain is not available until TT-005 is complete" >&2
-	@exit 2
+check-toolchain: ## Check the Complete development toolchain.
+	@bash scripts/check-toolchain.sh
 
 dev: ## Build and start TrafficTracer Complete (available after TT-034).
 	@echo "dev is not available until TT-034 is complete" >&2
