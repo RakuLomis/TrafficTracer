@@ -1,0 +1,109 @@
+"""Tests for YAML-independent Complete job models."""
+
+import json
+from pathlib import Path
+
+import pytest
+
+from traffictracer.contracts import ValidationError
+from traffictracer.jobs.models import (
+    CaptureInterfaces,
+    CaptureJobOptions,
+    CaptureJobResult,
+    CaptureJobSpec,
+    ControllerSpec,
+    JobState,
+    ProgressEvent,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "test" / "fixtures" / "contracts" / "job-valid.json"
+
+
+def _fixture() -> dict:
+    with FIXTURE.open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def test_capture_job_round_trips_the_contract_fixture():
+    payload = _fixture()
+    spec = CaptureJobSpec.from_dict(payload)
+    assert spec.to_dict() == payload
+    assert spec.interfaces == CaptureInterfaces(tun="Meta", physical="eth0")
+    assert spec.controller.secret == "fixture-only-secret"
+
+
+def test_capture_job_can_be_constructed_without_yaml():
+    spec = CaptureJobSpec(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        url="https://example.com/",
+        domain="example.com",
+        duration_seconds=10,
+        network="tcp",
+        interfaces=CaptureInterfaces(tun="Meta", physical="eth0"),
+        output_root="/tmp/traffictracer",
+        chrome_binary="/usr/bin/chromium",
+        controller=ControllerSpec(endpoint="unix:///tmp/mihomo.sock"),
+    )
+    payload = spec.to_dict()
+    assert payload["kind"] == "capture"
+    assert payload["schema_version"] == 1
+    assert payload["options"] == CaptureJobOptions().to_dict()
+    assert "secret" not in payload["controller"]
+
+
+def test_invalid_capture_job_is_rejected_at_serialization_boundary():
+    spec = CaptureJobSpec(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        url="https://example.com/",
+        domain="example.com",
+        duration_seconds=0,
+        network="icmp",
+        interfaces=CaptureInterfaces(tun="Meta", physical="eth0"),
+        output_root="relative",
+        chrome_binary="/usr/bin/chromium",
+        controller=ControllerSpec(endpoint="http://127.0.0.1:9090"),
+    )
+    with pytest.raises(ValidationError):
+        spec.to_dict()
+
+
+def test_job_state_values_and_terminal_property_are_stable():
+    assert [state.value for state in JobState] == [
+        "created",
+        "preparing",
+        "capturing",
+        "analyzing",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+    ]
+    assert not JobState.CAPTURING.terminal
+    assert JobState.COMPLETED.terminal
+
+
+def test_progress_event_serializes_enum_and_utc_timestamp():
+    event = ProgressEvent(
+        job_id="job-1",
+        state=JobState.CAPTURING,
+        stage="capture.packets",
+        progress=0.25,
+        message="capturing",
+    ).to_dict()
+    assert event["state"] == "capturing"
+    assert event["progress"] == 0.25
+    assert event["timestamp"].endswith("Z")
+
+
+def test_capture_result_requires_terminal_state_and_serializes_tuples():
+    with pytest.raises(ValueError, match="terminal"):
+        CaptureJobResult(job_id="job-1", state=JobState.CAPTURING)
+    result = CaptureJobResult(
+        job_id="job-1",
+        state=JobState.COMPLETED,
+        session_id="session-1",
+        artifacts=("manifest.json", "analysis/correlation.json"),
+    )
+    assert result.to_dict()["artifacts"] == ["manifest.json", "analysis/correlation.json"]
