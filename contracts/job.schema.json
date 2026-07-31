@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/job.schema.json",
+  "title": "TrafficTracer Complete Job",
+  "description": "Versioned job specifications accepted by the TrafficTracer Complete worker.",
+  "oneOf": [
+    { "$ref": "#/$defs/captureJobSpec" },
+    { "$ref": "#/$defs/analysisJobSpec" }
+  ],
+  "$defs": {
+    "jobId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^/"
+    },
+    "controller": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["endpoint"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "oneOf": [
+            { "pattern": "^unix:///[^\\s]+$" },
+            { "pattern": "^https?://[^\\s]+$" }
+          ]
+        },
+        "secret": { "type": "string" },
+        "generated_config": { "$ref": "#/$defs/absolutePath" }
+      }
+    },
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tun", "physical"],
+      "properties": {
+        "tun": { "type": "string", "minLength": 1 },
+        "physical": { "type": "string", "minLength": 1 }
+      }
+    },
+    "captureOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capture_packets": { "type": "boolean", "default": true },
+        "collect_cdp": { "type": "boolean", "default": true },
+        "collect_netlog": { "type": "boolean", "default": true },
+        "analyze_after_capture": { "type": "boolean", "default": true },
+        "headless": { "type": "boolean", "default": false }
+      }
+    },
+    "analysisOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "split_pcaps": { "type": "boolean", "default": true },
+        "write_flow_index": { "type": "boolean", "default": true },
+        "overwrite": { "type": "boolean", "default": false }
+      }
+    },
+    "captureJobSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "kind",
+        "job_id",
+        "url",
+        "domain",
+        "duration_seconds",
+        "network",
+        "interfaces",
+        "output_root",
+        "chrome_binary",
+        "controller"
+      ],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "capture" },
+        "job_id": { "$ref": "#/$defs/jobId" },
+        "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^(?=.{1,253}$)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)(?:\\.(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?))*$"
+        },
+        "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "network": { "enum": ["tcp", "udp", "all"] },
+        "interfaces": { "$ref": "#/$defs/interfaces" },
+        "output_root": { "$ref": "#/$defs/absolutePath" },
+        "chrome_binary": { "$ref": "#/$defs/absolutePath" },
+        "controller": { "$ref": "#/$defs/controller" },
+        "options": { "$ref": "#/$defs/captureOptions" }
+      }
+    },
+    "analysisJobSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "job_id", "session_dir", "output_root"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "kind": { "const": "analysis" },
+        "job_id": { "$ref": "#/$defs/jobId" },
+        "session_dir": { "$ref": "#/$defs/absolutePath" },
+        "output_root": { "$ref": "#/$defs/absolutePath" },
+        "options": { "$ref": "#/$defs/analysisOptions" }
+      }
+    }
+  }
+}

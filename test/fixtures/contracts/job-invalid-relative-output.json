@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "kind": "analysis",
+  "job_id": "bc973e98-c472-40c8-bf82-e2992352ece0",
+  "session_dir": "/tmp/traffictracer/session",
+  "output_root": "./sessions"
+}

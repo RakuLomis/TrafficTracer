@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "kind": "analysis",
+  "job_id": "bc973e98-c472-40c8-bf82-e2992352ece0",
+  "session_dir": "/tmp/traffictracer/sessions/20260731-example",
+  "output_root": "/tmp/traffictracer/sessions",
+  "options": {
+    "split_pcaps": true,
+    "write_flow_index": true,
+    "overwrite": false
+  }
+}

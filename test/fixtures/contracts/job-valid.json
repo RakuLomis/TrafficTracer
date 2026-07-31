@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "capture",
+  "job_id": "2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+  "url": "https://example.com/",
+  "domain": "example.com",
+  "duration_seconds": 15,
+  "network": "all",
+  "interfaces": {
+    "tun": "Meta",
+    "physical": "eth0"
+  },
+  "output_root": "/tmp/traffictracer/sessions",
+  "chrome_binary": "/usr/bin/google-chrome",
+  "controller": {
+    "endpoint": "unix:///tmp/verge-mihomo.sock",
+    "secret": "fixture-only-secret",
+    "generated_config": "/tmp/traffictracer/runtime.yaml"
+  },
+  "options": {
+    "capture_packets": true,
+    "collect_cdp": true,
+    "collect_netlog": true,
+    "analyze_after_capture": true,
+    "headless": false
+  }
+}
