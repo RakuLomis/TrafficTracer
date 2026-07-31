@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import time
+import sys
 from typing import Any
 
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
@@ -18,7 +19,7 @@ from .cdp import SyncCDPCollector
 from .chrome import launch_chrome, terminate_chrome, wait_chrome_exit
 from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
-from .tshark import start_tshark, stop_tshark
+from .tshark import start_packet_capture, stop_packet_capture
 
 
 @dataclass(frozen=True)
@@ -84,8 +85,8 @@ class CaptureJob:
         self.progress.emit(JobState.PREPARING, JobStage.PREPARING, 0.05)
         paths = self._prepare_paths()
         previous_tracing: dict[str, Any] | None = None
-        tun_proc = None
-        phys_proc = None
+        tun_capture = None
+        phys_capture = None
         chrome_proc = None
         collector = None
 
@@ -105,14 +106,14 @@ class CaptureJob:
                 self.progress.emit(
                     JobState.CAPTURING, JobStage.CAPTURE_PACKETS, 0.2
                 )
-                tun_proc = start_tshark(
-                    self.spec.interfaces.tun, str(paths["tun_pcap"])
+                tun_capture = start_packet_capture(
+                    self.spec.interfaces.tun, paths["tun_pcap"]
                 )
-                self.registry.register(tun_proc, "tshark-tun")
-                phys_proc = start_tshark(
-                    self.spec.interfaces.physical, str(paths["phys_pcap"])
+                self.registry.register(tun_capture.process, "tshark-tun")
+                phys_capture = start_packet_capture(
+                    self.spec.interfaces.physical, paths["phys_pcap"]
                 )
-                self.registry.register(phys_proc, "tshark-physical")
+                self.registry.register(phys_capture.process, "tshark-physical")
                 self._record(paths["tun_pcap"])
                 self._record(paths["phys_pcap"])
 
@@ -165,28 +166,59 @@ class CaptureJob:
             if self.spec.options.collect_netlog:
                 repair_truncated_netlog(str(paths["netlog"]))
         finally:
-            self.progress.emit(
-                JobState.CAPTURING, JobStage.CLEANUP, 0.9, force=True
+            self._cleanup_resources(
+                collector=collector,
+                chrome_proc=chrome_proc,
+                tun_capture=tun_capture,
+                phys_capture=phys_capture,
+                previous_tracing=previous_tracing,
+                suppress_errors=sys.exc_info()[0] is not None,
             )
-            if collector is not None:
-                try:
-                    collector.close_browser()
-                finally:
-                    collector.close()
-            if chrome_proc is not None and chrome_proc.poll() is None:
-                terminate_chrome(chrome_proc)
-            if tun_proc is not None:
-                stop_tshark(tun_proc)
-            if phys_proc is not None:
-                stop_tshark(phys_proc)
-            cleanup = self.registry.cleanup()
-            if cleanup.errors:
-                logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
-            if previous_tracing is not None:
-                try:
-                    self.mihomo.restore_tracing(previous_tracing)
-                except Exception as exc:
-                    logger.warning("Failed to restore Mihomo tracing state: %s", exc)
+
+    def _cleanup_resources(
+        self,
+        *,
+        collector: Any,
+        chrome_proc: Any,
+        tun_capture: Any,
+        phys_capture: Any,
+        previous_tracing: dict[str, Any] | None,
+        suppress_errors: bool,
+    ) -> None:
+        errors: list[Exception] = []
+
+        def attempt(label: str, action: Any) -> None:
+            try:
+                action()
+            except Exception as exc:
+                logger.warning("%s failed: %s", label, exc)
+                errors.append(exc)
+
+        attempt(
+            "progress cleanup notification",
+            lambda: self.progress.emit(
+                JobState.CAPTURING, JobStage.CLEANUP, 0.9, force=True
+            ),
+        )
+        if collector is not None:
+            attempt("CDP browser close", collector.close_browser)
+            attempt("CDP collector close", collector.close)
+        if chrome_proc is not None and chrome_proc.poll() is None:
+            attempt("Chrome stop", lambda: terminate_chrome(chrome_proc))
+        if phys_capture is not None:
+            attempt("physical packet capture stop", lambda: stop_packet_capture(phys_capture))
+        if tun_capture is not None:
+            attempt("TUN packet capture stop", lambda: stop_packet_capture(tun_capture))
+        cleanup = self.registry.cleanup()
+        if cleanup.errors:
+            logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
+        if previous_tracing is not None:
+            try:
+                self.mihomo.restore_tracing(previous_tracing)
+            except Exception as exc:
+                logger.warning("Failed to restore Mihomo tracing state: %s", exc)
+        if errors and not suppress_errors:
+            raise errors[0]
 
     def _prepare_paths(self) -> dict[str, Path]:
         domain_dir = self.session.directory / "captures" / self.spec.domain

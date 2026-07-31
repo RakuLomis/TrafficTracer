@@ -84,9 +84,10 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None):
     def start(interface, path):
         role = "tun" if interface == "Meta" else "physical"
         events.append(f"start:{role}")
-        return FakeProcess(role, events)
+        return type("Capture", (), {"process": FakeProcess(role, events)})()
 
-    def stop(process):
+    def stop(capture):
+        process = capture.process
         events.append(f"stop:{process.role}")
         process.returncode = 0
 
@@ -98,8 +99,8 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None):
         events.append("stop:chrome")
         process.returncode = 0
 
-    monkeypatch.setattr(module, "start_tshark", start)
-    monkeypatch.setattr(module, "stop_tshark", stop)
+    monkeypatch.setattr(module, "start_packet_capture", start)
+    monkeypatch.setattr(module, "stop_packet_capture", stop)
     monkeypatch.setattr(module, "launch_chrome", launch)
     monkeypatch.setattr(module, "terminate_chrome", terminate)
     monkeypatch.setattr(module, "repair_truncated_netlog", lambda path: events.append("repair:netlog"))
@@ -134,8 +135,8 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
         "sleep",
         "stop:chrome",
         "repair:netlog",
-        "stop:tun",
         "stop:physical",
+        "stop:tun",
         "tracing:restore",
     ]
     assert [event.stage for event in progress] == [
@@ -158,7 +159,7 @@ def test_capture_failure_still_stops_started_processes_and_restores_tracing(tmp_
     with pytest.raises(RuntimeError, match="launch failed"):
         job.run()
     assert registry.closed
-    assert events[-3:] == ["stop:tun", "stop:physical", "tracing:restore"]
+    assert events[-3:] == ["stop:physical", "stop:tun", "tracing:restore"]
     assert progress[-1].state is JobState.FAILED
 
 
@@ -178,3 +179,28 @@ def test_capture_library_has_no_module_level_signal_or_process_registry():
     import traffictracer.capture.pipeline as pipeline
     assert not hasattr(pipeline, "signal")
     assert not hasattr(pipeline, "_active_procs")
+
+
+def test_packet_capture_stop_error_does_not_skip_restore(tmp_path, monkeypatch):
+    from traffictracer.capture.tshark import PacketCaptureError
+    import traffictracer.capture.job as module
+
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+
+    def fail_tun_stop(capture):
+        process = capture.process
+        events.append(f"stop:{process.role}")
+        process.returncode = 1
+        if process.role == "tun":
+            raise PacketCaptureError(
+                "CAPTURE_PERMISSION_DENIED", "permission denied", interface="Meta"
+            )
+
+    monkeypatch.setattr(module, "stop_packet_capture", fail_tun_stop)
+    with pytest.raises(PacketCaptureError) as caught:
+        job.run()
+    assert caught.value.code == "CAPTURE_PERMISSION_DENIED"
+    assert events[-3:] == ["stop:physical", "stop:tun", "tracing:restore"]
+    assert registry.closed
+    assert progress[-1].state is JobState.FAILED
