@@ -77,3 +77,9 @@ if __name__ == "__main__":
     test_site_filtering()
     test_cdp_collector_lifecycle_order()
     print("\n✓ All capture pipeline tests passed!")
+
+
+def test_resolve_executable_uses_path_lookup(monkeypatch):
+    from traffictracer.capture.pipeline import _resolve_executable
+    monkeypatch.setattr("traffictracer.capture.pipeline.shutil.which", lambda value: "/opt/chrome/chrome")
+    assert _resolve_executable("google-chrome") == "/opt/chrome/chrome"

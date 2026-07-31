@@ -1,0 +1,180 @@
+"""Lifecycle tests for the job-scoped single-domain capture."""
+
+from pathlib import Path
+
+import pytest
+
+from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSessionContext
+from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.models import (
+    CaptureInterfaces,
+    CaptureJobOptions,
+    CaptureJobSpec,
+    ControllerSpec,
+    JobState,
+)
+from traffictracer.jobs.process_registry import ProcessRegistry
+from traffictracer.jobs.progress import ProgressReporter
+
+
+class FakeProcess:
+    next_pid = 100
+
+    def __init__(self, role, events):
+        FakeProcess.next_pid += 1
+        self.pid = FakeProcess.next_pid
+        self.role = role
+        self.events = events
+        self.returncode = None
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.events.append(f"terminate:{self.role}")
+        self.returncode = -15
+
+    def kill(self):
+        self.events.append(f"kill:{self.role}")
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+class FakeMihomo:
+    def __init__(self, events):
+        self.events = events
+
+    def get_tracing_status(self):
+        self.events.append("tracing:get")
+        return {"enabled": False, "output": ""}
+
+    def enable_tracing(self, path):
+        self.events.append("tracing:enable")
+
+    def get_proxy_info(self):
+        self.events.append("proxy:info")
+        return []
+
+    def restore_tracing(self, state):
+        self.events.append("tracing:restore")
+
+
+def _spec(tmp_path):
+    return CaptureJobSpec(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        url="https://example.com/",
+        domain="example.com",
+        duration_seconds=1,
+        network="all",
+        interfaces=CaptureInterfaces("Meta", "eth0"),
+        output_root=str(tmp_path),
+        chrome_binary="/usr/bin/chromium",
+        controller=ControllerSpec("unix:///tmp/mihomo.sock"),
+        options=CaptureJobOptions(collect_cdp=False, analyze_after_capture=False),
+    )
+
+
+def _job(tmp_path, monkeypatch, events, *, cancellation=None):
+    import traffictracer.capture.job as module
+
+    def start(interface, path):
+        role = "tun" if interface == "Meta" else "physical"
+        events.append(f"start:{role}")
+        return FakeProcess(role, events)
+
+    def stop(process):
+        events.append(f"stop:{process.role}")
+        process.returncode = 0
+
+    def launch(**kwargs):
+        events.append("launch:chrome")
+        return FakeProcess("chrome", events)
+
+    def terminate(process):
+        events.append("stop:chrome")
+        process.returncode = 0
+
+    monkeypatch.setattr(module, "start_tshark", start)
+    monkeypatch.setattr(module, "stop_tshark", stop)
+    monkeypatch.setattr(module, "launch_chrome", launch)
+    monkeypatch.setattr(module, "terminate_chrome", terminate)
+    monkeypatch.setattr(module, "repair_truncated_netlog", lambda path: events.append("repair:netlog"))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: events.append("sleep"))
+    registry = ProcessRegistry()
+    progress_events = []
+    job = CaptureJob(
+        _spec(tmp_path),
+        runtime=CaptureRuntime("/tmp/profile", enable_cdp=False, run_label="visit"),
+        mihomo=FakeMihomo(events),
+        session=CaptureSessionContext("session-1", tmp_path),
+        registry=registry,
+        progress=ProgressReporter("job-1", progress_events.append, min_interval=0),
+        cancellation=cancellation or CancellationToken(),
+    )
+    return job, registry, progress_events
+
+
+def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch):
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+    result = job.run()
+    assert result.state is JobState.COMPLETED
+    assert registry.closed
+    assert events == [
+        "tracing:get",
+        "tracing:enable",
+        "proxy:info",
+        "start:tun",
+        "start:physical",
+        "launch:chrome",
+        "sleep",
+        "stop:chrome",
+        "repair:netlog",
+        "stop:tun",
+        "stop:physical",
+        "tracing:restore",
+    ]
+    assert [event.stage for event in progress] == [
+        "preparing",
+        "core.configure",
+        "capture.packets",
+        "capture.browser",
+        "cleanup",
+        "finished",
+    ]
+    assert (tmp_path / "captures" / "example.com" / "visit_1").is_dir()
+
+
+def test_capture_failure_still_stops_started_processes_and_restores_tracing(tmp_path, monkeypatch):
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+
+    import traffictracer.capture.job as module
+    monkeypatch.setattr(module, "launch_chrome", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("launch failed")))
+    with pytest.raises(RuntimeError, match="launch failed"):
+        job.run()
+    assert registry.closed
+    assert events[-3:] == ["stop:tun", "stop:physical", "tracing:restore"]
+    assert progress[-1].state is JobState.FAILED
+
+
+def test_pre_cancelled_job_has_no_process_or_controller_side_effects(tmp_path, monkeypatch):
+    events = []
+    token = CancellationToken()
+    token.cancel("user cancelled")
+    job, registry, progress = _job(tmp_path, monkeypatch, events, cancellation=token)
+    with pytest.raises(CancelledError, match="user cancelled"):
+        job.run()
+    assert events == []
+    assert registry.closed
+    assert progress[-1].state is JobState.CANCELLED
+
+
+def test_capture_library_has_no_module_level_signal_or_process_registry():
+    import traffictracer.capture.pipeline as pipeline
+    assert not hasattr(pipeline, "signal")
+    assert not hasattr(pipeline, "_active_procs")
