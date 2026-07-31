@@ -2,6 +2,7 @@
 
 from .cancellation import CancellationToken, CancelledError
 from .process_registry import CleanupReport, ProcessRecord, ProcessRegistry
+from .progress import JobStage, ProgressInvariantError, ProgressReporter
 from .models import (
     CaptureInterfaces,
     CaptureJobOptions,
@@ -18,6 +19,9 @@ __all__ = [
     "CleanupReport",
     "ProcessRecord",
     "ProcessRegistry",
+    "JobStage",
+    "ProgressInvariantError",
+    "ProgressReporter",
     "CaptureInterfaces",
     "CaptureJobOptions",
     "CaptureJobResult",
