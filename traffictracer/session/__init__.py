@@ -1,5 +1,6 @@
 """Persistent Session state for TrafficTracer Complete."""
 
+from .atomic import write_json_atomic
 from .manifest import (
     Artifact,
     ComponentVersion,
@@ -11,6 +12,7 @@ from .manifest import (
 )
 
 __all__ = [
+    "write_json_atomic",
     "Artifact",
     "ComponentVersion",
     "ComponentVersions",
