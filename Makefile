@@ -3,7 +3,7 @@ PYTHON ?= python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap test-python test-contracts check-toolchain dev package-linux
+.PHONY: help bootstrap test-python test-contracts check-toolchain build-core build-worker prepare-dev dev package-linux
 
 help: ## Show Complete development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -20,9 +20,17 @@ test-contracts: ## Run the Complete schema and validation contract tests.
 check-toolchain: ## Check the Complete development toolchain.
 	@bash scripts/check-toolchain.sh
 
-dev: ## Build and start TrafficTracer Complete (available after TT-034).
-	@echo "dev is not available until TT-034 is complete" >&2
-	@exit 2
+build-core: ## Rebuild the pinned mihomo-traffictracer sidecar.
+	@bash scripts/build-core.sh
+
+build-worker: ## Rebuild and smoke-test the TrafficTracer Worker sidecar.
+	@bash scripts/build-worker.sh
+
+prepare-dev: ## Rebuild and inject all Complete development sidecars.
+	@bash scripts/build-ui.sh --prepare-only
+
+dev: ## Rebuild sidecars and start TrafficTracer Complete in development mode.
+	@bash scripts/build-ui.sh
 
 package-linux: ## Build the Linux package (available after TT-035).
 	@echo "package-linux is not available until TT-035 is complete" >&2
