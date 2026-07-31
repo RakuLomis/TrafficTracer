@@ -73,6 +73,20 @@ def test_analysis_job_completes_manifest_and_returns_artifact(tmp_path):
     assert events[-1].state is JobState.COMPLETED
 
 
+def test_completed_session_can_be_explicitly_reanalyzed_without_duplicate_artifacts(
+    tmp_path,
+):
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    first = store.get(manifest.session_id)
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    second = store.get(manifest.session_id)
+    assert second.state is JobState.COMPLETED
+    assert [artifact.path for artifact in second.artifacts] == [
+        artifact.path for artifact in first.artifacts
+    ]
+
+
 def test_analysis_failure_preserves_raw_artifact_and_records_manifest_error(
     tmp_path, monkeypatch
 ):

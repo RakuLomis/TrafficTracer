@@ -17,13 +17,13 @@ class JobStage(str, Enum):
     CORE_CONFIGURE = "core.configure"
     CAPTURE_PACKETS = "capture.packets"
     CAPTURE_BROWSER = "capture.browser"
+    CLEANUP = "cleanup"
     ANALYZE_CDP = "analyze.cdp"
     ANALYZE_NETLOG = "analyze.netlog"
     ANALYZE_MIHOMO = "analyze.mihomo"
     ANALYZE_CORRELATE = "analyze.correlate"
     ANALYZE_SPLIT = "analyze.split"
     ANALYZE_WRITE = "analyze.write"
-    CLEANUP = "cleanup"
     FINISHED = "finished"
 
 
@@ -126,3 +126,43 @@ class ProgressReporter:
         event = self.emit(state, JobStage.FINISHED, 1.0, message, force=True)
         assert event is not None
         return event
+
+
+class ProgressWindow:
+    """Map a child pipeline's 0..1 progress into a monotonic parent window."""
+
+    def __init__(self, reporter: ProgressReporter, start: float, end: float) -> None:
+        if not 0 <= start < end <= 1:
+            raise ValueError("progress window requires 0 <= start < end <= 1")
+        self._reporter = reporter
+        self._start = start
+        self._span = end - start
+
+    @property
+    def stage(self) -> JobStage | None:
+        return self._reporter.stage
+
+    @property
+    def progress(self) -> float:
+        return self._reporter.progress
+
+    def emit(
+        self,
+        state: JobState,
+        stage: JobStage,
+        progress: float,
+        message: str = "",
+        *,
+        force: bool = False,
+    ) -> ProgressEvent | None:
+        if not math.isfinite(progress) or not 0 <= progress <= 1:
+            raise ProgressInvariantError(
+                "child progress must be a finite number between 0 and 1"
+            )
+        mapped = self._start + self._span * progress
+        return self._reporter.emit(
+            state, stage, mapped, message, force=force
+        )
+
+    def finish(self, state: JobState, message: str = "") -> ProgressEvent:
+        return self._reporter.finish(state, message)

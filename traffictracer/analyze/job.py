@@ -92,6 +92,8 @@ class AnalysisJob:
         if manifest.state is JobState.CAPTURING:
             manifest = manifest.transition(JobState.ANALYZING)
             store.save(manifest)
+        elif manifest.state is JobState.COMPLETED and self.spec.options.overwrite:
+            pass
         elif manifest.state is not JobState.ANALYZING:
             raise ValueError(
                 f"Session is not ready for analysis: {manifest.state.value}"
@@ -107,14 +109,19 @@ class AnalysisJob:
     ) -> None:
         if self._store is None or self._manifest is None:
             return
+        if self._manifest.state.terminal:
+            return
         self._manifest = self._manifest.transition(state, error=error)
         self._store.save(self._manifest)
 
     def _record_artifacts(self, paths: list[Path]) -> None:
         if self._store is None or self._manifest is None:
             return
+        existing = {artifact.path for artifact in self._manifest.artifacts}
         for path in paths:
             relative = _relative_artifact(self.spec.session_dir, str(path))
+            if relative in existing:
+                continue
             self._manifest = self._manifest.with_artifact(
                 Artifact(
                     name=path.name,
@@ -124,6 +131,7 @@ class AnalysisJob:
                     size_bytes=path.stat().st_size,
                 )
             )
+            existing.add(relative)
         self._store.save(self._manifest)
 
 

@@ -58,6 +58,7 @@ class CaptureJob:
         registry: ProcessRegistry,
         progress: ProgressReporter,
         cancellation: CancellationToken,
+        finalize_progress: bool = True,
     ) -> None:
         spec.to_dict()
         self.spec = spec
@@ -67,6 +68,7 @@ class CaptureJob:
         self.registry = registry
         self.progress = progress
         self.cancellation = cancellation
+        self.finalize_progress = finalize_progress
         self._artifacts: list[str] = []
 
     def run(self) -> CaptureJobResult:
@@ -79,7 +81,8 @@ class CaptureJob:
         except Exception:
             self.progress.finish(JobState.FAILED, "capture failed")
             raise
-        self.progress.finish(JobState.COMPLETED, "capture complete")
+        if self.finalize_progress:
+            self.progress.finish(JobState.COMPLETED, "capture complete")
         return CaptureJobResult(
             job_id=self.spec.job_id,
             state=JobState.COMPLETED,

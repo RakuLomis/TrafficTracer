@@ -3,7 +3,12 @@
 import pytest
 
 from traffictracer.jobs.models import JobState
-from traffictracer.jobs.progress import JobStage, ProgressInvariantError, ProgressReporter
+from traffictracer.jobs.progress import (
+    JobStage,
+    ProgressInvariantError,
+    ProgressReporter,
+    ProgressWindow,
+)
 
 
 class FakeClock:
@@ -75,3 +80,24 @@ def test_finish_requires_terminal_state():
     reporter = ProgressReporter("job-1", lambda event: None)
     with pytest.raises(ProgressInvariantError, match="terminal"):
         reporter.finish(JobState.CAPTURING)
+
+
+def test_child_progress_window_keeps_capture_then_analysis_monotonic():
+    events = []
+    reporter = ProgressReporter("job-1", events.append, min_interval=0)
+    reporter.emit(JobState.CAPTURING, JobStage.CLEANUP, 0.9)
+    analysis = ProgressWindow(reporter, 0.9, 0.99)
+    analysis.emit(JobState.ANALYZING, JobStage.ANALYZE_CDP, 0.1)
+    analysis.emit(JobState.ANALYZING, JobStage.ANALYZE_WRITE, 0.95)
+    analysis.finish(JobState.COMPLETED)
+    assert [event.stage for event in events] == [
+        "cleanup",
+        "analyze.cdp",
+        "analyze.write",
+        "finished",
+    ]
+    assert [event.progress for event in events] == [0.9, 0.909, 0.9855, 1.0]
+    with pytest.raises(ProgressInvariantError, match="child progress"):
+        ProgressWindow(ProgressReporter("job-2", lambda event: None), 0.5, 0.9).emit(
+            JobState.ANALYZING, JobStage.ANALYZE_CDP, -0.1
+        )
