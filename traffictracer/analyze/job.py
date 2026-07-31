@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.models import (
@@ -32,6 +33,8 @@ class AnalysisJob:
         self.cancellation = cancellation
         self._store: SessionStore | None = None
         self._manifest: SessionManifest | None = None
+        session_uri = Path(spec.session_dir).resolve().as_uri()
+        self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
         try:
@@ -49,7 +52,7 @@ class AnalysisJob:
                 self.cancellation.checkpoint()
                 generated = persist_analysis_artifacts(
                     self.spec.session_dir,
-                    self._manifest.session_id if self._manifest is not None else "",
+                    self._session_id,
                 )
                 artifact_paths.extend([generated.flow_index, generated.summary])
                 self.cancellation.checkpoint()
@@ -76,7 +79,7 @@ class AnalysisJob:
         return CaptureJobResult(
             job_id=self.spec.job_id,
             state=JobState.COMPLETED,
-            session_id=self._manifest.session_id if self._manifest is not None else "",
+            session_id=self._session_id,
             artifacts=artifacts,
         )
 
@@ -95,6 +98,7 @@ class AnalysisJob:
             )
         self._store = store
         self._manifest = manifest
+        self._session_id = manifest.session_id
 
     def _finish_manifest(
         self,
