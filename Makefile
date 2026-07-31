@@ -14,9 +14,8 @@ bootstrap: ## Initialize the pinned Complete component submodules.
 test-python: ## Run the TrafficTracer Python test suite.
 	@$(PYTHON) -m pytest -q
 
-test-contracts: ## Run cross-component contract tests (available after TT-009).
-	@echo "test-contracts is not available until TT-009 is complete" >&2
-	@exit 2
+test-contracts: ## Run the Complete schema and validation contract tests.
+	@$(PYTHON) -m pytest -q test/test_job_contract.py test/test_worker_api_contract.py test/test_session_flow_contract.py test/test_contracts.py
 
 check-toolchain: ## Check the Complete development toolchain.
 	@bash scripts/check-toolchain.sh
