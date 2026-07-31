@@ -10,7 +10,7 @@ components:
     path: components/mihomo
     repository: https://github.com/RakuLomis/mihomo.git
     branch: TrafficTracer
-    commit: 6426ab1f559dbf5aec9ccb4d43d623a4f73b6d83
+    commit: 693f81340a1458973056a5875f3856a891540d68
   clash_verge_rev:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
