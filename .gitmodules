@@ -1,0 +1,8 @@
+[submodule "components/mihomo"]
+	path = components/mihomo
+	url = https://github.com/RakuLomis/mihomo.git
+	branch = TrafficTracer
+[submodule "components/clash-verge-rev"]
+	path = components/clash-verge-rev
+	url = https://github.com/RakuLomis/clash-verge-rev.git
+	branch = feat/traffic-tracer
