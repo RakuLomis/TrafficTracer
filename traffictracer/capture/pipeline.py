@@ -76,32 +76,13 @@ def _run_site(
 ) -> None:
     job_id = str(uuid4())
     session_id = str(uuid4())
-    spec = CaptureJobSpec(
+    spec = legacy_config_to_job_spec(
+        site,
+        config,
+        controller,
         job_id=job_id,
-        url=site.url,
-        domain=site.domain,
-        duration_seconds=site.wait,
-        network=(site.traffic_type if site.traffic_type in {"tcp", "udp", "all"} else "all"),
-        interfaces=CaptureInterfaces(
-            tun=config.network.tun_interface,
-            physical=config.network.phys_interface,
-        ),
-        output_root=str(session_dir.parent),
-        chrome_binary=_resolve_executable(config.chrome.binary),
-        controller=ControllerSpec(
-            endpoint=controller.endpoint,
-            secret=controller.secret or None,
-            generated_config=controller.generated_config or None,
-        ),
-        options=CaptureJobOptions(
-            capture_packets=True,
-            collect_cdp=config.chrome.enable_cdp,
-            collect_netlog=True,
-            analyze_after_capture=False,
-            headless=config.chrome.headless,
-        ),
+        output_root=session_dir.parent,
     )
-    spec.to_dict()
     progress = ProgressReporter(
         job_id,
         lambda event: logger.info(
@@ -127,6 +108,44 @@ def _run_site(
         cancellation=CancellationToken(),
     )
     job.run()
+
+
+def legacy_config_to_job_spec(
+    site: SiteConfig,
+    config: GlobalConfig,
+    controller: ResolvedControllerConfig,
+    *,
+    job_id: str | None = None,
+    output_root: str | Path | None = None,
+) -> CaptureJobSpec:
+    """Translate one legacy YAML site into the canonical capture JobSpec."""
+    spec = CaptureJobSpec(
+        job_id=job_id or str(uuid4()),
+        url=site.url,
+        domain=site.domain,
+        duration_seconds=site.wait,
+        network=(site.traffic_type if site.traffic_type in {"tcp", "udp", "all"} else "all"),
+        interfaces=CaptureInterfaces(
+            tun=config.network.tun_interface,
+            physical=config.network.phys_interface,
+        ),
+        output_root=str(Path(output_root or config.output.base_dir).resolve()),
+        chrome_binary=_resolve_executable(config.chrome.binary),
+        controller=ControllerSpec(
+            endpoint=controller.endpoint,
+            secret=controller.secret or None,
+            generated_config=controller.generated_config or None,
+        ),
+        options=CaptureJobOptions(
+            capture_packets=True,
+            collect_cdp=config.chrome.enable_cdp,
+            collect_netlog=True,
+            analyze_after_capture=False,
+            headless=config.chrome.headless,
+        ),
+    )
+    spec.to_dict()
+    return spec
 
 
 def _resolve_executable(value: str) -> str:

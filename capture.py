@@ -13,7 +13,7 @@ from traffictracer.capture.pipeline import run_capture
 from traffictracer.config import load_config
 
 
-def main():
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="TrafficTracer Capture Pipeline",
     )
@@ -21,17 +21,22 @@ def main():
                         help="Path to YAML config file")
     parser.add_argument("--only", "-o",
                         help="Only capture this domain")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         config = load_config(args.config)
-    except Exception as e:
-        print(f"Error loading config: {e}", file=sys.stderr)
-        sys.exit(1)
+    except Exception as exc:
+        print(f"Error loading config: {exc}", file=sys.stderr)
+        return 1
 
-    session_dir = run_capture(config, only_domain=args.only)
+    try:
+        session_dir = run_capture(config, only_domain=args.only)
+    except KeyboardInterrupt:
+        print("Capture cancelled; cleanup completed.", file=sys.stderr)
+        return 130
     print(f"Capture session saved to: {session_dir}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
