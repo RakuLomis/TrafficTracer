@@ -7,6 +7,8 @@ import pytest
 
 from traffictracer.contracts import ValidationError
 from traffictracer.jobs.models import (
+    AnalysisJobOptions,
+    AnalysisJobSpec,
     CaptureInterfaces,
     CaptureJobOptions,
     CaptureJobResult,
@@ -19,6 +21,9 @@ from traffictracer.jobs.models import (
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "test" / "fixtures" / "contracts" / "job-valid.json"
+ANALYSIS_FIXTURE = (
+    ROOT / "test" / "fixtures" / "contracts" / "job-valid-analysis.json"
+)
 
 
 def _fixture() -> dict:
@@ -32,6 +37,18 @@ def test_capture_job_round_trips_the_contract_fixture():
     assert spec.to_dict() == payload
     assert spec.interfaces == CaptureInterfaces(tun="Meta", physical="eth0")
     assert spec.controller.secret == "fixture-only-secret"
+
+
+def test_analysis_job_round_trips_the_contract_fixture():
+    with ANALYSIS_FIXTURE.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    spec = AnalysisJobSpec.from_dict(payload)
+    assert spec.to_dict() == payload
+    assert spec.options == AnalysisJobOptions(
+        split_pcaps=True,
+        write_flow_index=True,
+        overwrite=False,
+    )
 
 
 def test_capture_job_can_be_constructed_without_yaml():

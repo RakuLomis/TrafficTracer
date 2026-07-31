@@ -6,7 +6,13 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
+import tempfile
+from typing import Callable
 
+from ..jobs.cancellation import CancellationToken
+from ..jobs.models import JobState
+from ..jobs.progress import JobStage, ProgressReporter
+from ..session.atomic import write_json_atomic
 from ..utils import logger, ensure_dir, setup_logging
 from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
@@ -17,7 +23,7 @@ from .cdp_attribution import parse_cdp_attribution
 from .netlog_transport import trace_transport
 
 
-def _fix_netlog(path: str) -> None:
+def _fix_netlog(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         data = f.read().rstrip()
     if data.endswith("}]"):
@@ -29,14 +35,28 @@ def _fix_netlog(path: str) -> None:
     else:
         fixed = data + "\n]}\n"
     json.loads(fixed)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(fixed)
-    logger.info("Auto-fixed truncated NetLog: %s", path)
+    handle, repaired_path = tempfile.mkstemp(
+        prefix="traffictracer-netlog-", suffix=".json"
+    )
+    with os.fdopen(handle, "w", encoding="utf-8") as stream:
+        stream.write(fixed)
+    logger.info("Using repaired temporary NetLog copy for %s", path)
+    return repaired_path
 
 
-def run_analysis(session_dir: str) -> str:
+def run_analysis(
+    session_dir: str,
+    *,
+    progress: ProgressReporter | None = None,
+    cancellation: CancellationToken | None = None,
+    split_pcaps: bool = True,
+    overwrite: bool = True,
+) -> str:
     setup_logging()
+    token = cancellation or CancellationToken()
+    advance = _analysis_stage_emitter(progress, token)
 
+    token.checkpoint()
     session = Path(session_dir)
     if not session.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
@@ -70,8 +90,13 @@ def run_analysis(session_dir: str) -> str:
 
             logger.info("Analyzing %s...", tag)
 
+            advance(JobStage.ANALYZE_CDP, 0.1, tag)
+            advance(JobStage.ANALYZE_NETLOG, 0.25, tag)
+            advance(JobStage.ANALYZE_MIHOMO, 0.4, tag)
             run_mihomo_conns = parse_tracing_log(str(trace_path)) if trace_path.exists() else {}
+            token.checkpoint()
 
+            advance(JobStage.ANALYZE_CORRELATE, 0.6, tag)
             if cdp_path.exists():
                 result_v2 = _analyze_cdp_path(
                     str(cdp_path), str(netlog_path), str(trace_path),
@@ -85,7 +110,10 @@ def run_analysis(session_dir: str) -> str:
                         existing["flows"].extend(
                             _result_v2_to_dict(result_v2)["flows"]
                         )
-                    _try_split_v2(result_v2, run_dir)
+                    advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
+                    if split_pcaps:
+                        _try_split_v2(result_v2, run_dir)
+                    token.checkpoint()
                     continue
 
             logger.info("No CDP data for %s, using domain-based fallback", tag)
@@ -105,14 +133,47 @@ def run_analysis(session_dir: str) -> str:
                     all_correlations[domain] = v1_dict
                 else:
                     existing["flows"].extend(v1_dict["flows"])
-                _try_split_v1(result_v1, run_dir)
+                advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
+                if split_pcaps:
+                    _try_split_v1(result_v1, run_dir)
+                token.checkpoint()
 
+    advance(JobStage.ANALYZE_WRITE, 0.95, "correlation.json")
     corr_path = str(results_dir / "correlation.json")
-    with open(corr_path, "w", encoding="utf-8") as f:
-        json.dump(all_correlations, f, indent=2, ensure_ascii=False)
+    if not overwrite and Path(corr_path).exists():
+        raise FileExistsError(f"Analysis result already exists: {corr_path}")
+    write_json_atomic(corr_path, all_correlations)
+    token.checkpoint()
 
     logger.info("Correlation results written to %s", corr_path)
     return corr_path
+
+
+def _analysis_stage_emitter(
+    progress: ProgressReporter | None,
+    cancellation: CancellationToken,
+) -> Callable[[JobStage, float, str], None]:
+    ordered = [
+        JobStage.ANALYZE_CDP,
+        JobStage.ANALYZE_NETLOG,
+        JobStage.ANALYZE_MIHOMO,
+        JobStage.ANALYZE_CORRELATE,
+        JobStage.ANALYZE_SPLIT,
+        JobStage.ANALYZE_WRITE,
+    ]
+    order = {stage: index for index, stage in enumerate(ordered)}
+    last_index = -1
+
+    def advance(stage: JobStage, value: float, message: str) -> None:
+        nonlocal last_index
+        cancellation.checkpoint()
+        index = order[stage]
+        if progress is None or index <= last_index:
+            return
+        progress.emit(JobState.ANALYZING, stage, value, message)
+        last_index = index
+
+    return advance
 
 
 def _analyze_cdp_path(
@@ -140,12 +201,14 @@ def _analyze_cdp_path(
     try:
         transport_conns = trace_transport(attributed, netlog_path)
     except Exception:
-        _fix_netlog(netlog_path)
+        repaired_path = _fix_netlog(netlog_path)
         try:
-            transport_conns = trace_transport(attributed, netlog_path)
+            transport_conns = trace_transport(attributed, repaired_path)
         except Exception as e:
             logger.error("Failed to trace transport for %s: %s", tag, e)
             transport_conns = []
+        finally:
+            Path(repaired_path).unlink(missing_ok=True)
 
     result = correlate_v2(
         transport_conns, mihomo_conns,
@@ -189,12 +252,14 @@ def _analyze_domain_path(
     try:
         netlog_conns = extract_five_tuples(netlog_path, domain)
     except Exception:
-        _fix_netlog(netlog_path)
+        repaired_path = _fix_netlog(netlog_path)
         try:
-            netlog_conns = extract_five_tuples(netlog_path, domain)
+            netlog_conns = extract_five_tuples(repaired_path, domain)
         except Exception as e:
             logger.error("Failed to parse NetLog for %s: %s", tag, e)
             return None
+        finally:
+            Path(repaired_path).unlink(missing_ok=True)
 
     return correlate(netlog_conns, mihomo_conns, domain)
 

@@ -7,8 +7,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import json
 import tempfile
 import shutil
+from pathlib import Path
+
+import pytest
 
 from traffictracer.analyze.pipeline import run_analysis, _result_to_dict, _result_v2_to_dict
+from traffictracer.jobs.cancellation import CancellationToken
+from traffictracer.jobs.cancellation import CancelledError
+from traffictracer.jobs.progress import ProgressReporter
 
 
 def test_result_v2_to_dict():
@@ -98,7 +104,12 @@ def test_analysis_cdp_path():
                 '"proxy":"HK","proxy_type":"vless","proxy_addr":"10.0.0.1:443",'
                 '"out_src":"192.168.5.101:53652"}\n')
 
-    corr_path = run_analysis(session)
+    progress = []
+    corr_path = run_analysis(
+        session,
+        progress=ProgressReporter("analysis-job", progress.append, min_interval=0),
+        cancellation=CancellationToken(),
+    )
 
     assert os.path.exists(corr_path)
     with open(corr_path) as f:
@@ -111,9 +122,64 @@ def test_analysis_cdp_path():
     flow = domain_data["flows"][0]
     assert flow["url"] == "https://cdn.example.net/video.m4s"
     assert flow["pre_proxy_src"] == "198.18.0.1:49812"
+    assert [event.stage for event in progress] == [
+        "analyze.cdp",
+        "analyze.netlog",
+        "analyze.mihomo",
+        "analyze.correlate",
+        "analyze.split",
+        "analyze.write",
+    ]
 
     shutil.rmtree(tmpdir)
     print("  ✓ CDP-path analysis test pass")
+
+
+def test_analysis_checks_cancellation_between_parse_stages(tmp_path, monkeypatch):
+    import traffictracer.analyze.pipeline as module
+
+    run_dir = tmp_path / "captures" / "example.com" / "all_1"
+    run_dir.mkdir(parents=True)
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "netlog_example.com_all_1.json").write_text("{}", encoding="utf-8")
+    (logs / "mihomo_trace_example.com_all_1.jsonl").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    token = CancellationToken()
+
+    def cancel_during_mihomo(path):
+        token.cancel("cancel between analysis stages")
+        return {}
+
+    monkeypatch.setattr(module, "parse_tracing_log", cancel_during_mihomo)
+    events = []
+    with pytest.raises(CancelledError, match="cancel between analysis stages"):
+        run_analysis(
+            str(tmp_path),
+            progress=ProgressReporter("analysis-job", events.append, min_interval=0),
+            cancellation=token,
+        )
+    assert [event.stage for event in events] == [
+        "analyze.cdp",
+        "analyze.netlog",
+        "analyze.mihomo",
+    ]
+    assert not (tmp_path / "results" / "correlation.json").exists()
+
+
+def test_truncated_netlog_repair_never_mutates_raw_capture(tmp_path):
+    from traffictracer.analyze.pipeline import _fix_netlog
+
+    raw = tmp_path / "netlog.json"
+    original = '{"events": [{"type": 1},'
+    raw.write_text(original, encoding="utf-8")
+    repaired = Path(_fix_netlog(str(raw)))
+    try:
+        assert raw.read_text(encoding="utf-8") == original
+        assert json.loads(repaired.read_text(encoding="utf-8"))["events"]
+    finally:
+        repaired.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

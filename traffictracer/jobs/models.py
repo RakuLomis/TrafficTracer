@@ -145,6 +145,62 @@ class CaptureJobSpec:
 
 
 @dataclass(frozen=True)
+class AnalysisJobOptions:
+    split_pcaps: bool = True
+    write_flow_index: bool = True
+    overwrite: bool = False
+
+    def to_dict(self) -> dict[str, bool]:
+        return {
+            "split_pcaps": self.split_pcaps,
+            "write_flow_index": self.write_flow_index,
+            "overwrite": self.overwrite,
+        }
+
+
+@dataclass(frozen=True)
+class AnalysisJobSpec:
+    job_id: str
+    session_dir: str
+    output_root: str
+    options: AnalysisJobOptions = field(default_factory=AnalysisJobOptions)
+
+    schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
+    kind: str = field(default="analysis", init=False)
+
+    def to_dict(self, *, validate: bool = True) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "job_id": self.job_id,
+            "session_dir": self.session_dir,
+            "output_root": self.output_root,
+            "options": self.options.to_dict(),
+        }
+        if validate:
+            validate_job(payload)
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> AnalysisJobSpec:
+        data = dict(payload)
+        validate_job(data)
+        if data["kind"] != "analysis":
+            raise ValueError("AnalysisJobSpec requires kind='analysis'")
+        options = data.get("options", {})
+        return cls(
+            job_id=data["job_id"],
+            session_dir=data["session_dir"],
+            output_root=data["output_root"],
+            options=AnalysisJobOptions(
+                split_pcaps=options.get("split_pcaps", True),
+                write_flow_index=options.get("write_flow_index", True),
+                overwrite=options.get("overwrite", False),
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class ProgressEvent:
     job_id: str
     state: JobState
