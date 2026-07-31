@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "flow_id": "udp:[2001:db8::10]:53000-[2001:db8::53]:53",
+  "protocol": "udp",
+  "pre_flow": {
+    "network": "udp",
+    "src_ip": "2001:db8::10",
+    "src_port": 53000,
+    "dst_ip": "2001:db8::53",
+    "dst_port": 53,
+    "complete": true,
+    "source": "pcap",
+    "scope": "pre_proxy",
+    "shared": true
+  },
+  "post_flow": null,
+  "shared": true,
+  "match": {
+    "status": "unmatched",
+    "confidence": 0,
+    "candidate_count": 0,
+    "reason": "no post-proxy event"
+  },
+  "request_ids": []
+}

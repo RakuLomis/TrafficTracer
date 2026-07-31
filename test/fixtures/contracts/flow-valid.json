@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "flow_id": "tcp:10.0.0.2:52844-93.184.216.34:443",
+  "url": "https://example.com/app.js",
+  "resource_type": "Script",
+  "relation": "direct",
+  "protocol": "tcp",
+  "pre_flow": {
+    "network": "tcp",
+    "src_ip": "10.0.0.2",
+    "src_port": 52844,
+    "dst_ip": "93.184.216.34",
+    "dst_port": 443,
+    "dst_host": "example.com",
+    "complete": true,
+    "source": "netlog",
+    "scope": "pre_proxy",
+    "shared": false
+  },
+  "post_flow": {
+    "network": "tcp",
+    "src_ip": "192.0.2.10",
+    "src_port": 43120,
+    "dst_ip": "203.0.113.8",
+    "dst_port": 443,
+    "dst_host": "proxy.example",
+    "complete": true,
+    "source": "mihomo",
+    "scope": "post_proxy",
+    "shared": false
+  },
+  "shared": false,
+  "match": {
+    "status": "matched",
+    "confidence": 1.0,
+    "candidate_count": 1,
+    "reason": "conn_id"
+  },
+  "request_ids": ["7856.12"],
+  "conn_id": "01J42S6EPQSRY05JYS4ZXX9VWE",
+  "outer_conn_id": "01J42S6F1M16S8SAGB1W43FQ04"
+}

@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/session.schema.json",
+  "title": "TrafficTracer Complete Session manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "job_id",
+    "state",
+    "created_at",
+    "updated_at",
+    "session_dir",
+    "target",
+    "component_versions",
+    "artifacts",
+    "warnings"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_id": { "$ref": "#/$defs/uuid" },
+    "job_id": { "$ref": "#/$defs/uuid" },
+    "state": {
+      "enum": [
+        "created",
+        "preparing",
+        "capturing",
+        "analyzing",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "created_at": { "$ref": "#/$defs/timestamp" },
+    "updated_at": { "$ref": "#/$defs/timestamp" },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "completed_at": { "$ref": "#/$defs/timestamp" },
+    "session_dir": { "$ref": "#/$defs/absolutePath" },
+    "target": { "$ref": "#/$defs/target" },
+    "component_versions": { "$ref": "#/$defs/componentVersions" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "error": { "$ref": "#/$defs/sessionError" }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "absolutePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^/"
+    },
+    "relativeArtifactPath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "domain"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 253 }
+      }
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "commit"],
+      "properties": {
+        "version": { "type": "string", "minLength": 1 },
+        "commit": {
+          "type": "string",
+          "oneOf": [
+            { "pattern": "^[0-9a-f]{40}$" },
+            { "const": "unknown" }
+          ]
+        }
+      }
+    },
+    "componentVersions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["traffictracer", "mihomo", "clash_verge_rev", "worker_api"],
+      "properties": {
+        "traffictracer": { "$ref": "#/$defs/component" },
+        "mihomo": { "$ref": "#/$defs/component" },
+        "clash_verge_rev": { "$ref": "#/$defs/component" },
+        "worker_api": { "const": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "path", "media_type", "size_bytes"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["raw", "derived", "diagnostic"] },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "created_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "sessionError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "message": { "type": "string", "minLength": 1 },
+        "stage": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
