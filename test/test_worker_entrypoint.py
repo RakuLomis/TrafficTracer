@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import selectors
 import subprocess
 import sys
 
@@ -98,3 +99,40 @@ def test_worker_sigterm_exits_without_hanging(tmp_path):
             break
     process.terminate()
     assert process.wait(timeout=10) == 0
+
+
+def test_worker_dispatches_request_while_stdin_remains_open(tmp_path):
+    process = subprocess.Popen(
+        [sys.executable, str(WORKER), "--output-root", str(tmp_path / "sessions")],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=ROOT,
+    )
+    selector = selectors.DefaultSelector()
+    assert process.stdin is not None
+    assert process.stdout is not None
+    selector.register(process.stdout, selectors.EVENT_READ)
+    try:
+        while True:
+            assert selector.select(timeout=5), "Worker ready notification timed out"
+            message = json.loads(process.stdout.readline())
+            if message.get("method") == "worker.ready":
+                break
+
+        process.stdin.write(_request("live", "hello") + "\n")
+        process.stdin.flush()
+        assert selector.select(timeout=5), "live Worker request was buffered"
+        response = json.loads(process.stdout.readline())
+        assert response["id"] == "live"
+        assert response["result"]["api_version"] == 1
+
+        process.stdin.write(_request("shutdown", "worker.shutdown") + "\n")
+        process.stdin.flush()
+        assert process.wait(timeout=10) == 0
+    finally:
+        selector.close()
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)

@@ -103,8 +103,12 @@ def read_jsonl(
     if chunk_size <= 0:
         raise ValueError("chunk_size must be positive")
     decoder = JsonlDecoder(max_message_bytes)
+    read_chunk = getattr(stream, "read1", stream.read)
     while True:
-        chunk = stream.read(chunk_size)
+        # BufferedReader.read() waits for chunk_size bytes on a live pipe. Worker
+        # stdin is intentionally long-lived, so consume the bytes currently
+        # available and let the incremental decoder retain partial frames.
+        chunk = read_chunk(chunk_size)
         if not chunk:
             yield from decoder.finish()
             return

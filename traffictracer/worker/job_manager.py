@@ -237,7 +237,11 @@ class JobManager:
             managed = self._jobs.get(job_id)
             if managed is None:
                 return
-            managed.state = event.state
+            # A runner can emit its final progress before returning its result.
+            # Publish terminal state only in _finish_job so status never exposes
+            # "completed" without the corresponding result (or failure error).
+            if not event.state.terminal:
+                managed.state = event.state
             managed.stage = event.stage
             managed.progress = event.progress
             managed.message = event.message

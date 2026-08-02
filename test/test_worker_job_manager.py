@@ -152,6 +152,38 @@ def test_failed_job_is_observable_and_does_not_block_next_job():
     assert manager.wait(analysis["job_id"], timeout=2)
 
 
+def test_terminal_state_is_not_visible_before_result_is_published():
+    progress_finished = Event()
+    release = Event()
+
+    class FinishingJob:
+        def __init__(self, spec, progress):
+            self.spec = spec
+            self.progress = progress
+
+        def run(self):
+            self.progress.finish(JobState.COMPLETED, "runner finished")
+            progress_finished.set()
+            assert release.wait(2)
+            return CaptureJobResult(self.spec.job_id, JobState.COMPLETED)
+
+    manager = _manager(
+        [],
+        capture_factory=lambda spec, progress, token: FinishingJob(spec, progress),
+    )
+    capture = _payload(CAPTURE_FIXTURE)
+    manager.start_capture(capture)
+    assert progress_finished.wait(1)
+    in_flight = manager.status({"job_id": capture["job_id"]})
+    assert in_flight["state"] != "completed"
+    assert "result" not in in_flight
+    release.set()
+    assert manager.wait(capture["job_id"], timeout=2)
+    completed = manager.status({"job_id": capture["job_id"]})
+    assert completed["state"] == "completed"
+    assert completed["result"]["state"] == "completed"
+
+
 def test_dispatcher_handlers_and_unknown_job_error_are_stable():
     notifications = []
     manager = _manager(notifications)

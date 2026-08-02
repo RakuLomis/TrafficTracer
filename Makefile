@@ -3,7 +3,7 @@ PYTHON ?= python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap test-python test-contracts check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
+.PHONY: help bootstrap test-python test-contracts test-e2e-direct check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
 
 help: ## Show Complete development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -16,6 +16,9 @@ test-python: ## Run the TrafficTracer Python test suite.
 
 test-contracts: ## Run the Complete schema and validation contract tests.
 	@PYTHON=$(PYTHON) bash scripts/test-contracts.sh
+
+test-e2e-direct: check-component-lock ## Run the unprivileged DIRECT-mode integration test.
+	@PYTHON=$(PYTHON) bash scripts/test-e2e-direct.sh
 
 check-toolchain: ## Check the Complete development toolchain.
 	@bash scripts/check-toolchain.sh
