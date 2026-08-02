@@ -114,7 +114,12 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=Non
     monkeypatch.setattr(module, "launch_chrome", launch)
     monkeypatch.setattr(module, "terminate_chrome", terminate)
     monkeypatch.setattr(module, "repair_truncated_netlog", lambda path: events.append("repair:netlog"))
-    monkeypatch.setattr(module.time, "sleep", lambda seconds: events.append("sleep"))
+    token = cancellation or CancellationToken()
+    monkeypatch.setattr(
+        token,
+        "wait",
+        lambda seconds: events.append("wait") or token.cancelled,
+    )
     registry = ProcessRegistry()
     progress_events = []
     job = CaptureJob(
@@ -124,7 +129,7 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=Non
         session=CaptureSessionContext("session-1", tmp_path, recovery_store),
         registry=registry,
         progress=ProgressReporter("job-1", progress_events.append, min_interval=0),
-        cancellation=cancellation or CancellationToken(),
+        cancellation=token,
     )
     return job, registry, progress_events
 
@@ -142,7 +147,7 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
         "start:tun",
         "start:physical",
         "launch:chrome",
-        "sleep",
+        "wait",
         "stop:chrome",
         "repair:netlog",
         "stop:physical",

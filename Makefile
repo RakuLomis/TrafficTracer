@@ -3,7 +3,7 @@ PYTHON ?= python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap test-python test-contracts test-e2e-direct test-e2e-tun check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
+.PHONY: help bootstrap test-python test-contracts test-e2e-direct test-e2e-tun test-recovery check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
 
 help: ## Show Complete development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -22,6 +22,9 @@ test-e2e-direct: check-component-lock ## Run the unprivileged DIRECT-mode integr
 
 test-e2e-tun: check-component-lock ## Run the privileged isolated TUN integration test.
 	@PYTHON=$(PYTHON) bash scripts/test-e2e-tun.sh
+
+test-recovery: check-component-lock ## Run cancellation and crash recovery fault injection.
+	@PYTHON=$(PYTHON) bash scripts/test-recovery.sh
 
 check-toolchain: ## Check the Complete development toolchain.
 	@bash scripts/check-toolchain.sh

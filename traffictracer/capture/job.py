@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import time
 import sys
 from typing import Any
 
@@ -178,7 +177,7 @@ class CaptureJob:
                 ):
                     terminate_chrome(chrome_proc, cancellation=self.cancellation)
             else:
-                time.sleep(self.spec.duration_seconds)
+                self.cancellation.wait(self.spec.duration_seconds)
                 self.cancellation.checkpoint()
                 terminate_chrome(chrome_proc, cancellation=self.cancellation)
 
