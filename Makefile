@@ -3,7 +3,7 @@ PYTHON ?= python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap test-python test-contracts test-e2e-direct test-e2e-tun test-recovery check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
+.PHONY: help bootstrap test-python test-contracts test-e2e-direct test-e2e-tun test-recovery test-package-linux check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
 
 help: ## Show Complete development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -46,3 +46,6 @@ dev: ## Rebuild sidecars and start TrafficTracer Complete in development mode.
 
 package-linux: ## Build, verify, and collect the Complete Linux packages.
 	@bash scripts/package-linux.sh
+
+test-package-linux: ## Smoke-test published Deb and AppImage without source sidecars.
+	@PYTHON=$(PYTHON) bash scripts/smoke-package-linux.sh

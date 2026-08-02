@@ -1,0 +1,99 @@
+name: Linux Package Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [Complete]
+    paths:
+      - ".github/workflows/linux-package-smoke.yml"
+      - "Makefile"
+      - "complete/**"
+      - "components/clash-verge-rev"
+      - "components/mihomo"
+      - "packaging/**"
+      - "requirements*.txt"
+      - "scripts/**"
+      - "traffictracer/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-package-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-vm-package:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out pinned Complete sources
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Linux build and headless runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            dbus-x11 \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev \
+            libxslt1.1 \
+            patchelf \
+            xauth \
+            xvfb
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: components/mihomo/go.mod
+          cache-dependency-path: components/mihomo/go.sum
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: components/clash-verge-rev/pnpm-lock.yaml
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install -r requirements-build.txt
+          pnpm --dir components/clash-verge-rev install --frozen-lockfile
+
+      - name: Build verified Complete packages
+        run: make package-linux
+
+      - name: Smoke packages outside the source tree
+        env:
+          TT_SMOKE_LAUNCH_UI: "1"
+        run: make test-package-linux
+
+      - name: Upload verified packages
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traffictracer-complete-linux-${{ github.sha }}
+          path: dist/packages/x86_64-unknown-linux-gnu/
+          if-no-files-found: error
+          retention-days: 7
