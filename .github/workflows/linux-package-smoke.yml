@@ -82,7 +82,10 @@ jobs:
           pnpm --dir components/clash-verge-rev install --frozen-lockfile
 
       - name: Build verified Complete packages
-        run: make package-linux
+        run: make release-linux
+
+      - name: Verify release audit artifacts
+        run: make audit-release
 
       - name: Smoke packages outside the source tree
         env:

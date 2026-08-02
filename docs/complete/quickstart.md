@@ -151,6 +151,19 @@ ls -l /tmp/verge/clash-verge-service.sock
 
 ## 8. Linux 打包
 
+开发测试可使用 `make package-linux`。正式发布候选必须从三个仓库均无已
+跟踪改动的工作树执行：
+
+```bash
+make release-linux
+make test-package-linux
+make audit-release
+```
+
+release-linux 会生成 CycloneDX 1.6 SBOM，校验组件提交、Deb/AppImage
+SHA-256、安装路径权限、敏感文件/secret 模式和发行元数据。逐项人工签字要求见
+[Release Checklist](../release-checklist.md)。
+
 首次打包：
 
 ```bash
@@ -158,20 +171,24 @@ make package-linux
 sha256sum -c dist/packages/x86_64-unknown-linux-gnu/SHA256SUMS
 ```
 
-流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 7 个可执行文件，最后才原子发布：
+流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 8 个可执行文件，最后才原子发布：
 
 ```text
 dist/packages/x86_64-unknown-linux-gnu/
 ├── Clash Verge_<version>_amd64.deb
 ├── Clash Verge_<version>_amd64.AppImage
 ├── COMPONENTS
-└── SHA256SUMS
+├── SHA256SUMS
+├── LICENSE / NOTICE / THIRD_PARTY_NOTICES.md
+├── SBOM.cdx.json
+├── RELEASE-AUDIT.json
+└── METADATA.sha256
 ```
 
 默认输出已存在时脚本拒绝覆盖。可移动旧目录，或为新候选指定新目录：
 
 ```bash
-TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/rc-2" make package-linux
+TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/rc-2" make release-linux
 ```
 
 未配置 `TAURI_SIGNING_PRIVATE_KEY` 时生成经过布局验证的 unsigned 包；发布 updater artifact 时必须配置私钥。任一构建、验证或校验步骤失败，最终输出目录不会创建。

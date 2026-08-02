@@ -1,0 +1,7 @@
+TrafficTracer Complete
+Copyright (C) 2026 TrafficTracer contributors
+
+SPDX-License-Identifier: GPL-3.0-only
+
+This distribution combines TrafficTracer, mihomo, Clash Verge Rev, and their
+third-party dependencies. See THIRD_PARTY_NOTICES.md and SBOM.cdx.json.

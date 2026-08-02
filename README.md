@@ -43,7 +43,14 @@ make package-linux
 sha256sum -c dist/packages/x86_64-unknown-linux-gnu/SHA256SUMS
 ```
 
-完整的依赖安装、UI 操作、权限、服务 IPC、故障恢复、协议版本与非目标见 [Complete QuickStart](docs/complete/quickstart.md)。
+发布候选必须从干净工作树生成许可证、CycloneDX SBOM、组件来源和审计报告：
+
+```bash
+make release-linux
+make audit-release
+```
+
+完整的依赖安装、UI 操作、权限、服务 IPC、故障恢复、协议版本与非目标见 [Complete QuickStart](docs/complete/quickstart.md)；正式发布前执行 [Release Checklist](docs/release-checklist.md)。
 
 > 下文保留 TrafficTracer Python 库与独立 CLI 的架构和参考资料；Complete 的常规 UI 流程不要求使用这些 CLI。
 

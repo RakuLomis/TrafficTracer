@@ -23,11 +23,23 @@ def _write_executable(path: Path, content: str) -> None:
 def fake_package(tmp_path: Path) -> dict[str, object]:
     ui_dir = tmp_path / "ui"
     sidecars = ui_dir / "src-tauri" / "sidecar"
+    icons = ui_dir / "src-tauri" / "icons"
     bin_dir = tmp_path / "bin"
+    resources = ui_dir / "src-tauri" / "resources"
     target_dir = tmp_path / "target"
     output_dir = tmp_path / "published"
     sidecars.mkdir(parents=True)
+    icons.mkdir()
     bin_dir.mkdir()
+    resources.mkdir()
+
+    icon = icons / "icon.png"
+    icon.write_bytes(b"fake icon")
+    icon.chmod(0o666)
+
+    resource = resources / "Country.mmdb"
+    resource.write_bytes(b"fake database")
+    resource.chmod(0o666)
 
     prepare = bin_dir / "prepare"
     _write_executable(
@@ -72,6 +84,8 @@ fi
         "env": env,
         "output": output_dir,
         "invocations": invocations,
+        "icon": icon,
+        "resource": resource,
     }
 
 
@@ -95,7 +109,8 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     assert 'createUpdaterArtifacts":false' in calls[1]
     assert calls[2].startswith("verify:linux-bundle -- --target ")
     assert "Package directory:" in result.stdout
-
+    assert fake_package["icon"].stat().st_mode & 0o777 == 0o644
+    assert fake_package["resource"].stat().st_mode & 0o777 == 0o644
 
 def test_verification_failure_does_not_publish(fake_package) -> None:
     env = {**fake_package["env"], "TT_TEST_VERIFY_FAIL": "1"}
@@ -126,3 +141,55 @@ def test_existing_output_is_not_overwritten(fake_package) -> None:
     assert result.returncode == 2
     assert marker.read_text() == "user artifact"
     assert not fake_package["invocations"].exists()
+
+
+def test_release_mode_audits_stage_before_publish(fake_package, tmp_path) -> None:
+    audit = tmp_path / "release-audit"
+    _write_executable(
+        audit,
+        """#!/usr/bin/env python3
+from pathlib import Path
+import sys
+assert sys.argv[1] == "--package-dir"
+assert sys.argv[3] == "--write"
+stage = Path(sys.argv[2])
+assert (stage / "SHA256SUMS").is_file()
+assert (stage / "COMPONENTS").is_file()
+(stage / "RELEASE-AUDIT.json").write_text('{"status":"pass"}\\n')
+""",
+    )
+    env = {
+        **fake_package["env"],
+        "TT_RELEASE_AUDIT": "1",
+        "TT_RELEASE_AUDIT_SCRIPT": str(audit),
+    }
+
+    subprocess.run(
+        ["bash", str(PACKAGE)],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert (fake_package["output"] / "RELEASE-AUDIT.json").is_file()
+
+
+def test_release_audit_failure_does_not_publish(fake_package, tmp_path) -> None:
+    audit = tmp_path / "release-audit"
+    _write_executable(audit, "#!/usr/bin/env python3\nraise SystemExit(42)\n")
+    env = {
+        **fake_package["env"],
+        "TT_RELEASE_AUDIT": "1",
+        "TT_RELEASE_AUDIT_SCRIPT": str(audit),
+    }
+
+    result = subprocess.run(
+        ["bash", str(PACKAGE)],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 42
+    assert not fake_package["output"].exists()

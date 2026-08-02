@@ -66,7 +66,8 @@ def test_clean_vm_workflow_runs_package_ui_smoke():
     workflow = (ROOT / ".github" / "workflows" / "linux-package-smoke.yml").read_text(
         encoding="utf-8"
     )
-    assert "make package-linux" in workflow
+    assert "make release-linux" in workflow
+    assert "make audit-release" in workflow
     assert "TT_SMOKE_LAUNCH_UI: \"1\"" in workflow
     assert "make test-package-linux" in workflow
     assert "submodules: recursive" in workflow
