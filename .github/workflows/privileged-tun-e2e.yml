@@ -1,0 +1,34 @@
+name: Privileged TUN E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: privileged-tun-e2e
+  cancel-in-progress: false
+
+jobs:
+  tun-e2e:
+    runs-on: [self-hosted, linux, x64, traffictracer-tun]
+    timeout-minutes: 30
+    steps:
+      - name: Check out pinned Complete sources
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify controlled Runner privileges
+        shell: bash
+        run: |
+          test "$(id -u)" -ne 0
+          sudo -n true
+          dumpcap -D >/dev/null
+
+      - name: Run isolated privileged TUN integration gate
+        env:
+          PYTHON: python3
+        run: make test-e2e-tun
