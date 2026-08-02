@@ -32,6 +32,5 @@ prepare-dev: ## Rebuild and inject all Complete development sidecars.
 dev: ## Rebuild sidecars and start TrafficTracer Complete in development mode.
 	@bash scripts/build-ui.sh
 
-package-linux: ## Build the Linux package (available after TT-035).
-	@echo "package-linux is not available until TT-035 is complete" >&2
-	@exit 2
+package-linux: ## Build, verify, and collect the Complete Linux packages.
+	@bash scripts/package-linux.sh
