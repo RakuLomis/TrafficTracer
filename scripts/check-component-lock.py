@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 
 import yaml
 
@@ -47,6 +48,49 @@ def _load_lock() -> dict:
     return yaml.safe_load(LOCK_PATH.read_text(encoding="utf-8"))
 
 
+def _check_service_contract(lock: dict) -> None:
+    ui_root = ROOT / lock["components"]["clash_verge_rev"]["path"]
+    service = lock["components"]["clash_verge_service"]
+    bundle_lock_path = ROOT / service["bundle_lock"]
+    bundle = json.loads(bundle_lock_path.read_text(encoding="utf-8"))
+    expected_bundle = {
+        "source": service["repository"],
+        "tag": service["tag"],
+        "commit": service["commit"],
+        "protocol": {
+            "epoch": service["protocol"]["epoch"],
+            "revision": service["protocol"]["revision"],
+            "minSupportedClientRevision": service["protocol"]["min_supported_client_revision"],
+            "minRequiredServiceRevision": service["protocol"]["min_required_service_revision"],
+        },
+        "ipcPaths": service["ipc_paths"],
+    }
+    for key, expected in expected_bundle.items():
+        if bundle.get(key) != expected:
+            raise RuntimeError(f"service bundle lock {key} does not match component lock")
+
+    target_asset = bundle.get("assets", {}).get(TARGET)
+    expected_asset = service["linux_x86_64"]
+    if target_asset != {
+        "file": expected_asset["asset"],
+        "sha256": expected_asset["sha256"],
+    }:
+        raise RuntimeError("Linux x86-64 service asset does not match component lock")
+
+    cargo_lock = tomllib.loads((ui_root / "Cargo.lock").read_text(encoding="utf-8"))
+    packages = [
+        package
+        for package in cargo_lock.get("package", [])
+        if package.get("name") == "clash_verge_service_ipc"
+    ]
+    expected_source = f"?rev={service['commit']}#{service['commit']}"
+    if len(packages) != 1:
+        raise RuntimeError("Cargo.lock must contain exactly one clash_verge_service_ipc package")
+    package = packages[0]
+    if package.get("version") != service["client_version"] or expected_source not in package.get("source", ""):
+        raise RuntimeError("Cargo.lock service IPC client does not match component lock")
+
+
 def check_sources(lock: dict) -> None:
     tree = {
         line.split()[3]: line.split()[2]
@@ -74,6 +118,7 @@ def check_sources(lock: dict) -> None:
         raise RuntimeError("Complete product version does not match component lock")
     if lock["protocols"] != expected_protocols:
         raise RuntimeError("protocol versions do not match component lock")
+    _check_service_contract(lock)
 
 
 def check_worker(path: Path, lock: dict) -> None:

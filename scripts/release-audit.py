@@ -194,6 +194,9 @@ def verify_source(repo: Path, lock: dict[str, Any]) -> dict[str, str]:
                 f"{key} revision mismatch: expected {expected}, found {actual}"
             )
         revisions[key] = actual
+    revisions["clash_verge_service"] = str(
+        lock["components"]["clash_verge_service"]["commit"]
+    )
     return revisions
 
 
@@ -334,6 +337,14 @@ def generate_sbom(
             revisions["clash_verge_rev"],
             "generic",
             "components/clash-verge-rev",
+            license_id="GPL-3.0-only",
+        ),
+        component(
+            "application",
+            "clash-verge-service-ipc",
+            str(lock["components"]["clash_verge_service"]["tag"]),
+            "generic",
+            str(lock["components"]["clash_verge_service"]["repository"]),
             license_id="GPL-3.0-only",
         ),
         *python_components(),
@@ -520,6 +531,7 @@ def verify_component_manifest(
         "traffictracer": revisions["traffictracer"],
         "mihomo": revisions["mihomo"],
         "ui": revisions["clash_verge_rev"],
+        "service": revisions["clash_verge_service"],
     }
     if values != expected:
         raise AuditFailure(f"COMPONENTS mismatch: expected {expected}, found {values}")

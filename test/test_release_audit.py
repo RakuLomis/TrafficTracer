@@ -167,6 +167,7 @@ def test_sbom_covers_all_locked_ecosystems():
         "traffictracer": "1" * 40,
         "mihomo": lock["components"]["mihomo"]["commit"],
         "clash_verge_rev": lock["components"]["clash_verge_rev"]["commit"],
+        "clash_verge_service": lock["components"]["clash_verge_service"]["commit"],
     }
 
     sbom = audit.generate_sbom(ROOT, lock, revisions)
@@ -180,6 +181,7 @@ def test_sbom_covers_all_locked_ecosystems():
     assert any(value.startswith("golang:") for value in references)
     assert any(value.startswith("cargo:") for value in references)
     assert any(value.startswith("npm:") for value in references)
+    assert any("clash-verge-service-ipc@v2.6.1" in value for value in references)
 
 
 def test_release_metadata_round_trip_and_tamper_detection(tmp_path):

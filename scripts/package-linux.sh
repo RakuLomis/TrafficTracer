@@ -95,11 +95,13 @@ cp -- "${debs[0]}" "${appimages[0]}" "$stage_dir/"
   cd "$stage_dir"
   sha256sum -- ./*.deb ./*.AppImage >SHA256SUMS
 )
+service_commit="$("$python_bin" -c 'import pathlib, sys, yaml; print(yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())["components"]["clash_verge_service"]["commit"])' "$repo_root/complete/components.lock.yaml")"
 {
   printf 'target=%s\n' "$target"
   printf 'traffictracer=%s\n' "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'mihomo=%s\n' "$(git -C "$repo_root/components/mihomo" rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'ui=%s\n' "$(git -C "$ui_dir" rev-parse HEAD 2>/dev/null || printf unknown)"
+  printf 'service=%s\n' "$service_commit"
 } >"$stage_dir/COMPONENTS"
 
 if [[ "${TT_RELEASE_AUDIT:-0}" == 1 ]]; then

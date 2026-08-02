@@ -111,18 +111,19 @@ Linux 安装服务时会出现管理员授权，例如：
 
 | 路径 | 用途 |
 | --- | --- |
-| `/tmp/verge/clash-verge-service.sock` | Clash Verge 特权服务 IPC |
+| `/run/clash-verge-service/service.sock` | Linux Clash Verge 特权服务 IPC（service v2.6.1） |
 | `/tmp/verge/verge-mihomo.sock` | Mihomo 控制器 IPC |
 
-出现 `IPC path not ready` 时，关闭重复 UI，只启动当前版本，然后检查：
+Complete 将 service 客户端、service 发行包和协议固定为 v2.6.1（协议 2.2）。出现 `IPC path not ready` 时，不要停止当前正在提供网络的 Clash Verge；先只读检查：
 
 ```bash
 ls -l /usr/bin/clash-verge-service*
 pgrep -af 'clash-verge-service|clash-verge'
-ls -l /tmp/verge/clash-verge-service.sock
+systemctl status clash-verge-service --no-pager
+ls -l /run/clash-verge-service/service.sock
 ```
 
-回到 UI 使用“修复/重新安装服务”，并查看“设置 → 日志”。不要同时手工启动 helper 和点击 UI 安装，也不要删除正在使用的 socket。
+如果 `/run/clash-verge-service/service.sock` 已存在且服务为 active，而 UI 仍在检查 `/tmp/verge/clash-verge-service.sock`，运行的是旧 UI 客户端；应安装同一 Complete 构建中的 UI 与 service，不要反复重装健康服务。只有实际 socket 缺失或 UI 明确报告协议不兼容时，才在可接受的网络维护窗口内使用“修复/重新安装服务”。不要同时手工启动 helper 和点击 UI 安装，也不要删除正在使用的 socket。
 
 ## 6. Session、恢复与取消
 

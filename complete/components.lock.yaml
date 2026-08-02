@@ -15,7 +15,25 @@ components:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
     branch: feat/traffic-tracer
-    commit: 18ae533ba19462ad07cc5b09d167a9bf1fc93202
+    commit: 22dca356710f83fab1141f7c3db16211f604083a
+  clash_verge_service:
+    repository: https://github.com/clash-verge-rev/clash-verge-service-ipc
+    tag: v2.6.1
+    commit: 10edb52ec071520f14ce78654e401e4246127d75
+    client_version: 2.6.1
+    bundle_lock: components/clash-verge-rev/scripts/service-bundle.lock.json
+    protocol:
+      epoch: 2
+      revision: 2
+      min_supported_client_revision: 1
+      min_required_service_revision: 1
+    ipc_paths:
+      linux: /run/clash-verge-service/service.sock
+      macos: /var/run/clash-verge-service/service.sock
+      windows: '\\.\pipe\clash-verge-service'
+    linux_x86_64:
+      asset: clash-verge-service-ipc-v2.6.1-x86_64-unknown-linux-gnu.tar.gz
+      sha256: 67eacca41c842d446d848f8fbee99b625906e3a94146cd12e0561c6091a8c0b2
   traffictracer:
     path: .
     branch: Complete
