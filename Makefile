@@ -15,7 +15,7 @@ test-python: ## Run the TrafficTracer Python test suite.
 	@$(PYTHON) -m pytest -q
 
 test-contracts: ## Run the Complete schema and validation contract tests.
-	@$(PYTHON) -m pytest -q test/test_job_contract.py test/test_worker_api_contract.py test/test_session_flow_contract.py test/test_contracts.py
+	@PYTHON=$(PYTHON) bash scripts/test-contracts.sh
 
 check-toolchain: ## Check the Complete development toolchain.
 	@bash scripts/check-toolchain.sh
