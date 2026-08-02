@@ -74,6 +74,16 @@ case "$1" in
 esac
 """,
     )
+    lock_check = bin_dir / "check-component-lock"
+    _write_executable(
+        lock_check,
+        """#!/usr/bin/env bash
+set -euo pipefail
+test "$1" = "--core"
+test "$3" = "--worker"
+printf 'lock-check %s %s\n' "$2" "$4" >>"$TT_TEST_INVOCATIONS"
+""",
+    )
 
     invocations = tmp_path / "invocations"
     dev_marker = tmp_path / "dev-started"
@@ -86,6 +96,7 @@ esac
         "TT_BUILD_CORE_SCRIPT": str(core_build),
         "TT_BUILD_WORKER_SCRIPT": str(worker_build),
         "TT_PNPM_BIN": str(fake_pnpm),
+        "TT_COMPONENT_LOCK_CHECK": str(lock_check),
         "TT_TEST_INVOCATIONS": str(invocations),
         "TT_TEST_DEV_MARKER": str(dev_marker),
     }
@@ -117,9 +128,9 @@ def test_prepare_dev_overwrites_stale_sidecars(fake_build) -> None:
     assert (
         sidecar_dir / f"traffictracer-worker-{TARGET}"
     ).read_text() == "fresh-worker"
-    assert fake_build["invocations"].read_text().splitlines() == [
-        f"prebuild --force {TARGET}"
-    ]
+    invocations = fake_build["invocations"].read_text().splitlines()
+    assert invocations[0].startswith("lock-check ")
+    assert invocations[1:] == [f"prebuild --force {TARGET}"]
     assert not fake_build["dev_marker"].exists()
     assert f"Injected sidecars are current for {TARGET}." in result.stdout
     assert "Artifact hashes:" in result.stdout
@@ -134,8 +145,7 @@ def test_dev_starts_only_after_sidecars_are_verified(fake_build) -> None:
         check=True,
     )
 
-    assert fake_build["invocations"].read_text().splitlines() == [
-        f"prebuild --force {TARGET}",
-        "dev",
-    ]
+    invocations = fake_build["invocations"].read_text().splitlines()
+    assert invocations[0].startswith("lock-check ")
+    assert invocations[1:] == [f"prebuild --force {TARGET}", "dev"]
     assert fake_build["dev_marker"].is_file()

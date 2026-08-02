@@ -12,6 +12,7 @@ core_artifact="${core_dist_dir}/verge-mihomo-tt-${target}"
 worker_artifact="${worker_dist_dir}/traffictracer-worker-${target}"
 core_build_script="${TT_BUILD_CORE_SCRIPT:-${repo_root}/scripts/build-core.sh}"
 worker_build_script="${TT_BUILD_WORKER_SCRIPT:-${repo_root}/scripts/build-worker.sh}"
+component_lock_check="${TT_COMPONENT_LOCK_CHECK:-${repo_root}/scripts/check-component-lock.py}"
 pnpm_bin="${TT_PNPM_BIN:-pnpm}"
 mode="dev"
 
@@ -45,6 +46,10 @@ for build_script in "$core_build_script" "$worker_build_script"; do
     exit 2
   fi
 done
+if [[ ! -x "$component_lock_check" ]]; then
+  echo "error: component lock check is not executable: $component_lock_check" >&2
+  exit 2
+fi
 if ! command -v "$pnpm_bin" >/dev/null 2>&1; then
   echo "error: pnpm command is unavailable: $pnpm_bin" >&2
   exit 2
@@ -59,6 +64,8 @@ for artifact in "$core_artifact" "$worker_artifact"; do
     exit 3
   fi
 done
+
+"$component_lock_check" --core "$core_artifact" --worker "$worker_artifact"
 
 (
   cd "$ui_dir"

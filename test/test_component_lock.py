@@ -10,6 +10,7 @@ from traffictracer import version
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK_PATH = ROOT / "complete" / "components.lock.yaml"
+CHECK_SCRIPT = ROOT / "scripts" / "check-component-lock.py"
 
 
 def _git_output(*args: str, cwd: Path = ROOT) -> str:
@@ -58,3 +59,14 @@ def test_component_lock_matches_python_versions():
         "mihomo_tracing_api": version.MIHOMO_TRACING_API_VERSION,
         "mihomo_event_schema": version.MIHOMO_EVENT_SCHEMA_VERSION,
     }
+
+
+def test_component_lock_source_cli_passes():
+    completed = subprocess.run(
+        [str(CHECK_SCRIPT), "--source-only"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert "component lock verified" in completed.stdout

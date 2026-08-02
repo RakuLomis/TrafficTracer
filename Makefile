@@ -3,7 +3,7 @@ PYTHON ?= python
 
 .DEFAULT_GOAL := help
 
-.PHONY: help bootstrap test-python test-contracts check-toolchain build-core build-worker prepare-dev dev package-linux
+.PHONY: help bootstrap test-python test-contracts check-toolchain build-core build-worker check-component-lock prepare-dev dev package-linux
 
 help: ## Show Complete development commands.
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,6 +25,9 @@ build-core: ## Rebuild the pinned mihomo-traffictracer sidecar.
 
 build-worker: ## Rebuild and smoke-test the TrafficTracer Worker sidecar.
 	@bash scripts/build-worker.sh
+
+check-component-lock: build-core build-worker ## Verify source pins and binary protocol handshakes.
+	@scripts/check-component-lock.py
 
 prepare-dev: ## Rebuild and inject all Complete development sidecars.
 	@bash scripts/build-ui.sh --prepare-only
