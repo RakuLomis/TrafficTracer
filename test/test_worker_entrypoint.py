@@ -15,7 +15,7 @@ WORKER = ROOT / "traffictracer_worker.py"
 
 def _request(request_id, method, params=None):
     return json.dumps({
-        "api_version": 1,
+        "api_version": 2,
         "type": "request",
         "id": request_id,
         "method": method,
@@ -55,7 +55,7 @@ def test_worker_hello_diagnose_shutdown_stdout_is_protocol_only(tmp_path):
         for message in messages
         if message.get("type") == "response"
     }
-    assert responses["hello"]["result"]["api_version"] == 1
+    assert responses["hello"]["result"]["api_version"] == 2
     assert len(responses["diagnose"]["result"]["checks"]) == 7
     assert responses["shutdown"]["result"] == {
         "shutdown": True,
@@ -126,7 +126,7 @@ def test_worker_dispatches_request_while_stdin_remains_open(tmp_path):
         assert selector.select(timeout=5), "live Worker request was buffered"
         response = json.loads(process.stdout.readline())
         assert response["id"] == "live"
-        assert response["result"]["api_version"] == 1
+        assert response["result"]["api_version"] == 2
 
         process.stdin.write(_request("shutdown", "worker.shutdown") + "\n")
         process.stdin.flush()

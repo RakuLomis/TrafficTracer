@@ -109,6 +109,7 @@ def check_sources(lock: dict) -> None:
 
     expected_protocols = {
         "worker_api": version.WORKER_API_VERSION,
+        "job_schema": version.JOB_SCHEMA_VERSION,
         "session_manifest": version.SESSION_SCHEMA_VERSION,
         "flow_result": version.FLOW_SCHEMA_VERSION,
         "mihomo_tracing_api": version.MIHOMO_TRACING_API_VERSION,
@@ -161,6 +162,7 @@ def check_worker(path: Path, lock: dict) -> None:
     expected = {
         "version": lock["product"]["version"],
         "api_version": lock["protocols"]["worker_api"],
+        "job_schema_version": lock["protocols"]["job_schema"],
         "session_schema_version": lock["protocols"]["session_manifest"],
         "flow_schema_version": lock["protocols"]["flow_result"],
     }

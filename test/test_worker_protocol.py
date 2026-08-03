@@ -16,7 +16,7 @@ from traffictracer.worker.protocol import (
 
 def _request(request_id="one"):
     return {
-        "api_version": 1,
+        "api_version": 2,
         "type": "request",
         "id": request_id,
         "method": "hello",
@@ -86,7 +86,7 @@ def test_writer_validates_compacts_flushes_and_delimits_stdout_messages():
     stream = BytesIO()
     writer = JsonlWriter(stream)
     response = {
-        "api_version": 1,
+        "api_version": 2,
         "type": "response",
         "id": "one",
         "result": {"status": "ok"},
@@ -102,7 +102,7 @@ def test_writer_rejects_invalid_or_oversized_protocol_output():
         JsonlWriter(BytesIO()).write({"debug": "must go to stderr"})
     writer = JsonlWriter(BytesIO(), max_message_bytes=100)
     response = {
-        "api_version": 1,
+        "api_version": 2,
         "type": "response",
         "id": "one",
         "result": {"padding": "x" * 200},

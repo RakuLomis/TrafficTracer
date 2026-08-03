@@ -4,10 +4,13 @@ import json
 from pathlib import Path
 from threading import Event
 
+import pytest
+
 from traffictracer.jobs.models import CaptureJobResult, JobState
 from traffictracer.jobs.progress import JobStage
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.worker.services import WorkerServices
+from traffictracer.worker.dispatcher import WorkerMethodError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +22,63 @@ def _capture_payload(output_root):
         payload = json.load(stream)
     payload["output_root"] = str(output_root)
     return payload
+
+
+def test_target_config_service_returns_normalized_preview(tmp_path):
+    config = tmp_path / "sites.yaml"
+    config.write_text(
+        """global:
+  mihomo:
+    secret: must-not-leak
+sites:
+  - domain: Example.COM.
+    url: https://example.com/path
+    wait: 12
+    traffic_type: browser
+    wait_load_timeout: 45
+""",
+        encoding="utf-8",
+    )
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    preview = services.load_targets({"path": str(config)})
+
+    assert preview["config_path"] == str(config.resolve())
+    assert preview["targets"] == [{
+        "index": 0,
+        "domain": "example.com",
+        "url": "https://example.com/path",
+        "duration_seconds": 12,
+        "network": "all",
+        "run_label": "browser",
+        "wait_load_timeout": 45,
+    }]
+    assert preview["warnings"]
+    assert "must-not-leak" not in str(preview)
+
+
+def test_target_config_service_maps_validation_errors_without_values(tmp_path):
+    config = tmp_path / "sites.yaml"
+    config.write_text(
+        "sites:\n  - domain: example.com\n    url: 'secret-value'\n",
+        encoding="utf-8",
+    )
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    with pytest.raises(WorkerMethodError) as raised:
+        services.load_targets({"path": str(config)})
+
+    assert raised.value.code == "INVALID_PARAMS"
+    assert raised.value.data == {"field": "sites[0].url"}
+    assert "secret-value" not in raised.value.message
 
 
 def test_capture_service_chains_analysis_and_persists_manifest_artifacts(

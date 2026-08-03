@@ -4,11 +4,12 @@ TrafficTracer Complete 把定制 Mihomo、TrafficTracer Worker 和 Clash Verge U
 
 ## 1. 组件与版本
 
-`complete/components.lock.yaml` 是组件和协议版本的事实来源。当前产品版本为 `0.1.0-dev`，以下协议均为 v1：
+`complete/components.lock.yaml` 是组件和协议版本的事实来源。当前产品版本为 `0.1.0-dev`：
 
 | 协议 | 版本 |
 | --- | --- |
-| Worker JSONL API | 1 |
+| Worker JSONL API | 2 |
+| Job schema | 2 |
 | Session manifest | 1 |
 | Flow result | 1 |
 | Mihomo tracing API | 1 |
@@ -41,7 +42,7 @@ chmod +x ./Clash\ Verge_2.5.2_amd64.AppImage
 ./Clash\ Verge_2.5.2_amd64.AppImage
 ```
 
-文件名随版本变化。Complete 包必须同时包含 `verge-mihomo-tt`、`traffictracer-worker`、标准/Alpha 核心和三个服务 helper。上游 Clash Verge 包不等价。
+文件名随版本变化。Complete 包必须同时包含 `verge-mihomo-tt`、`traffictracer-worker`、标准/Alpha 核心、特权服务及其安装/卸载 helper。上游 Clash Verge 包不等价。Worker API v2 与对应 UI 必须成套安装，不能只替换 Worker 或只替换 UI。
 
 ## 3. 从源码开发
 
@@ -65,17 +66,36 @@ make check-toolchain
 
 `make check-toolchain` 检查 Python 3.12+、Go、Rust/Cargo、pnpm、PyInstaller、Chrome、tshark 和 dumpcap。
 
+建议先运行源码和跨组件合同测试：
+
+```bash
+make test-python
+make test-contracts
+```
+
+只编译核心与 Worker、注入开发 sidecar，但不启动第二个 Clash Verge：
+
+```bash
+make prepare-dev
+```
+
+产物位于：
+
+```text
+dist/core/verge-mihomo-tt-x86_64-unknown-linux-gnu
+dist/worker/traffictracer-worker-x86_64-unknown-linux-gnu
+components/clash-verge-rev/src-tauri/sidecar/
+```
+
 启动开发 UI：
 
 ```bash
 make dev
 ```
 
-该命令会重新构建固定 Mihomo 核心和 Worker，强制注入 UI sidecar，校验文件一致性并打印组件提交和 artifact SHA-256。只准备而不启动 UI：
+该命令会执行与 `make prepare-dev` 相同的重建和校验，然后启动 Tauri 开发 UI。不要让它与已安装的 Clash Verge 同时运行并争用控制器/socket；若当前 Clash Verge 正在提供网络，应先使用 `make prepare-dev` 或构建安装包，等到可接受的网络维护窗口再从 UI 正常退出旧实例后启动开发版。不要用强制 kill 作为常规切换方式。
 
-```bash
-make prepare-dev
-```
+如果当前 checkout 含有尚未提交的开发改动，`make prepare-dev` 和 `make package-linux` 可以生成本地测试构建，但 `COMPONENTS` 中记录的是当前提交而不是未提交 diff，不能作为正式发布包。正式候选必须先提交 UI 子模块改动、更新根仓库 gitlink/组件锁并保持受跟踪工作树干净。
 
 ## 4. UI 全流程
 
@@ -84,13 +104,38 @@ make prepare-dev
 3. 在“代理/Proxies”执行延迟测试并选择节点/策略组。
 4. 按需开启系统代理。
 5. 安装 Clash Verge 服务并开启 TUN。
-6. 打开“流量追踪”，填写 URL、协议、持续时间、TUN/物理接口、Chrome 绝对路径和输出绝对目录。
+6. 打开“流量追踪”，选择“手工输入”并填写目标，或选择“YAML 配置”加载预先编写的 `sites.yaml` 并选中一个目标；再填写 TUN/物理接口、Chrome 绝对路径和输出绝对目录。
 7. 点击“检测环境”，关闭所有阻断项。
 8. 点击“开始捕获”；启用“自动分析”时捕获后自动进入分析。
 9. 在“会话”查看状态、警告和产物，或点击“重新分析”。
 10. 在“规范化流”输入代理前五元组，查询全部 Session。
 
 诊断覆盖 TT 核心能力、控制器、TUN 服务、两个接口、捕获工具/权限、浏览器和存储空间。捕获期间核心、配置、tracing、TUN、系统代理与服务控制会锁定，避免运行时状态漂移。
+
+目标 YAML 兼容独立版的 `sites` 列表，例如：
+
+```yaml
+sites:
+  - domain: example.com
+    url: https://example.com/
+    wait: 15
+    traffic_type: all
+    wait_load_timeout: 30
+```
+
+UI 只读取 `sites`，不会应用文件中的 `global.mihomo`、`global.chrome`、`global.network` 或 `global.output`；这些运行环境仍由 Clash Verge 和当前表单管理。`wait` 映射为捕获持续时间，`wait_load_timeout` 映射为页面加载超时，`traffic_type` 为 `tcp`、`udp` 或 `all` 时同时决定捕获协议。其他由字母、数字、点、下划线或连字符组成的安全值会保留为运行标签，同时协议回退为 `all` 并显示警告。
+
+加载时 Worker 仅返回规范化目标、绝对路径、警告和文件 SHA-256，不返回代理 secret 或其他 `global` 内容。开始捕获前 UI 后端会重新读取文件并比对 SHA-256、目标序号及所有规范化字段；文件若已变化，必须点击刷新并重新选择，避免预览与实际任务不一致。当前最小版本每次仍只运行一个选中目标，不批量执行整个列表。
+
+目标文件应放在不会随重启清理的持久目录，不要放在 `/tmp`。文件必须是 UTF-8、扩展名为 `.yaml` 或 `.yml`、不超过 1 MiB，并包含非空 `sites` 列表。字段约束如下：
+
+| 字段 | 约束/默认值 |
+| --- | --- |
+| `domain` | 必填，有效 DNS 名称 |
+| `url` | 必填，绝对 `http://` 或 `https://` URL |
+| `wait` | 1–86400 的整数，默认 10 秒 |
+| `wait_load_timeout` | 1–3600 的整数，默认 30 秒 |
+| `traffic_type` | 默认 `all`；1–64 位字母、数字、点、下划线或连字符，首位必须是字母或数字 |
 
 Linux 可用以下命令辅助选择接口：
 
@@ -152,7 +197,7 @@ ls -l /run/clash-verge-service/service.sock
 
 ## 8. Linux 打包
 
-开发测试可使用 `make package-linux`。正式发布候选必须从三个仓库均无已
+开发测试可使用 `make package-linux`。该入口会先重建核心和 Worker、注入并核对 sidecar，再调用 Tauri；不要直接从 UI 子仓库运行裸 `pnpm tauri build`。正式发布候选必须从三个仓库均无已
 跟踪改动的工作树执行：
 
 ```bash
@@ -172,7 +217,17 @@ make package-linux
 sha256sum -c dist/packages/x86_64-unknown-linux-gnu/SHA256SUMS
 ```
 
-流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 8 个可执行文件，最后才原子发布：
+默认输出目录已存在时不会覆盖。为新的本地候选使用新的绝对目录，例如：
+
+```bash
+cd /absolute/path/to/TrafficTracer
+TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/target-config-v2" make package-linux
+sha256sum -c dist/packages/target-config-v2/SHA256SUMS
+```
+
+这里的 `$PWD` 必须是 TrafficTracer `Complete` 仓库根目录；如果命令在 `~` 中执行，它会错误地指向 `$HOME/dist/...`。
+
+流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 7 个可执行文件，最后才原子发布：
 
 ```text
 dist/packages/x86_64-unknown-linux-gnu/
@@ -186,13 +241,22 @@ dist/packages/x86_64-unknown-linux-gnu/
 └── METADATA.sha256
 ```
 
-默认输出已存在时脚本拒绝覆盖。可移动旧目录，或为新候选指定新目录：
+正式候选的默认输出已存在时同样拒绝覆盖；为新候选指定新目录：
 
 ```bash
 TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/rc-2" make release-linux
 ```
 
 未配置 `TAURI_SIGNING_PRIVATE_KEY` 时生成经过布局验证的 unsigned 包；发布 updater artifact 时必须配置私钥。任一构建、验证或校验步骤失败，最终输出目录不会创建。
+
+安装或升级本地 Deb 会替换系统中的 Clash Verge 文件，但不会让已经运行的旧进程自动变成新版本。先完成构建和校验；到维护窗口后从旧 UI 正常退出，再安装并启动新包：
+
+```bash
+cd /absolute/path/to/TrafficTracer
+sudo apt install "$PWD/dist/packages/target-config-v2/Clash Verge_2.5.2_amd64.deb"
+```
+
+升级后保留原有用户配置，但仍应确认核心选择为 `verge-mihomo-tt`、服务 socket 为 `/run/clash-verge-service/service.sock`，并重新执行流量追踪环境检测。不要从可能被重启清理的 `/tmp` 路径安装。
 
 ## 9. 验证
 

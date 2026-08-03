@@ -20,6 +20,7 @@
       "enum": [
         "hello",
         "environment.diagnose",
+        "config.targets.load",
         "job.start",
         "job.cancel",
         "job.status",
@@ -69,7 +70,7 @@
       "additionalProperties": false,
       "required": ["api_version", "type", "id", "method", "params"],
       "properties": {
-        "api_version": { "const": 1 },
+        "api_version": { "const": 2 },
         "type": { "const": "request" },
         "id": { "$ref": "#/$defs/requestId" },
         "method": { "$ref": "#/$defs/requestMethod" },
@@ -81,7 +82,7 @@
       "additionalProperties": false,
       "required": ["api_version", "type", "id", "result"],
       "properties": {
-        "api_version": { "const": 1 },
+        "api_version": { "const": 2 },
         "type": { "const": "response" },
         "id": { "$ref": "#/$defs/requestId" },
         "result": {}
@@ -92,7 +93,7 @@
       "additionalProperties": false,
       "required": ["api_version", "type", "id", "error"],
       "properties": {
-        "api_version": { "const": 1 },
+        "api_version": { "const": 2 },
         "type": { "const": "response" },
         "id": {
           "oneOf": [
@@ -108,7 +109,7 @@
       "additionalProperties": false,
       "required": ["api_version", "type", "method", "params"],
       "properties": {
-        "api_version": { "const": 1 },
+        "api_version": { "const": 2 },
         "type": { "const": "notification" },
         "method": { "$ref": "#/$defs/notificationMethod" },
         "params": { "type": "object" }

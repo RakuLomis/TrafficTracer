@@ -21,6 +21,7 @@ _CONTRACT_FILES = {
     "worker_api": "worker-api.schema.json",
     "session": "session.schema.json",
     "flow": "flow.schema.json",
+    "target_config": "target-config.schema.json",
 }
 _CONTRACT_ALIASES = {
     "worker-api": "worker_api",
@@ -130,6 +131,10 @@ def validate_session(payload: T) -> T:
 
 def validate_flow(payload: T) -> T:
     return validate_contract("flow", payload)
+
+
+def validate_target_config(payload: T) -> T:
+    return validate_contract("target_config", payload)
 
 
 def _canonical_name(contract: str) -> str:

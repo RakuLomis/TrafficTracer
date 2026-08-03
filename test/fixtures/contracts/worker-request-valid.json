@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "type": "request",
   "id": "ui-1",
   "method": "environment.diagnose",

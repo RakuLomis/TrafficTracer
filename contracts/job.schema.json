@@ -79,7 +79,7 @@
         "controller"
       ],
       "properties": {
-        "schema_version": { "const": 1 },
+        "schema_version": { "const": 2 },
         "kind": { "const": "capture" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
@@ -95,7 +95,13 @@
         "output_root": { "$ref": "#/$defs/absolutePath" },
         "chrome_binary": { "$ref": "#/$defs/absolutePath" },
         "controller": { "$ref": "#/$defs/controller" },
-        "options": { "$ref": "#/$defs/captureOptions" }
+        "options": { "$ref": "#/$defs/captureOptions" },
+        "wait_load_timeout": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "run_label": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
+        "target_source": { "$ref": "#/$defs/targetSource" }
       }
     },
     "analysisJobSpec": {
@@ -103,13 +109,34 @@
       "additionalProperties": false,
       "required": ["schema_version", "kind", "job_id", "session_dir", "output_root"],
       "properties": {
-        "schema_version": { "const": 1 },
+        "schema_version": { "const": 2 },
         "kind": { "const": "analysis" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "session_dir": { "$ref": "#/$defs/absolutePath" },
         "output_root": { "$ref": "#/$defs/absolutePath" },
         "options": { "$ref": "#/$defs/analysisOptions" }
       }
+    },
+    "targetSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": { "mode": { "const": "manual" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "config_path", "config_sha256", "target_index"],
+          "properties": {
+            "mode": { "const": "config" },
+            "config_path": { "$ref": "#/$defs/absolutePath" },
+            "config_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "target_index": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
     }
   }
 }

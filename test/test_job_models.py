@@ -16,6 +16,7 @@ from traffictracer.jobs.models import (
     ControllerSpec,
     JobState,
     ProgressEvent,
+    TargetSource,
 )
 
 
@@ -65,9 +66,24 @@ def test_capture_job_can_be_constructed_without_yaml():
     )
     payload = spec.to_dict()
     assert payload["kind"] == "capture"
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["options"] == CaptureJobOptions().to_dict()
     assert "secret" not in payload["controller"]
+
+
+def test_capture_job_serializes_config_target_provenance():
+    source = TargetSource(
+        mode="config",
+        config_path="/tmp/sites.yaml",
+        config_sha256="a" * 64,
+        target_index=2,
+    )
+    assert source.to_dict() == {
+        "mode": "config",
+        "config_path": "/tmp/sites.yaml",
+        "config_sha256": "a" * 64,
+        "target_index": 2,
+    }
 
 
 def test_invalid_capture_job_is_rejected_at_serialization_boundary():

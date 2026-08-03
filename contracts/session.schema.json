@@ -75,7 +75,8 @@
       "required": ["url", "domain"],
       "properties": {
         "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
-        "domain": { "type": "string", "minLength": 1, "maxLength": 253 }
+        "domain": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "source": { "$ref": "#/$defs/targetSource" }
       }
     },
     "component": {
@@ -101,7 +102,7 @@
         "traffictracer": { "$ref": "#/$defs/component" },
         "mihomo": { "$ref": "#/$defs/component" },
         "clash_verge_rev": { "$ref": "#/$defs/component" },
-        "worker_api": { "const": 1 }
+        "worker_api": { "enum": [1, 2] }
       }
     },
     "artifact": {
@@ -117,6 +118,27 @@
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "created_at": { "$ref": "#/$defs/timestamp" }
       }
+    },
+    "targetSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": { "mode": { "const": "manual" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "config_path", "config_sha256", "target_index"],
+          "properties": {
+            "mode": { "const": "config" },
+            "config_path": { "$ref": "#/$defs/absolutePath" },
+            "config_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+            "target_index": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
     },
     "sessionError": {
       "type": "object",

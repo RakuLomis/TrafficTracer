@@ -127,7 +127,7 @@ def smoke_worker(worker: Path, root: Path) -> None:
     ready = next((item for item in messages if item.get("method") == "worker.ready"), None)
     hello = responses.get("hello", {}).get("result", {})
     checks = responses.get("diagnose", {}).get("result", {}).get("checks")
-    if ready is None or hello.get("api_version") != 1:
+    if ready is None or hello.get("api_version") != 2:
         raise SmokeFailure("packaged Worker hello/ready handshake failed")
     if not isinstance(checks, list) or len(checks) != 7:
         raise SmokeFailure("packaged Worker environment diagnose failed")
@@ -137,7 +137,7 @@ def smoke_worker(worker: Path, root: Path) -> None:
 
 def request(request_id: str, method: str, params: dict[str, Any]) -> str:
     return json.dumps({
-        "api_version": 1,
+        "api_version": 2,
         "type": "request",
         "id": request_id,
         "method": method,

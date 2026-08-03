@@ -1,11 +1,16 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "kind": "capture",
   "job_id": "2f746e31-d62a-4e1c-a919-3f88ecde31c2",
   "url": "https://example.com/",
   "domain": "example.com",
   "duration_seconds": 15,
   "network": "all",
+  "wait_load_timeout": 30,
+  "run_label": "all",
+  "target_source": {
+    "mode": "manual"
+  },
   "interfaces": {
     "tun": "Meta",
     "physical": "eth0"

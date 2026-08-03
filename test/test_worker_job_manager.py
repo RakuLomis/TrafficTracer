@@ -190,7 +190,7 @@ def test_dispatcher_handlers_and_unknown_job_error_are_stable():
     dispatcher = Dispatcher(manager.handlers())
     capture = _payload(CAPTURE_FIXTURE)
     response = dispatcher.dispatch({
-        "api_version": 1,
+        "api_version": 2,
         "type": "request",
         "id": "start",
         "method": "job.start",

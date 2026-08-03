@@ -74,6 +74,38 @@ class CaptureJobOptions:
 
 
 @dataclass(frozen=True)
+class TargetSource:
+    mode: str = "manual"
+    config_path: str | None = None
+    config_sha256: str | None = None
+    target_index: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        if self.mode == "manual":
+            return {"mode": "manual"}
+        if self.mode != "config":
+            raise ValueError("target source mode must be manual or config")
+        if self.config_path is None or self.config_sha256 is None or self.target_index is None:
+            raise ValueError("config target source requires path, SHA-256 and target index")
+        return {
+            "mode": "config",
+            "config_path": self.config_path,
+            "config_sha256": self.config_sha256,
+            "target_index": self.target_index,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any] | None) -> TargetSource:
+        data = dict(payload or {"mode": "manual"})
+        return cls(
+            mode=data.get("mode", "manual"),
+            config_path=data.get("config_path"),
+            config_sha256=data.get("config_sha256"),
+            target_index=data.get("target_index"),
+        )
+
+
+@dataclass(frozen=True)
 class CaptureJobSpec:
     job_id: str
     url: str
@@ -85,6 +117,9 @@ class CaptureJobSpec:
     chrome_binary: str
     controller: ControllerSpec
     options: CaptureJobOptions = field(default_factory=CaptureJobOptions)
+    wait_load_timeout: int = 30
+    run_label: str = "all"
+    target_source: TargetSource = field(default_factory=TargetSource)
 
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="capture", init=False)
@@ -103,6 +138,9 @@ class CaptureJobSpec:
             "chrome_binary": self.chrome_binary,
             "controller": self.controller.to_dict(),
             "options": self.options.to_dict(),
+            "wait_load_timeout": self.wait_load_timeout,
+            "run_label": self.run_label,
+            "target_source": self.target_source.to_dict(),
         }
         if validate:
             validate_job(payload)
@@ -141,6 +179,9 @@ class CaptureJobSpec:
                 analyze_after_capture=options.get("analyze_after_capture", True),
                 headless=options.get("headless", False),
             ),
+            wait_load_timeout=data.get("wait_load_timeout", 30),
+            run_label=data.get("run_label", data["network"]),
+            target_source=TargetSource.from_dict(data.get("target_source")),
         )
 
 

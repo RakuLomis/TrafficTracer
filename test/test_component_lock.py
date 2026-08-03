@@ -54,6 +54,7 @@ def test_component_lock_matches_python_versions():
     assert lock["product"]["version"] == version.COMPLETE_VERSION
     assert lock["protocols"] == {
         "worker_api": version.WORKER_API_VERSION,
+        "job_schema": version.JOB_SCHEMA_VERSION,
         "session_manifest": version.SESSION_SCHEMA_VERSION,
         "flow_result": version.FLOW_SCHEMA_VERSION,
         "mihomo_tracing_api": version.MIHOMO_TRACING_API_VERSION,

@@ -64,7 +64,7 @@ def main(argv=None) -> int:
     }
     if not ready:
         raise RuntimeError("Worker did not emit worker.ready")
-    if responses.get("hello", {}).get("result", {}).get("api_version") != 1:
+    if responses.get("hello", {}).get("result", {}).get("api_version") != 2:
         raise RuntimeError("Worker hello handshake failed")
     checks = responses.get("diagnose", {}).get("result", {}).get("checks")
     if not isinstance(checks, list) or len(checks) != 7:
@@ -77,7 +77,7 @@ def main(argv=None) -> int:
 
 def _request(request_id: str, method: str, params: dict) -> str:
     return json.dumps({
-        "api_version": 1,
+        "api_version": 2,
         "type": "request",
         "id": request_id,
         "method": method,

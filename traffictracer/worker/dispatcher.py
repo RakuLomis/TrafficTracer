@@ -24,6 +24,7 @@ RequestHandler = Callable[[dict[str, Any]], Any]
 METHODS = (
     "hello",
     "environment.diagnose",
+    "config.targets.load",
     "job.start",
     "job.cancel",
     "job.status",

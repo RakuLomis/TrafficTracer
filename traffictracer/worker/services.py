@@ -12,6 +12,7 @@ from traffictracer.analyze.flow_index import flow_key
 from traffictracer.analyze.job import AnalysisJob
 from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSessionContext
 from traffictracer.capture.mihomo import MihomoManager
+from traffictracer.config import ConfigValidationError, load_target_config
 from traffictracer.diagnostics import EnvironmentSpec, diagnose_environment
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.models import (
@@ -63,6 +64,7 @@ class WorkerServices:
         handlers = self.jobs.handlers()
         handlers.update({
             "environment.diagnose": self.diagnose,
+            "config.targets.load": self.load_targets,
             "session.list": self.session_list,
             "session.get": self.session_get,
             "session.delete": self.session_delete,
@@ -70,6 +72,20 @@ class WorkerServices:
             "worker.shutdown": self.shutdown,
         })
         return handlers
+
+    def load_targets(self, params: dict[str, Any]) -> dict[str, Any]:
+        if set(params) != {"path"} or not isinstance(params.get("path"), str):
+            raise WorkerMethodError(
+                "INVALID_PARAMS", "config.targets.load requires one string path."
+            )
+        try:
+            return load_target_config(params["path"]).to_dict()
+        except ConfigValidationError as exc:
+            raise WorkerMethodError(
+                "INVALID_PARAMS",
+                exc.message,
+                {"field": exc.field_path},
+            ) from exc
 
     def diagnose(self, params: dict[str, Any]) -> dict[str, Any]:
         allowed = {
@@ -214,7 +230,7 @@ class WorkerServices:
         component_version = ComponentVersion("unknown", "unknown")
         manifest = self.store.create(
             job_id=spec.job_id,
-            target=SessionTarget(spec.url, spec.domain),
+            target=SessionTarget(spec.url, spec.domain, spec.target_source.to_dict()),
             component_versions=ComponentVersions(
                 traffictracer_version,
                 component_version,
@@ -235,6 +251,8 @@ class WorkerServices:
             runtime=CaptureRuntime(
                 user_data_dir=str(self.store.output_root / ".chrome-profiles"),
                 enable_cdp=spec.options.collect_cdp,
+                wait_load_timeout=spec.wait_load_timeout,
+                run_label=spec.run_label,
             ),
             mihomo=mihomo,
             session=CaptureSessionContext(

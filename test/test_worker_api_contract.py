@@ -52,7 +52,7 @@ def test_response_result_and_error_are_mutually_exclusive():
 
 def test_protocol_version_is_required_and_fixed():
     payload = _load(FIXTURE_ROOT / "worker-request-valid.json")
-    payload["api_version"] = 2
+    payload["api_version"] = 1
     assert _errors(payload)
 
     del payload["api_version"]

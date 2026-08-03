@@ -7,7 +7,7 @@ from traffictracer.worker.dispatcher import Dispatcher, METHODS, WorkerMethodErr
 from traffictracer.worker.protocol import ProtocolFailure
 
 
-def _request(method="hello", request_id="one", params=None, api_version=1):
+def _request(method="hello", request_id="one", params=None, api_version=2):
     return {
         "api_version": api_version,
         "type": "request",
@@ -21,8 +21,8 @@ def test_hello_returns_all_protocol_versions_and_methods():
     response = Dispatcher().dispatch(_request())
     assert validate_worker_message(response) is response
     result = response["result"]
-    assert result["api_version"] == 1
-    assert result["job_schema_version"] == 1
+    assert result["api_version"] == 2
+    assert result["job_schema_version"] == 2
     assert result["session_schema_version"] == 1
     assert result["flow_schema_version"] == 1
     assert result["methods"] == list(METHODS)
@@ -62,7 +62,7 @@ def test_invalid_params_and_non_request_envelopes_are_stable_errors():
     assert response["error"]["data"]["path"] == ["params"]
 
     non_request = {
-        "api_version": 1,
+        "api_version": 2,
         "type": "response",
         "id": "response-id",
         "result": {},
@@ -86,7 +86,7 @@ def test_duplicate_request_id_is_rejected_even_after_method_error():
 
 
 def test_protocol_version_mismatch_and_framing_error_are_valid_responses():
-    mismatch = Dispatcher().dispatch(_request(api_version=2))
+    mismatch = Dispatcher().dispatch(_request(api_version=1))
     assert mismatch["error"]["code"] == "PROTOCOL_VERSION_MISMATCH"
     assert validate_worker_message(mismatch) is mismatch
 

@@ -5,7 +5,14 @@ import os
 import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from traffictracer.config import load_config, Config, GlobalConfig, SiteConfig
+from traffictracer.config import (
+    Config,
+    ConfigValidationError,
+    GlobalConfig,
+    SiteConfig,
+    load_config,
+    load_target_config,
+)
 
 
 def test_load_config():
@@ -56,6 +63,66 @@ sites:
         os.unlink(tmp)
 
     print("  ✓ config loading pass")
+
+
+def test_load_target_config_normalizes_legacy_sites(tmp_path):
+    path = tmp_path / "sites.yaml"
+    path.write_text(
+        """
+global:
+  mihomo:
+    secret: must-not-leak
+sites:
+  - domain: Example.COM.
+    url: https://www.example.com/
+    wait: 15
+    traffic_type: tcp
+  - domain: example.com
+    url: https://www.example.com/video
+    wait: 20
+    traffic_type: video-play
+    wait_load_timeout: 45
+""",
+        encoding="utf-8",
+    )
+    preview = load_target_config(path)
+    payload = preview.to_dict()
+    assert payload["config_path"] == str(path.resolve())
+    assert len(payload["sha256"]) == 64
+    assert [target["index"] for target in payload["targets"]] == [0, 1]
+    assert payload["targets"][0]["domain"] == "example.com"
+    assert payload["targets"][0]["network"] == "tcp"
+    assert payload["targets"][1]["network"] == "all"
+    assert payload["targets"][1]["run_label"] == "video-play"
+    assert payload["targets"][1]["wait_load_timeout"] == 45
+    assert "must-not-leak" not in str(payload)
+    assert len(payload["warnings"]) == 1
+
+
+def test_load_target_config_rejects_unsafe_label(tmp_path):
+    path = tmp_path / "sites.yaml"
+    path.write_text(
+        "sites:\n  - domain: example.com\n    url: https://example.com\n    traffic_type: ../escape\n",
+        encoding="utf-8",
+    )
+    try:
+        load_target_config(path)
+    except ConfigValidationError as exc:
+        assert exc.field_path == "sites[0].traffic_type"
+        assert "../escape" not in str(exc)
+    else:
+        raise AssertionError("unsafe run label was accepted")
+
+
+def test_load_target_config_requires_absolute_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sites.yaml").write_text("sites: []\n", encoding="utf-8")
+    try:
+        load_target_config("sites.yaml")
+    except ConfigValidationError as exc:
+        assert exc.field_path == "config_path"
+    else:
+        raise AssertionError("relative target config path was accepted")
 
 
 if __name__ == "__main__":

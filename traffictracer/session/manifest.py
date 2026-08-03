@@ -47,9 +47,13 @@ class SessionTransitionError(ValueError):
 class SessionTarget:
     url: str
     domain: str
+    source: dict[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, str]:
-        return {"url": self.url, "domain": self.domain}
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"url": self.url, "domain": self.domain}
+        if self.source is not None:
+            payload["source"] = dict(self.source)
+        return payload
 
 
 @dataclass(frozen=True)
