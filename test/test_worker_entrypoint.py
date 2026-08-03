@@ -5,8 +5,11 @@ from pathlib import Path
 import selectors
 import subprocess
 import sys
+from uuid import UUID
 
 from traffictracer.contracts import validate_worker_message
+from traffictracer.session.manifest import ComponentVersion, ComponentVersions, SessionTarget
+from traffictracer.session.store import SessionStore
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +64,49 @@ def test_worker_hello_diagnose_shutdown_stdout_is_protocol_only(tmp_path):
         "shutdown": True,
         "jobs_stopped": True,
     }
+
+
+def test_worker_can_switch_between_isolated_session_roots(tmp_path):
+    first_root = tmp_path / "first sessions"
+    second_root = tmp_path / "second sessions"
+    component = ComponentVersion("complete", "unknown")
+    manifest = SessionStore(
+        first_root,
+        id_factory=lambda: UUID("5027aee9-c6e4-41de-8625-7ea0869a3307"),
+    ).create(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        target=SessionTarget("https://example.com/", "example.com"),
+        component_versions=ComponentVersions(component, component, component),
+    )
+
+    def inspect(root):
+        completed = subprocess.run(
+            [sys.executable, str(WORKER), "--output-root", str(root)],
+            input="\n".join([
+                _request("sessions", "session.list"),
+                _request("shutdown", "worker.shutdown"),
+            ]) + "\n",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            cwd=ROOT,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        messages = [json.loads(line) for line in completed.stdout.splitlines()]
+        ready = next(message for message in messages if message.get("method") == "worker.ready")
+        assert Path(ready["params"]["output_root"]) == root.resolve()
+        return next(
+            message["result"]
+            for message in messages
+            if message.get("type") == "response" and message.get("id") == "sessions"
+        )
+
+    first = inspect(first_root)
+    second = inspect(second_root)
+    assert [item["session_id"] for item in first["sessions"]] == [manifest.session_id]
+    assert second["sessions"] == []
 
 
 def test_worker_eof_exits_cleanly_after_ready_notification(tmp_path):

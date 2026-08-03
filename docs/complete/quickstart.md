@@ -137,6 +137,19 @@ UI 只读取 `sites`，不会应用文件中的 `global.mihomo`、`global.chrome
 | `wait_load_timeout` | 1–3600 的整数，默认 30 秒 |
 | `traffic_type` | 默认 `all`；1–64 位字母、数字、点、下划线或连字符，首位必须是字母或数字 |
 
+### P0 工作区与 TUN 约定
+
+TrafficTracer 页面是 Complete 捕获功能的唯一入口；“设置 → Clash 设置”中不再提供单独的 tracing 开关。开始任务时由 Complete 自动开启 Mihomo tracing，任务完成、取消或失败后自动恢复，避免两个入口争用同一状态。
+
+“会话输出目录”是 Worker 的工作区根目录，不再固定为应用数据目录。它必须是绝对路径；环境检测会创建目录、检查写权限并将其规范化。切换目录后再次点击“检测环境”：
+
+- Worker 处于空闲状态时会优雅切换到新工作区；
+- 有捕获或分析任务运行时返回 `SESSION_ROOT_BUSY`，不会中断任务；
+- 切换失败时会尝试恢复原工作区；
+- 切换不会搬移旧 Session，新旧目录中的历史记录彼此独立。
+
+TUN 的配置名、自动默认名和实际捕获接口是三个不同概念：Linux 的 TUN `device` 留空时由 Mihomo 自动使用 `Meta`；显式填写时使用填写值。环境检测展示配置值、自动默认值和当前实际捕获接口。若系统中只发现一个 TUN 候选会自动选中；发现多个候选时必须人工选择，避免把 `Meta`、`Meta0` 等接口猜错。每次捕获还会把最终使用的 TUN/物理接口写入 Session 的 `logs/capture_context_*.json` 并登记为 artifact，供后续审计和关联分析使用。
+
 Linux 可用以下命令辅助选择接口：
 
 ```bash

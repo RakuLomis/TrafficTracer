@@ -99,6 +99,17 @@ class CaptureJob:
         chrome_proc = None
         collector = None
 
+        capture_context = {
+            "schema_version": 1,
+            "job_id": self.spec.job_id,
+            "session_id": self.session.session_id,
+            "target": {"url": self.spec.url, "domain": self.spec.domain},
+            "interfaces": self.spec.interfaces.to_dict(),
+            "output_root": self.spec.output_root,
+        }
+        write_json_atomic(paths["capture_context"], capture_context)
+        self._record(paths["capture_context"])
+
         try:
             self.cancellation.checkpoint()
             self.progress.emit(JobState.PREPARING, JobStage.CORE_CONFIGURE, 0.1)
@@ -257,6 +268,8 @@ class CaptureJob:
             / f"mihomo_trace_{self.spec.domain}_{run_tag}.jsonl",
             "proxy_info": logs_dir
             / f"proxy_info_{self.spec.domain}_{run_tag}.json",
+            "capture_context": logs_dir
+            / f"capture_context_{self.spec.domain}_{run_tag}.json",
             "netlog": logs_dir / f"netlog_{self.spec.domain}_{run_tag}.json",
             "cdp": logs_dir / f"cdp_{self.spec.domain}_{run_tag}.json",
             "tun_pcap": run_dir / "tun.pcap",

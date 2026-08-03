@@ -15,7 +15,7 @@ components:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
     branch: feat/traffic-tracer
-    commit: dfe2e732f26d0321cc53fe69f13a32281160ec73
+    commit: 9273a9967b82b30e2cfcf5fb8224e3c3d49fc7d3
   clash_verge_service:
     repository: https://github.com/clash-verge-rev/clash-verge-service-ipc
     tag: v2.6.1

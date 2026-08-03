@@ -1,5 +1,6 @@
 """Lifecycle tests for the job-scoped single-domain capture."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -163,6 +164,10 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
         "finished",
     ]
     assert (tmp_path / "captures" / "example.com" / "visit_1").is_dir()
+    context_path = next((tmp_path / "logs").glob("capture_context_*.json"))
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["interfaces"] == {"tun": "Meta", "physical": "eth0"}
+    assert str(context_path.relative_to(tmp_path)) in result.artifacts
 
 
 def test_tracing_state_is_journaled_before_patch_and_cleared_after_restore(
