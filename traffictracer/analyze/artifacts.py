@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 from traffictracer.contracts import validate_flow
@@ -29,32 +30,13 @@ def persist_analysis_artifacts(
     session_id: str,
 ) -> AnalysisArtifacts:
     session = Path(session_dir)
-    mappings: list[FlowMapping] = []
-    for trace_path in sorted((session / "logs").glob("mihomo_trace_*.jsonl")):
-        mappings.extend(FlowIndex.from_log(str(trace_path)).mappings)
-    mappings = [
-        mapping
-        for mapping in mappings
-        if mapping.pre_flow.complete and bool(mapping.pre_flow.key)
-    ]
+    mappings = _load_mappings(session)
 
     pre_counts = Counter(mapping.pre_flow.key for mapping in mappings)
     outer_counts = Counter(
         mapping.outer_conn_id for mapping in mappings if mapping.outer_conn_id
     )
-    items = [
-        _flow_item(mapping, session_id, pre_counts, outer_counts)
-        for mapping in sorted(
-            mappings,
-            key=lambda item: (
-                item.pre_flow.key,
-                item.pre_flow.network,
-                item.connection_id,
-            ),
-        )
-    ]
-    for item in items:
-        validate_flow(item)
+    items = _core_flow_items(mappings, session_id, pre_counts, outer_counts)
 
     error_count = sum(bool(mapping.error) for mapping in mappings)
     warnings = _warnings(items, pre_counts, error_count)
@@ -82,6 +64,23 @@ def persist_analysis_artifacts(
         "error_flows": error_count,
         "warnings": warnings,
     }
+    request_records, connection_records, generation_id = _v2_records(session)
+    summary_payload["coverage"] = layered_coverage(
+        request_records,
+        connection_records,
+        items,
+    )
+    summary_payload["match_method_counts"] = dict(sorted(
+        Counter(
+            item["match"]["method"]
+            for item in connection_records
+        ).items()
+    ))
+    summary_payload["coverage_source"] = (
+        "v2_indexes" if generation_id else "core_only"
+    )
+    if generation_id:
+        summary_payload["analysis_generation_id"] = generation_id
 
     results = session / "results"
     results.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -90,6 +89,169 @@ def persist_analysis_artifacts(
     write_json_atomic(flow_index_path, index_payload)
     write_json_atomic(summary_path, summary_payload)
     return AnalysisArtifacts(flow_index_path, summary_path)
+
+
+def layered_coverage(
+    request_records: list[dict],
+    connection_records: list[dict],
+    core_flow_records: list[dict] | None = None,
+) -> dict:
+    """Recompute conservative layer-specific coverage from persisted indexes."""
+    browser = _partition(
+        record.get("attribution", {}).get("status", "unmatched")
+        for record in request_records
+    )
+    transport = _partition(
+        record.get("match", {}).get("status", "unmatched")
+        for record in connection_records
+    )
+    reasons: Counter[str] = Counter()
+    for record in request_records:
+        attribution = record.get("attribution", {})
+        if attribution.get("status") != "matched":
+            reasons[_normalized_reason(
+                attribution.get("unmatched_reason"),
+                "request_unmatched",
+            )] += 1
+    for record in connection_records:
+        match = record.get("match", {})
+        if match.get("status") != "matched":
+            reasons[_normalized_reason(
+                match.get("unmatched_reason"),
+                "connection_unmatched",
+            )] += 1
+
+    core_records = (
+        core_flow_records
+        if core_flow_records is not None
+        else connection_records
+    )
+    with_post = shared = 0
+    for record in core_records:
+        if record.get("post_flow") is not None:
+            with_post += 1
+        else:
+            reasons["missing_post_flow"] += 1
+        if bool(record.get("shared")):
+            shared += 1
+    total = len(core_records)
+    coverage = {
+        "browser_requests": browser,
+        "transport_connections": transport,
+        "core_logical_flows": {
+            "total": total,
+            "with_post_flow": with_post,
+            "shared": shared,
+            "missing_post_flow": total - with_post,
+        },
+        "unmatched_reasons": dict(sorted(reasons.items())),
+    }
+    _assert_coverage_conservation(coverage)
+    return coverage
+
+
+def _partition(statuses) -> dict:
+    counts = Counter({"matched": 0, "ambiguous": 0, "unmatched": 0})
+    for status in statuses:
+        normalized = (
+            status if status in {"matched", "ambiguous", "unmatched"}
+            else "unmatched"
+        )
+        counts[normalized] += 1
+    return {"total": sum(counts.values()), **dict(counts)}
+
+
+def _assert_coverage_conservation(coverage: dict) -> None:
+    for name in ("browser_requests", "transport_connections"):
+        partition = coverage[name]
+        accounted = sum(
+            partition[key] for key in ("matched", "ambiguous", "unmatched")
+        )
+        if accounted != partition["total"]:
+            raise ValueError(f"{name} coverage does not conserve its total")
+    core = coverage["core_logical_flows"]
+    if core["with_post_flow"] + core["missing_post_flow"] != core["total"]:
+        raise ValueError("core logical flow coverage does not conserve its total")
+    if core["shared"] > core["total"]:
+        raise ValueError("shared core logical flow count exceeds total")
+
+
+def _normalized_reason(value: object, fallback: str) -> str:
+    import re
+
+    text = value if isinstance(value, str) and value else fallback
+    normalized = re.sub(r"[^a-z0-9_]+", "_", text.lower()).strip("_")
+    return normalized or fallback
+
+
+def _v2_records(session: Path) -> tuple[list[dict], list[dict], str]:
+    results = session / "results"
+    request_payload = _read_index(results / "request-index-v2.json")
+    connection_payload = _read_index(results / "connection-index-v2.json")
+    request_generation = request_payload.get("analysis_generation_id", "")
+    connection_generation = connection_payload.get("analysis_generation_id", "")
+    if request_generation != connection_generation:
+        raise ValueError("request and connection indexes use different generations")
+    return (
+        list(request_payload.get("items", [])),
+        list(connection_payload.get("items", [])),
+        request_generation,
+    )
+
+
+def _read_index(path: Path) -> dict:
+    if not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"analysis index must be an object: {path}")
+    return payload
+
+
+def core_flow_records(
+    session_dir: str | Path,
+    session_id: str,
+) -> list[dict]:
+    """Build the same normalized core records used by flow-index.json."""
+    mappings = _load_mappings(Path(session_dir))
+    pre_counts = Counter(mapping.pre_flow.key for mapping in mappings)
+    outer_counts = Counter(
+        mapping.outer_conn_id for mapping in mappings if mapping.outer_conn_id
+    )
+    return _core_flow_items(mappings, session_id, pre_counts, outer_counts)
+
+
+def _load_mappings(session: Path) -> list[FlowMapping]:
+    mappings: list[FlowMapping] = []
+    for trace_path in sorted((session / "logs").glob("mihomo_trace_*.jsonl")):
+        mappings.extend(FlowIndex.from_log(str(trace_path)).mappings)
+    return [
+        mapping
+        for mapping in mappings
+        if mapping.pre_flow.complete and bool(mapping.pre_flow.key)
+    ]
+
+
+def _core_flow_items(
+    mappings: list[FlowMapping],
+    session_id: str,
+    pre_counts: Counter[str],
+    outer_counts: Counter[str],
+) -> list[dict]:
+    items = [
+        _flow_item(mapping, session_id, pre_counts, outer_counts)
+        for mapping in sorted(
+            mappings,
+            key=lambda item: (
+                item.pre_flow.key,
+                item.pre_flow.network,
+                item.connection_id,
+            ),
+        )
+    ]
+    for item in items:
+        validate_flow(item)
+    return items
 
 
 def _flow_item(

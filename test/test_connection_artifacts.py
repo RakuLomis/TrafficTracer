@@ -110,7 +110,6 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
                 ),
             )
         ],
-        [result],
     )
     pcap_index = json.loads(index_path.read_text(encoding="utf-8"))
     assert pcap_index["analysis_generation_id"] == artifacts.generation_id
@@ -119,18 +118,17 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     )
     assert pcap_index["coverage"]["browser_requests"] == {
         "total": 2,
-        "matched": 0,
-        "ambiguous": 2,
+        "matched": 2,
+        "ambiguous": 0,
         "unmatched": 0,
     }
     assert pcap_index["coverage"]["transport_connections"]["ambiguous"] == 1
     assert pcap_index["coverage"]["core_logical_flows"] == {
-        "total": 1,
+        "total": 0,
         "with_post_flow": 0,
-        "shared": 1,
-        "missing_post_flow": 1,
+        "shared": 0,
+        "missing_post_flow": 0,
     }
     assert pcap_index["coverage"]["unmatched_reasons"] == {
-        "missing_post_flow": 1,
-        "multiple_candidates": 3,
+        "multiple_candidates": 1,
     }

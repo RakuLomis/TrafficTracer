@@ -174,7 +174,6 @@ def run_analysis(
             generated.generation_id,
             split_mode,
             pcap_results,
-            connection_results,
         )
     token.checkpoint()
 

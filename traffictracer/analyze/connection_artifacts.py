@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections import Counter
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
@@ -10,6 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
 from traffictracer.models import CorrelatedFlowV2, FlowTuple, VisitCorrelation
 from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideResult
+from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_V2_VERSION, PCAP_INDEX_SCHEMA_VERSION, SESSION_SCHEMA_V2_VERSION
 
@@ -176,7 +176,6 @@ def persist_pcap_index(
     generation_id: str,
     split_mode: str,
     pcap_results: list[ConnectionPcapResult],
-    correlations: list[VisitCorrelation],
 ) -> Path:
     """Persist the authoritative connection-to-PCAP map and coverage counters."""
     session = Path(session_dir)
@@ -192,7 +191,11 @@ def persist_pcap_index(
             "physical_artifact_id": "capture-physical-pcap",
         },
         "connections": [_pcap_record(item, session) for item in merged],
-        "coverage": _coverage(correlations),
+        "coverage": layered_coverage(
+            _index_items(session / "results" / REQUEST_INDEX_V2_NAME),
+            _index_items(session / "results" / CONNECTION_INDEX_V2_NAME),
+            core_flow_records(session, session_id),
+        ),
     }
     validate_pcap_index(payload)
     output = session / "results" / PCAP_INDEX_V1_NAME
@@ -252,70 +255,8 @@ def _relative_side(side: PcapSideResult, session: Path) -> dict:
     return payload
 
 
-def _coverage(results: list[VisitCorrelation]) -> dict:
-    browser = Counter({"matched": 0, "ambiguous": 0, "unmatched": 0})
-    connections: dict[str, CorrelatedFlowV2] = {}
-    reasons: Counter[str] = Counter()
-    for result in results:
-        request_flows = {
-            request_id: flow
-            for flow in result.flows
-            for request_id in flow.request_ids
-        }
-        request_ids = [request.request_id for request in result.requests]
-        if not request_ids and result.cdp_request_count:
-            request_ids = [
-                f"unindexed-{index}" for index in range(result.cdp_request_count)
-            ]
-        for request_id in request_ids:
-            flow = request_flows.get(request_id)
-            status = _partition_status(
-                flow.match_status if flow else "unmatched"
-            )
-            browser[status] += 1
-            if status != "matched":
-                reasons[_reason(flow, "no_transport_connection")] += 1
-        for flow in result.flows:
-            if flow.stable_connection_id:
-                connections.setdefault(flow.stable_connection_id, flow)
+def _index_items(path: Path) -> list[dict]:
+    import json
 
-    transport = Counter({"matched": 0, "ambiguous": 0, "unmatched": 0})
-    with_post = shared = 0
-    for flow in connections.values():
-        status = _partition_status(flow.match_status)
-        transport[status] += 1
-        if status != "matched":
-            reasons[_reason(flow, "no_candidate")] += 1
-        if flow.post_flow is not None:
-            with_post += 1
-        else:
-            reasons["missing_post_flow"] += 1
-        if flow.connection_reused or bool(flow.post_flow and flow.post_flow.shared):
-            shared += 1
-    total = len(connections)
-    return {
-        "browser_requests": {"total": sum(browser.values()), **dict(browser)},
-        "transport_connections": {
-            "total": sum(transport.values()),
-            **dict(transport),
-        },
-        "core_logical_flows": {
-            "total": total,
-            "with_post_flow": with_post,
-            "shared": shared,
-            "missing_post_flow": total - with_post,
-        },
-        "unmatched_reasons": dict(sorted(reasons.items())),
-    }
-
-
-def _partition_status(status: str) -> str:
-    return status if status in {"ambiguous", "unmatched"} else "matched"
-
-
-def _reason(flow: CorrelatedFlowV2 | None, fallback: str) -> str:
-    import re
-
-    value = flow.match_reason if flow and flow.match_reason else fallback
-    normalized = re.sub(r"[^a-z0-9_]+", "_", value.lower()).strip("_")
-    return normalized or fallback
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return list(payload.get("items", []))

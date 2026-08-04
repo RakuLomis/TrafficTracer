@@ -2,7 +2,10 @@
 
 import json
 
-from traffictracer.analyze.artifacts import persist_analysis_artifacts
+from traffictracer.analyze.artifacts import (
+    layered_coverage,
+    persist_analysis_artifacts,
+)
 from traffictracer.contracts import validate_flow
 
 
@@ -90,3 +93,137 @@ def test_flow_index_and_summary_keep_duplicates_shared_and_null_post(tmp_path):
         "POST_FLOW_UNAVAILABLE",
         "FLOW_ERRORS",
     ]
+    assert summary["coverage_source"] == "core_only"
+    assert summary["coverage"] == layered_coverage([], [], index["items"])
+
+
+def test_layered_coverage_conserves_each_denominator_for_partial_trace():
+    requests = [
+        {"attribution": {"status": "matched"}},
+        {
+            "attribution": {
+                "status": "ambiguous",
+                "unmatched_reason": "multiple_candidates",
+            }
+        },
+        {
+            "attribution": {
+                "status": "unmatched",
+                "unmatched_reason": "no_transport_connection",
+            }
+        },
+    ]
+    connections = [
+        {
+            "match": {"status": "matched", "method": "exact_pre_flow"},
+            "post_flow": {"complete": True},
+            "shared": True,
+        },
+        {
+            "match": {
+                "status": "ambiguous",
+                "method": "endpoint_time",
+                "unmatched_reason": "multiple_candidates",
+            },
+            "post_flow": None,
+            "shared": False,
+        },
+        {
+            "match": {
+                "status": "unmatched",
+                "method": "none",
+                "unmatched_reason": "no_candidate",
+            },
+            "post_flow": None,
+            "shared": False,
+        },
+    ]
+    core_flows = [
+        {"post_flow": {"complete": True}, "shared": True},
+        {"post_flow": None, "shared": False},
+        {"post_flow": None, "shared": False},
+        {"post_flow": {"complete": True}, "shared": False},
+    ]
+    coverage = layered_coverage(requests, connections, core_flows)
+    for name in ("browser_requests", "transport_connections"):
+        partition = coverage[name]
+        assert (
+            partition["matched"]
+            + partition["ambiguous"]
+            + partition["unmatched"]
+            == partition["total"]
+        )
+    assert coverage["core_logical_flows"] == {
+        "total": 4,
+        "with_post_flow": 2,
+        "shared": 1,
+        "missing_post_flow": 2,
+    }
+    assert coverage["unmatched_reasons"] == {
+        "missing_post_flow": 2,
+        "multiple_candidates": 2,
+        "no_candidate": 1,
+        "no_transport_connection": 1,
+    }
+
+
+def test_summary_is_recomputable_from_v2_indexes(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    results = tmp_path / "results"
+    results.mkdir()
+    requests = [
+        {"attribution": {"status": "matched"}},
+        {
+            "attribution": {
+                "status": "unmatched",
+                "unmatched_reason": "no_transport_connection",
+            }
+        },
+    ]
+    connections = [
+        {
+            "match": {"status": "matched", "method": "exact_pre_flow"},
+            "post_flow": {"complete": True},
+            "shared": False,
+        }
+    ]
+    generation = "78fdab68-4e5d-4b67-9910-33da00a2632a"
+    (results / "request-index-v2.json").write_text(
+        json.dumps({
+            "analysis_generation_id": generation,
+            "items": requests,
+        }),
+        encoding="utf-8",
+    )
+    (results / "connection-index-v2.json").write_text(
+        json.dumps({
+            "analysis_generation_id": generation,
+            "items": connections,
+        }),
+        encoding="utf-8",
+    )
+
+    artifacts = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
+    flow_index = json.loads(artifacts.flow_index.read_text(encoding="utf-8"))
+    assert summary["coverage"] == layered_coverage(
+        requests,
+        connections,
+        flow_index["items"],
+    )
+    assert summary["coverage_source"] == "v2_indexes"
+    assert summary["analysis_generation_id"] == generation
+    assert summary["match_method_counts"] == {"exact_pre_flow": 1}
+
+
+def test_empty_layered_coverage_has_three_zero_denominators():
+    coverage = layered_coverage([], [])
+    assert coverage["browser_requests"]["total"] == 0
+    assert coverage["transport_connections"]["total"] == 0
+    assert coverage["core_logical_flows"] == {
+        "total": 0,
+        "with_post_flow": 0,
+        "shared": 0,
+        "missing_post_flow": 0,
+    }
