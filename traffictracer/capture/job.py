@@ -24,6 +24,7 @@ from .cdp import SyncCDPCollector
 from .chrome import launch_chrome, terminate_chrome, wait_chrome_exit
 from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
+from .quiescence import verify_chrome_quiescence
 from .tshark import start_packet_capture, stop_packet_capture
 
 
@@ -44,6 +45,7 @@ class CaptureRuntime:
     disable_background_networking: bool = False
     wait_load_timeout: int = 30
     run_label: str = ""
+    chrome_quiescence_timeout: float = 2.0
 
 
 class CaptureJob:
@@ -198,6 +200,7 @@ class CaptureJob:
             self._cleanup_resources(
                 collector=collector,
                 chrome_proc=chrome_proc,
+                chrome_profile=paths["profile"],
                 tun_capture=tun_capture,
                 phys_capture=phys_capture,
                 previous_tracing=previous_tracing,
@@ -209,6 +212,7 @@ class CaptureJob:
         *,
         collector: Any,
         chrome_proc: Any,
+        chrome_profile: Path,
         tun_capture: Any,
         phys_capture: Any,
         previous_tracing: dict[str, Any] | None,
@@ -241,10 +245,21 @@ class CaptureJob:
         cleanup = self.registry.cleanup()
         if cleanup.errors:
             logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
+            errors.append(RuntimeError("; ".join(cleanup.errors)))
+        if chrome_proc is not None:
+            attempt(
+                "Chrome quiescence barrier",
+                lambda: verify_chrome_quiescence(
+                    chrome_proc,
+                    chrome_profile,
+                    timeout=self.runtime.chrome_quiescence_timeout,
+                ),
+            )
         if previous_tracing is not None:
             try:
                 self.mihomo.restore_tracing(previous_tracing)
-                self._clear_recovery()
+                if not errors:
+                    self._clear_recovery()
             except Exception as exc:
                 logger.warning("Failed to restore Mihomo tracing state: %s", exc)
                 errors.append(exc)

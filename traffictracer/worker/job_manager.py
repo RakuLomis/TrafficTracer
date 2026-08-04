@@ -8,6 +8,7 @@ from threading import Event, Lock, Thread
 from typing import Any, Protocol
 
 from traffictracer.capture.tshark import PacketCaptureError
+from traffictracer.capture.quiescence import ChromeCleanupIncomplete
 from traffictracer.contracts import validate_worker_message
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.models import (
@@ -213,6 +214,13 @@ class JobManager:
                 JobState.FAILED,
                 message="Packet capture failed.",
                 error={"code": code, "message": exc.message},
+            )
+        except ChromeCleanupIncomplete as exc:
+            self._finish_job(
+                managed.job_id,
+                JobState.FAILED,
+                message="Chrome cleanup did not reach quiescence.",
+                error={"code": exc.code, "message": str(exc)},
             )
         except Exception:
             self._finish_job(

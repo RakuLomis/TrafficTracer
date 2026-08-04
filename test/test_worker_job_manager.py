@@ -6,6 +6,10 @@ from threading import Event
 
 import pytest
 
+from traffictracer.capture.quiescence import (
+    ChromeCleanupIncomplete,
+    ChromeQuiescenceReport,
+)
 from traffictracer.contracts import validate_worker_message
 from traffictracer.jobs.models import CaptureJobResult, JobState
 from traffictracer.jobs.progress import JobStage
@@ -150,6 +154,26 @@ def test_failed_job_is_observable_and_does_not_block_next_job():
     analysis = _payload(ANALYSIS_FIXTURE)
     manager.start_analysis(analysis)
     assert manager.wait(analysis["job_id"], timeout=2)
+
+
+def test_chrome_cleanup_failure_keeps_its_public_error_code():
+    class ResidualChromeJob:
+        def run(self):
+            raise ChromeCleanupIncomplete(
+                ChromeQuiescenceReport("/tmp/profile", True, (321,))
+            )
+
+    manager = _manager(
+        [],
+        capture_factory=lambda spec, progress, token: ResidualChromeJob(),
+    )
+    capture = _payload(CAPTURE_FIXTURE)
+    manager.start_capture(capture)
+    assert manager.wait(capture["job_id"], timeout=2)
+
+    failed = manager.status({"job_id": capture["job_id"]})
+    assert failed["state"] == "failed"
+    assert failed["error"]["code"] == "CHROME_CLEANUP_INCOMPLETE"
 
 
 def test_terminal_state_is_not_visible_before_result_is_published():

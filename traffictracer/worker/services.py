@@ -380,9 +380,10 @@ class _PersistentCaptureRunner:
             self._transition(JobState.CANCELLED)
             raise
         except Exception as exc:
+            code = getattr(exc, "code", "CAPTURE_FAILED")
             self._transition(
                 JobState.FAILED,
-                SessionError("CAPTURE_FAILED", str(exc), "capture"),
+                SessionError(code, str(exc), "capture"),
             )
             raise
 

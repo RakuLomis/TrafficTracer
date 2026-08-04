@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSessionContext
+from traffictracer.capture.quiescence import (
+    ChromeCleanupIncomplete,
+    ChromeQuiescenceReport,
+)
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.models import (
     CaptureInterfaces,
@@ -365,5 +369,126 @@ def test_restore_failure_keeps_journal_for_worker_recovery(tmp_path, monkeypatch
     journal = RecoveryJournal.load(tmp_path / RECOVERY_JOURNAL_NAME)
     assert journal.tracing.enabled is False
     assert journal.tracing.output == ""
+    assert registry.closed
+    assert progress[-1].state is JobState.FAILED
+
+
+def _cleanup_incomplete(profile):
+    return ChromeCleanupIncomplete(
+        ChromeQuiescenceReport(str(profile), True, (987,))
+    )
+
+
+def test_chrome_residual_fails_capture_and_keeps_recovery_journal(
+    tmp_path, monkeypatch
+):
+    import traffictracer.capture.job as module
+
+    events = []
+    job, registry, progress = _job(
+        tmp_path,
+        monkeypatch,
+        events,
+        recovery_store=FakeRecoveryStore(tmp_path),
+    )
+    monkeypatch.setattr(
+        module,
+        "verify_chrome_quiescence",
+        lambda process, profile, **kwargs: (_ for _ in ()).throw(
+            _cleanup_incomplete(profile)
+        ),
+    )
+
+    with pytest.raises(ChromeCleanupIncomplete) as raised:
+        job.run()
+    assert raised.value.code == "CHROME_CLEANUP_INCOMPLETE"
+    assert (tmp_path / RECOVERY_JOURNAL_NAME).is_file()
+    assert events[-1] == "tracing:restore"
+    assert registry.closed
+    assert progress[-1].state is JobState.FAILED
+
+
+def test_cancelled_capture_with_chrome_residual_stays_cancelled_but_keeps_journal(
+    tmp_path, monkeypatch
+):
+    import traffictracer.capture.job as module
+
+    events = []
+    token = CancellationToken()
+    job, registry, progress = _job(
+        tmp_path,
+        monkeypatch,
+        events,
+        cancellation=token,
+        recovery_store=FakeRecoveryStore(tmp_path),
+    )
+
+    def cancel_during_capture(seconds):
+        token.cancel("cancel with residual")
+        return True
+
+    monkeypatch.setattr(token, "wait", cancel_during_capture)
+    monkeypatch.setattr(
+        module,
+        "verify_chrome_quiescence",
+        lambda process, profile, **kwargs: (_ for _ in ()).throw(
+            _cleanup_incomplete(profile)
+        ),
+    )
+
+    with pytest.raises(CancelledError, match="cancel with residual"):
+        job.run()
+    assert (tmp_path / RECOVERY_JOURNAL_NAME).is_file()
+    assert events[-1] == "tracing:restore"
+    assert registry.closed
+    assert progress[-1].state is JobState.CANCELLED
+
+
+def test_collector_close_failure_cannot_be_reported_as_capture_success(
+    tmp_path, monkeypatch
+):
+    from dataclasses import replace
+    import traffictracer.capture.job as module
+
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+    job.spec = replace(
+        job.spec,
+        options=replace(job.spec.options, collect_cdp=True),
+    )
+    job.runtime = replace(job.runtime, enable_cdp=True)
+
+    class CloseFailsCollector:
+        def __init__(self, **kwargs):
+            pass
+
+        def connect(self):
+            pass
+
+        def setup(self):
+            pass
+
+        def navigate(self, url, load_timeout):
+            pass
+
+        def collect(self, seconds):
+            pass
+
+        def stop_collecting(self):
+            pass
+
+        def get_structured_data(self):
+            return {"requests": []}
+
+        def close_browser(self):
+            pass
+
+        def close(self):
+            raise RuntimeError("collector close failed")
+
+    monkeypatch.setattr(module, "SyncCDPCollector", CloseFailsCollector)
+
+    with pytest.raises(RuntimeError, match="collector close failed"):
+        job.run()
     assert registry.closed
     assert progress[-1].state is JobState.FAILED
