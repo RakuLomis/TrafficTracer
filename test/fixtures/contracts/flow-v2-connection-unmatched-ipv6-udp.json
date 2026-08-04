@@ -14,7 +14,7 @@
   "shared": false,
   "match": {
     "status": "unmatched", "method": "none", "confidence": 0,
-    "candidates": [], "unmatched_reason": "missing_post_flow"
+    "candidates": [], "evidence": ["post_flow_missing"], "unmatched_reason": "missing_post_flow"
   },
   "request_ids": ["7856.20"]
 }

@@ -41,12 +41,13 @@
     },
     "match": {
       "type": "object", "additionalProperties": false,
-      "required": ["status", "method", "confidence", "candidates"],
+      "required": ["status", "method", "confidence", "candidates", "evidence"],
       "properties": {
         "status": { "enum": ["matched", "ambiguous", "unmatched"] },
         "method": { "enum": ["exact_pre_flow", "netlog_socket", "endpoint_time", "host_time", "none"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "candidates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/candidate" } },
+        "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
         "unmatched_reason": { "enum": ["missing_pre_flow", "missing_post_flow", "no_candidate", "multiple_candidates", "insufficient_time", "unsupported_protocol"] }
       },
       "allOf": [
@@ -57,11 +58,12 @@
     },
     "requestAttribution": {
       "type": "object", "additionalProperties": false,
-      "required": ["status", "method", "confidence"],
+      "required": ["status", "method", "confidence", "evidence"],
       "properties": {
         "status": { "enum": ["matched", "ambiguous", "unmatched"] },
         "method": { "enum": ["netlog_socket", "endpoint_time", "host_time", "none"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
         "unmatched_reason": { "enum": ["no_transport_connection", "multiple_candidates", "insufficient_time", "missing_request_metadata"] }
       },
       "allOf": [

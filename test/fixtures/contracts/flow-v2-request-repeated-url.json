@@ -9,5 +9,5 @@
   "relation": "same_site",
   "connection_id": "conn-11111111111111111111111111111111",
   "candidate_connection_ids": ["conn-11111111111111111111111111111111"],
-  "attribution": { "status": "matched", "method": "netlog_socket", "confidence": 1.0 }
+  "attribution": { "status": "matched", "method": "netlog_socket", "confidence": 1.0, "evidence": ["netlog_request_id", "transport_request_ids"] }
 }

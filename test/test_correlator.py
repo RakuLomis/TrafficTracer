@@ -231,7 +231,9 @@ def test_correlate_v2_no_match():
         domain="nomatch.com",
         cdp_request_count=1,
     )
-    assert len(result.flows) == 0
+    assert len(result.flows) == 1
+    assert result.flows[0].match_status == "unmatched"
+    assert result.flows[0].match_reason == "insufficient_time"
 
 
 if __name__ == "__main__":
@@ -257,8 +259,9 @@ def test_correlate_v2_prefers_normalized_key():
                      post_flow=post, outer_conn_id="outer"), None,
     )
     flow = correlate_v2([transport], {"normalized": connection}, "https://example.com", "example.com").flows[0]
-    assert flow.match_status == "exact"
-    assert flow.match_confidence == 1.0
+    assert flow.match_status == "matched"
+    assert flow.match_method == "exact_pre_flow"
+    assert flow.match_confidence == 0.95
     assert flow.post_proxy_src == "192.0.2.10:55000"
     assert flow.post_proxy_dst == "203.0.113.8:8443"
     assert flow.outer_conn_id == "outer"

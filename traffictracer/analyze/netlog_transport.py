@@ -48,7 +48,7 @@ def trace_transport(
             normalized = _normalize_url(url)
             netlog_url_index.setdefault(normalized, []).append(sid)
 
-    connections: list[TransportConnection] = []
+    connections_by_source: dict[int, TransportConnection] = {}
     seen_source_ids: set[int] = set()
 
     for normalized_url, source_ids in netlog_url_index.items():
@@ -65,14 +65,31 @@ def trace_transport(
             chain = build_connection_chain(sid, entries, children_index)
             ft = chain.five_tuple
 
+            sibling_source_id = None
             if not ft.src_ip and not ft.dst_ip:
-                _fill_from_siblings(sid, entries, children_index, ft)
+                sibling_source_id = _fill_from_siblings(sid, entries, children_index, ft)
 
             if not ft.src_ip and not ft.dst_ip:
                 continue
 
-            connections.append(TransportConnection(
-                netlog_source_id=sid,
+            transport_source_id = _transport_source_id(chain, sibling_source_id or sid)
+            first_observed = min(
+                (req.timestamp for req in requests if req.request_id in matched_request_ids),
+                default=None,
+            )
+            existing = connections_by_source.get(transport_source_id)
+            if existing is not None:
+                existing.request_ids = list(dict.fromkeys([*existing.request_ids, *matched_request_ids]))
+                if first_observed is not None:
+                    existing.first_observed = (
+                        min(existing.first_observed, first_observed)
+                        if existing.first_observed is not None
+                        else first_observed
+                    )
+                continue
+
+            connections_by_source[transport_source_id] = TransportConnection(
+                netlog_source_id=transport_source_id,
                 url=_denormalize_url(normalized_url),
                 src_ip=ft.src_ip or "",
                 src_port=ft.src_port or 0,
@@ -80,20 +97,36 @@ def trace_transport(
                 dst_port=ft.dst_port or 0,
                 protocol=ft.protocol or "",
                 request_ids=list(matched_request_ids),
-            ))
+                first_observed=first_observed,
+            )
 
+    connections = list(connections_by_source.values())
     logger.info("Traced %d transport connections for %d CDP requests",
                 len(connections), len(requests))
     return connections
 
 
-def _fill_from_siblings(sid, entries, children_index, ft) -> None:
+def _transport_source_id(chain, fallback: int) -> int:
+    for entry in (
+        chain.h2_session,
+        chain.quic_session,
+        chain.socket,
+        chain.tcp_attempt,
+        chain.tls_attempt,
+        chain.connect_job,
+    ):
+        if entry is not None:
+            return int(entry.source_id)
+    return fallback
+
+
+def _fill_from_siblings(sid, entries, children_index, ft) -> int | None:
     entry = entries.get(sid)
     if entry is None:
-        return
+        return None
     parent_id = _find_parent_id(entry)
     if parent_id is None:
-        return
+        return None
     for child_id in children_index.get(parent_id, []):
         if child_id == sid:
             continue
@@ -112,6 +145,9 @@ def _fill_from_siblings(sid, entries, children_index, ft) -> None:
                 parsed = _parse_ip_port(remote)
                 if parsed:
                     ft.dst_ip, ft.dst_port = parsed
+            if ft.src_ip or ft.dst_ip:
+                return int(child_id)
+    return None
 
 
 def _find_parent_id(entry) -> int | None:

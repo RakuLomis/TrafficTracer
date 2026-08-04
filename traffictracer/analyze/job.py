@@ -56,6 +56,10 @@ class AnalysisJob:
                 )
                 artifact_paths.extend([generated.flow_index, generated.summary])
                 self.cancellation.checkpoint()
+            for name in ("connection-index-v2.json", "request-index-v2.json"):
+                candidate = Path(self.spec.session_dir) / "results" / name
+                if candidate.is_file():
+                    artifact_paths.append(candidate)
             self._record_artifacts(artifact_paths)
         except CancelledError:
             self._finish_manifest(JobState.CANCELLED)

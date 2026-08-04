@@ -122,6 +122,16 @@ def test_analysis_cdp_path():
     flow = domain_data["flows"][0]
     assert flow["url"] == "https://cdn.example.net/video.m4s"
     assert flow["pre_proxy_src"] == "198.18.0.1:49812"
+    connection_index = json.loads(
+        Path(session, "results", "connection-index-v2.json").read_text(encoding="utf-8")
+    )
+    request_index = json.loads(
+        Path(session, "results", "request-index-v2.json").read_text(encoding="utf-8")
+    )
+    assert len(connection_index["items"]) == 1
+    assert len(request_index["items"]) == 1
+    assert request_index["items"][0]["connection_id"] == connection_index["items"][0]["connection_id"]
+    assert connection_index["items"][0]["match"]["method"] == "netlog_socket"
     assert [event.stage for event in progress] == [
         "analyze.cdp",
         "analyze.netlog",

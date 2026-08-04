@@ -101,6 +101,31 @@ def test_trace_unknown_cdn_matched_by_url():
     assert "2.1" in conns[0].request_ids
 
 
+def test_different_urls_on_one_transport_are_merged_by_transport_source():
+    events = [
+        {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},
+         "params": {"url": "https://cdn.example.net/a.js", "source_dependency": {"id": 200, "type": 5}}},
+        {"time": "1010", "type": 0, "phase": 0, "source": {"id": 101, "type": 1},
+         "params": {"url": "https://cdn.example.net/b.js", "source_dependency": {"id": 200, "type": 5}}},
+        {"time": "1200", "type": 50, "phase": 2, "source": {"id": 300, "type": 10},
+         "params": {"local_address": "198.18.0.1:49812", "remote_address": "1.2.3.4:443",
+                    "source_dependency": {"id": 200, "type": 5}}},
+    ]
+    path = _make_netlog(events)
+    requests = [
+        AttributedRequest("1.1", "T", "F", "https://cdn.example.net/a.js", "Script", 100.0),
+        AttributedRequest("1.2", "T", "F", "https://cdn.example.net/b.js", "Script", 100.1),
+    ]
+    try:
+        connections = trace_transport(requests, path)
+    finally:
+        os.unlink(path)
+    assert len(connections) == 1
+    assert connections[0].netlog_source_id == 300
+    assert connections[0].request_ids == ["1.1", "1.2"]
+    assert connections[0].first_observed == 100.0
+
+
 def test_trace_no_match():
     events = [
         {"time": "1000", "type": 0, "phase": 0,

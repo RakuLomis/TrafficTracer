@@ -21,6 +21,9 @@ from .correlator import correlate, correlate_v2, correlate_cdp_direct, Correlati
 from .pcap_splitter import split_flows, split_flows_v2
 from .cdp_attribution import parse_cdp_attribution
 from .netlog_transport import trace_transport
+from .connection_artifacts import (
+    persist_connection_artifacts,
+)
 
 
 def _fix_netlog(path: str) -> str:
@@ -66,6 +69,7 @@ def run_analysis(
     results_dir = ensure_dir(str(session / "results"))
 
     all_correlations: dict[str, dict] = {}
+    connection_results: list[VisitCorrelation] = []
 
     for domain_dir in sorted(captures_dir.iterdir()):
         if not domain_dir.is_dir():
@@ -103,6 +107,7 @@ def run_analysis(
                     run_mihomo_conns, domain, tag,
                 )
                 if result_v2 is not None:
+                    connection_results.append(result_v2)
                     existing = all_correlations.get(domain)
                     if existing is None:
                         all_correlations[domain] = _result_v2_to_dict(result_v2)
@@ -143,10 +148,28 @@ def run_analysis(
     if not overwrite and Path(corr_path).exists():
         raise FileExistsError(f"Analysis result already exists: {corr_path}")
     write_json_atomic(corr_path, all_correlations)
+    if connection_results:
+        persist_connection_artifacts(
+            session, _session_id(session), connection_results,
+        )
     token.checkpoint()
 
     logger.info("Correlation results written to %s", corr_path)
     return corr_path
+
+
+def _session_id(session: Path) -> str:
+    manifest_path = session / "manifest.json"
+    if manifest_path.is_file():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            value = payload.get("session_id")
+            if isinstance(value, str) and value:
+                return value
+        except (OSError, json.JSONDecodeError):
+            pass
+    from uuid import NAMESPACE_URL, uuid5
+    return str(uuid5(NAMESPACE_URL, session.resolve().as_uri()))
 
 
 def _analysis_stage_emitter(
@@ -216,6 +239,8 @@ def _analyze_cdp_path(
         domain=domain,
         cdp_request_count=len(attributed),
     )
+
+    result.requests = attributed
 
     covered_ids: set[str] = set()
     for flow in result.flows:
@@ -329,6 +354,11 @@ def _result_v2_to_dict(result: VisitCorrelation) -> dict:
                 "match_confidence": f.match_confidence,
                 "conn_id": f.conn_id,
                 "outer_conn_id": f.outer_conn_id,
+                "stable_connection_id": f.stable_connection_id,
+                "match_method": f.match_method,
+                "match_candidates": f.match_candidates,
+                "match_reason": f.match_reason,
+                "match_evidence": f.match_evidence,
             }
             for f in result.flows
         ],

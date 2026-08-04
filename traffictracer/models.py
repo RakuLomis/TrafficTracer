@@ -62,6 +62,7 @@ class TransportConnection:
     dst_port: int
     protocol: str
     request_ids: list[str] = field(default_factory=list)
+    first_observed: float | None = None
 
 
 @dataclass
@@ -83,6 +84,11 @@ class CorrelatedFlowV2:
     match_confidence: float = 0.5
     conn_id: str = ""
     outer_conn_id: str = ""
+    stable_connection_id: str = ""
+    match_method: str = "none"
+    match_candidates: list[dict] = field(default_factory=list)
+    match_reason: str = ""
+    match_evidence: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -92,3 +98,4 @@ class VisitCorrelation:
     flows: list[CorrelatedFlowV2] = field(default_factory=list)
     cdp_request_count: int = 0
     netlog_connection_count: int = 0
+    requests: list[AttributedRequest] = field(default_factory=list)

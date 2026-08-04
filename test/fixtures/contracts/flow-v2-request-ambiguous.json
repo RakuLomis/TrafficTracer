@@ -9,5 +9,5 @@
   "relation": "cross_site",
   "connection_id": null,
   "candidate_connection_ids": ["conn-11111111111111111111111111111111", "conn-33333333333333333333333333333333"],
-  "attribution": { "status": "ambiguous", "method": "host_time", "confidence": 0.45, "unmatched_reason": "multiple_candidates" }
+  "attribution": { "status": "ambiguous", "method": "host_time", "confidence": 0.45, "evidence": ["host_match", "top_score_tie"], "unmatched_reason": "multiple_candidates" }
 }

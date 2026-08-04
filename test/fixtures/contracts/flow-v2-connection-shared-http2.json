@@ -22,7 +22,8 @@
     "candidates": [{
       "connection_id": "conn-11111111111111111111111111111111",
       "score": 1.0, "evidence": ["normalized_pre_flow", "netlog_source_id"]
-    }]
+    }],
+    "evidence": ["normalized_pre_flow", "netlog_source_id"]
   },
   "request_ids": ["7856.12", "7856.13", "7856.14"]
 }

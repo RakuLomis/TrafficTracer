@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from .netlog import FiveTupleData, DomainConnections, _parse_addr
+from .connection_index import rank_connection_candidates, stable_connection_id
 from .mihomo_log import MihomoConnection, UdpConnect, UdpClose, UdpConnection
-from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2
+from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTuple
 
 
 class CorrelatedFlow(NamedTuple):
@@ -105,51 +106,90 @@ def correlate_v2(
     flows: list[CorrelatedFlowV2] = []
 
     for tc in transport_conns:
-        mconn = _find_matching_mihomo_v2(tc, mihomo_conns)
-        normalized_key = _flow_key("tcp", tc.src_ip, tc.src_port, tc.dst_ip, tc.dst_port)
-        exact = bool(mconn and mconn.connect and mconn.connect.pre_flow and
-                     mconn.connect.pre_flow.key == normalized_key)
-
-        pre_src = f"{tc.src_ip}:{tc.src_port}" if tc.src_ip else ""
-        pre_dst = f"{tc.dst_ip}:{tc.dst_port}" if tc.dst_ip else ""
-
-        post_src = ""
-        post_dst = ""
-        if mconn and mconn.proxy_dial and mconn.proxy_dial.post_flow:
-            post_src = mconn.proxy_dial.post_flow.src
-            post_dst = mconn.proxy_dial.post_flow.dst
-        elif mconn and mconn.proxy_dial:
+        decision = rank_connection_candidates(tc, mihomo_conns)
+        stable_id = stable_connection_id(tc)
+        mconn = (
+            mihomo_conns.get(decision.selected_native_id)
+            if decision.selected_native_id is not None
+            else None
+        )
+        pre_flow = (
+            mconn.connect.pre_flow
+            if mconn and mconn.connect and mconn.connect.pre_flow
+            else FlowTuple(
+                network="udp" if tc.protocol.lower().startswith(("udp", "quic")) else "tcp",
+                src_ip=tc.src_ip,
+                src_port=tc.src_port,
+                dst_ip=tc.dst_ip,
+                dst_port=tc.dst_port,
+                key=_flow_key(
+                    "udp" if tc.protocol.lower().startswith(("udp", "quic")) else "tcp",
+                    tc.src_ip, tc.src_port, tc.dst_ip, tc.dst_port,
+                ),
+                complete=bool(tc.src_ip and tc.src_port and tc.dst_ip and tc.dst_port),
+                source="netlog",
+                scope="pre_proxy",
+            )
+        )
+        post_flow = mconn.proxy_dial.post_flow if mconn and mconn.proxy_dial else None
+        post_src = post_flow.src if post_flow else ""
+        post_dst = post_flow.dst if post_flow else ""
+        if mconn and mconn.proxy_dial and post_flow is None:
             out_ip, out_port = _parse_addr(mconn.proxy_dial.out_src)
             proxy_ip, proxy_port = _parse_addr(mconn.proxy_dial.proxy_addr)
             post_src = f"{out_ip}:{out_port}" if out_ip else ""
             post_dst = f"{proxy_ip}:{proxy_port}" if proxy_ip else ""
-        elif mconn and mconn.connect:
+        elif mconn and mconn.connect and mconn.proxy_dial is None:
             dst_ip, dst_port = _parse_addr(mconn.connect.dst)
             post_dst = f"{dst_ip}:{dst_port}" if dst_ip else ""
-
-        if mconn is None:
-            continue
-
-        relation = _infer_relation(tc.url, domain)
 
         flows.append(CorrelatedFlowV2(
             url=tc.url,
             resource_type="",
             target_type="",
-            relation=relation,
-            pre_proxy_src=pre_src,
-            pre_proxy_dst=pre_dst,
+            relation=_infer_relation(tc.url, domain),
+            pre_proxy_src=pre_flow.src,
+            pre_proxy_dst=pre_flow.dst,
             post_proxy_src=post_src,
             post_proxy_dst=post_dst,
             protocol=tc.protocol,
             request_ids=list(tc.request_ids),
-            connection_reused=False,
-            pre_flow=mconn.connect.pre_flow if mconn.connect else None,
-            post_flow=mconn.proxy_dial.post_flow if mconn.proxy_dial else None,
-            match_status="exact" if exact else "legacy",
-            match_confidence=1.0 if exact else 0.5,
-            conn_id=mconn.conn_id,
-            outer_conn_id=mconn.proxy_dial.outer_conn_id if mconn.proxy_dial else "",
+            connection_reused=len(tc.request_ids) > 1,
+            pre_flow=pre_flow,
+            post_flow=post_flow,
+            match_status=decision.status,
+            match_confidence=decision.confidence,
+            conn_id=decision.selected_native_id or "",
+            outer_conn_id=(
+                mconn.proxy_dial.outer_conn_id
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
+            stable_connection_id=stable_id,
+            match_method=decision.method,
+            match_candidates=[
+                {
+                    "connection_id": stable_connection_id(tc, candidate.native_id),
+                    "native_id": candidate.native_id,
+                    "score": candidate.score,
+                    "evidence": list(candidate.evidence),
+                }
+                for candidate in decision.candidates
+            ],
+            match_reason=decision.reason,
+            match_evidence=(
+                next(
+                    (list(candidate.evidence) for candidate in decision.candidates
+                     if candidate.native_id == decision.selected_native_id),
+                    [],
+                )
+                if decision.status == "matched"
+                else [
+                    "top_score_tie"
+                    if decision.status == "ambiguous"
+                    else decision.reason or "no_ranked_candidate"
+                ]
+            ),
         ))
 
     return VisitCorrelation(
@@ -159,34 +199,6 @@ def correlate_v2(
         cdp_request_count=cdp_request_count,
         netlog_connection_count=len(transport_conns),
     )
-
-
-def _find_matching_mihomo_v2(
-    tc: TransportConnection,
-    mihomo_conns: dict[str, MihomoConnection],
-) -> MihomoConnection | None:
-    tc_src = f"{tc.src_ip}:{tc.src_port}"
-    tc_dst = f"{tc.dst_ip}:{tc.dst_port}"
-    normalized_key = _flow_key("tcp", tc.src_ip, tc.src_port, tc.dst_ip, tc.dst_port)
-    for mconn in mihomo_conns.values():
-        flow = mconn.connect.pre_flow if mconn.connect else None
-        if flow and flow.complete and flow.key == normalized_key:
-            return mconn
-
-
-    for conn_id, mconn in mihomo_conns.items():
-        if mconn.connect is None:
-            continue
-        if tc_src == mconn.connect.src and tc_dst == mconn.connect.dst:
-            return mconn
-
-    for conn_id, mconn in mihomo_conns.items():
-        if mconn.connect is None:
-            continue
-        if tc_src == mconn.connect.src:
-            return mconn
-
-    return None
 
 
 def correlate_cdp_direct(
@@ -220,10 +232,10 @@ def correlate_cdp_direct(
 
     for endpoint, reqs in endpoints.items():
         candidates = mihomo_by_dst.get(endpoint, [])
-        if not candidates:
+        if len(candidates) != 1:
             continue
 
-        mconn = candidates[0]
+        (mconn,) = candidates
 
         pre_src = mconn.connect.src if mconn.connect else ""
         pre_dst = endpoint
@@ -298,10 +310,10 @@ def _correlate_cdp_udp(
     flows: list[CorrelatedFlowV2] = []
     for host, reqs in host_requests.items():
         uc_list = udp_by_host.get(host, [])
-        if not uc_list:
+        if len(uc_list) != 1:
             continue
 
-        uc = uc_list[0]
+        (uc,) = uc_list
         rich = rich_by_connect.get(id(uc))
         pre_flow = uc.pre_flow
         post_flow = rich.proxy_dial.post_flow if rich and rich.proxy_dial else None
