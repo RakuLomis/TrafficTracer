@@ -188,12 +188,14 @@ class CaptureJobSpec:
 @dataclass(frozen=True)
 class AnalysisJobOptions:
     split_pcaps: bool = True
+    pcap_split_mode: str = "unique_connections"
     write_flow_index: bool = True
     overwrite: bool = False
 
-    def to_dict(self) -> dict[str, bool]:
+    def to_dict(self) -> dict[str, bool | str]:
         return {
             "split_pcaps": self.split_pcaps,
+            "pcap_split_mode": self.pcap_split_mode,
             "write_flow_index": self.write_flow_index,
             "overwrite": self.overwrite,
         }
@@ -229,12 +231,17 @@ class AnalysisJobSpec:
         if data["kind"] != "analysis":
             raise ValueError("AnalysisJobSpec requires kind='analysis'")
         options = data.get("options", {})
+        split_pcaps = options.get("split_pcaps", True)
         return cls(
             job_id=data["job_id"],
             session_dir=data["session_dir"],
             output_root=data["output_root"],
             options=AnalysisJobOptions(
-                split_pcaps=options.get("split_pcaps", True),
+                split_pcaps=split_pcaps,
+                pcap_split_mode=options.get(
+                    "pcap_split_mode",
+                    "unique_connections" if split_pcaps else "none",
+                ),
                 write_flow_index=options.get("write_flow_index", True),
                 overwrite=options.get("overwrite", False),
             ),

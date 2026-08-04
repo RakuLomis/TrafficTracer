@@ -6,6 +6,7 @@
   "output_root": "/tmp/traffictracer/sessions",
   "options": {
     "split_pcaps": true,
+    "pcap_split_mode": "unique_connections",
     "write_flow_index": true,
     "overwrite": false
   }

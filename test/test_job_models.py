@@ -47,9 +47,19 @@ def test_analysis_job_round_trips_the_contract_fixture():
     assert spec.to_dict() == payload
     assert spec.options == AnalysisJobOptions(
         split_pcaps=True,
+        pcap_split_mode="unique_connections",
         write_flow_index=True,
         overwrite=False,
     )
+
+
+def test_legacy_analysis_split_boolean_normalizes_to_explicit_mode():
+    with ANALYSIS_FIXTURE.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    payload["options"].pop("pcap_split_mode")
+    payload["options"]["split_pcaps"] = False
+    spec = AnalysisJobSpec.from_dict(payload)
+    assert spec.options.pcap_split_mode == "none"
 
 
 def test_capture_job_can_be_constructed_without_yaml():

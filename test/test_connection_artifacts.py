@@ -2,7 +2,14 @@
 
 import json
 
-from traffictracer.analyze.connection_artifacts import persist_connection_artifacts
+from traffictracer.analyze.connection_artifacts import (
+    persist_connection_artifacts,
+    persist_pcap_index,
+)
+from traffictracer.analyze.pcap_splitter import (
+    ConnectionPcapResult,
+    PcapSideResult,
+)
 from traffictracer.models import AttributedRequest, CorrelatedFlowV2, FlowTuple, VisitCorrelation
 
 
@@ -75,3 +82,55 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     assert len(requests) == 2
     assert requests[0]["url"] == requests[1]["url"]
     assert {item["connection_id"] for item in requests} == {CONNECTION_ID}
+
+    pcap_path = tmp_path / "results" / "pcap" / CONNECTION_ID / "pre.pcap"
+    pcap_path.parent.mkdir(parents=True)
+    pcap_path.write_bytes(b"pcap-data")
+    index_path = persist_pcap_index(
+        tmp_path,
+        SESSION_ID,
+        artifacts.generation_id,
+        "unique_connections",
+        [
+            ConnectionPcapResult(
+                connection_id=CONNECTION_ID,
+                protocol="tcp",
+                request_ids=("1.1", "1.2"),
+                pre_proxy=PcapSideResult(
+                    "success",
+                    "tcp.stream eq 1",
+                    packet_count=2,
+                    byte_count=128,
+                    artifact_id="pcap-conn-111-pre",
+                    path=str(pcap_path),
+                ),
+                post_proxy=PcapSideResult(
+                    "empty",
+                    "tcp.stream eq 2",
+                ),
+            )
+        ],
+        [result],
+    )
+    pcap_index = json.loads(index_path.read_text(encoding="utf-8"))
+    assert pcap_index["analysis_generation_id"] == artifacts.generation_id
+    assert pcap_index["connections"][0]["pre_proxy"]["path"] == (
+        f"results/pcap/{CONNECTION_ID}/pre.pcap"
+    )
+    assert pcap_index["coverage"]["browser_requests"] == {
+        "total": 2,
+        "matched": 0,
+        "ambiguous": 2,
+        "unmatched": 0,
+    }
+    assert pcap_index["coverage"]["transport_connections"]["ambiguous"] == 1
+    assert pcap_index["coverage"]["core_logical_flows"] == {
+        "total": 1,
+        "with_post_flow": 0,
+        "shared": 1,
+        "missing_post_flow": 1,
+    }
+    assert pcap_index["coverage"]["unmatched_reasons"] == {
+        "missing_post_flow": 1,
+        "multiple_candidates": 3,
+    }

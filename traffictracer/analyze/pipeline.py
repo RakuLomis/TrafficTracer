@@ -18,11 +18,18 @@ from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
 from .mihomo_log import parse_tracing_log, parse_udp_tracing_log
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
-from .pcap_splitter import split_flows, split_flows_v2
+from .pcap_splitter import (
+    ConnectionPcapResult,
+    SPLIT_NONE,
+    SPLIT_UNIQUE_CONNECTIONS,
+    split_flows,
+    split_flows_v2,
+)
 from .cdp_attribution import parse_cdp_attribution
 from .netlog_transport import trace_transport
 from .connection_artifacts import (
     persist_connection_artifacts,
+    persist_pcap_index,
 )
 
 
@@ -53,6 +60,7 @@ def run_analysis(
     progress: ProgressReporter | None = None,
     cancellation: CancellationToken | None = None,
     split_pcaps: bool = True,
+    pcap_split_mode: str | None = None,
     overwrite: bool = True,
 ) -> str:
     setup_logging()
@@ -70,6 +78,8 @@ def run_analysis(
 
     all_correlations: dict[str, dict] = {}
     connection_results: list[VisitCorrelation] = []
+    pcap_results: list[ConnectionPcapResult] = []
+    split_mode = _normalize_split_mode(split_pcaps, pcap_split_mode)
 
     for domain_dir in sorted(captures_dir.iterdir()):
         if not domain_dir.is_dir():
@@ -116,8 +126,14 @@ def run_analysis(
                             _result_v2_to_dict(result_v2)["flows"]
                         )
                     advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
-                    if split_pcaps:
-                        _try_split_v2(result_v2, run_dir)
+                    pcap_results.extend(
+                        _try_split_v2(
+                            result_v2,
+                            run_dir,
+                            Path(results_dir) / "pcap",
+                            split_mode,
+                        )
+                    )
                     token.checkpoint()
                     continue
 
@@ -139,7 +155,7 @@ def run_analysis(
                 else:
                     existing["flows"].extend(v1_dict["flows"])
                 advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
-                if split_pcaps:
+                if split_mode == SPLIT_UNIQUE_CONNECTIONS:
                     _try_split_v1(result_v1, run_dir)
                 token.checkpoint()
 
@@ -149,13 +165,30 @@ def run_analysis(
         raise FileExistsError(f"Analysis result already exists: {corr_path}")
     write_json_atomic(corr_path, all_correlations)
     if connection_results:
-        persist_connection_artifacts(
+        generated = persist_connection_artifacts(
             session, _session_id(session), connection_results,
+        )
+        persist_pcap_index(
+            session,
+            _session_id(session),
+            generated.generation_id,
+            split_mode,
+            pcap_results,
+            connection_results,
         )
     token.checkpoint()
 
     logger.info("Correlation results written to %s", corr_path)
     return corr_path
+
+
+def _normalize_split_mode(split_pcaps: bool, explicit: str | None) -> str:
+    mode = explicit or (
+        SPLIT_UNIQUE_CONNECTIONS if split_pcaps else SPLIT_NONE
+    )
+    if mode not in {SPLIT_NONE, SPLIT_UNIQUE_CONNECTIONS}:
+        raise ValueError(f"unsupported PCAP split mode: {mode}")
+    return mode
 
 
 def _session_id(session: Path) -> str:
@@ -289,15 +322,35 @@ def _analyze_domain_path(
     return correlate(netlog_conns, mihomo_conns, domain)
 
 
-def _try_split_v2(result: VisitCorrelation, run_dir: Path) -> None:
+def _try_split_v2(
+    result: VisitCorrelation,
+    run_dir: Path,
+    output_base: Path,
+    split_mode: str,
+) -> list[ConnectionPcapResult]:
     tun_pcap = str(run_dir / "tun.pcap")
     phys_pcap = str(run_dir / "phys.pcap")
-    flows_base = str(run_dir / "flows")
-    if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
-        try:
-            split_flows_v2(result, tun_pcap, phys_pcap, flows_base)
-        except Exception as e:
-            logger.error("pcap splitting failed: %s", e)
+    effective_mode = split_mode
+    if (
+        split_mode == SPLIT_UNIQUE_CONNECTIONS
+        and not (os.path.exists(tun_pcap) and os.path.exists(phys_pcap))
+    ):
+        logger.warning(
+            "raw PCAP pair missing for %s; derived PCAPs not requested",
+            run_dir,
+        )
+        effective_mode = SPLIT_NONE
+    try:
+        return split_flows_v2(
+            result,
+            tun_pcap,
+            phys_pcap,
+            str(output_base),
+            effective_mode,
+        )
+    except Exception as e:
+        logger.error("pcap splitting failed: %s", e)
+        return []
 
 
 def _try_split_v1(result: CorrelationResult, run_dir: Path) -> None:

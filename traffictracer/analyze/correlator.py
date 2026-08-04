@@ -104,10 +104,14 @@ def correlate_v2(
     cdp_request_count: int = 0,
 ) -> VisitCorrelation:
     flows: list[CorrelatedFlowV2] = []
+    stable_ids: dict[str, str] = {}
 
     for tc in transport_conns:
         decision = rank_connection_candidates(tc, mihomo_conns)
-        stable_id = stable_connection_id(tc)
+        stable_id = stable_connection_id(
+            tc,
+            collision_registry=stable_ids,
+        )
         mconn = (
             mihomo_conns.get(decision.selected_native_id)
             if decision.selected_native_id is not None
@@ -361,5 +365,4 @@ def _infer_relation(url: str, domain: str) -> str:
     if domain.lower() in host.lower():
         return "same_site"
     return "cross_site"
-
 

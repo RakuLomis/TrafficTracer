@@ -42,6 +42,31 @@ def test_stable_id_is_request_order_independent_and_observation_specific():
     assert stable_connection_id(first) != stable_connection_id(_transport(first_observed=101.0))
 
 
+def test_stable_id_extends_only_when_truncated_hash_collides(monkeypatch):
+    import traffictracer.analyze.connection_index as module
+
+    prefix = "a" * 32
+    monkeypatch.setattr(
+        module,
+        "_stable_digest",
+        lambda canonical: (
+            prefix + ("b" * 8 if "100.25" in canonical else "c" * 8) + "d" * 24
+        ),
+    )
+    registry = {}
+    first = stable_connection_id(_transport(), collision_registry=registry)
+    second = stable_connection_id(
+        _transport(first_observed=101.0),
+        collision_registry=registry,
+    )
+    assert first == "conn-" + prefix
+    assert second == "conn-" + prefix + "-" + "c" * 8
+    assert stable_connection_id(
+        _transport(first_observed=101.0),
+        collision_registry=registry,
+    ) == second
+
+
 def test_exact_pre_flow_wins_over_endpoint_and_host_fallbacks():
     transport = _transport()
     key = "tcp|198.18.0.1:44000|9.9.9.9:443"

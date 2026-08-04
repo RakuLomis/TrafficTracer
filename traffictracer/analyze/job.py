@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
@@ -45,6 +46,7 @@ class AnalysisJob:
                 progress=self.progress,
                 cancellation=self.cancellation,
                 split_pcaps=self.spec.options.split_pcaps,
+                pcap_split_mode=self.spec.options.pcap_split_mode,
                 overwrite=self.spec.options.overwrite,
             )
             artifact_paths = [Path(correlation_path)]
@@ -56,10 +58,21 @@ class AnalysisJob:
                 )
                 artifact_paths.extend([generated.flow_index, generated.summary])
                 self.cancellation.checkpoint()
-            for name in ("connection-index-v2.json", "request-index-v2.json"):
+            for name in (
+                "connection-index-v2.json",
+                "request-index-v2.json",
+                "pcap-index-v1.json",
+            ):
                 candidate = Path(self.spec.session_dir) / "results" / name
                 if candidate.is_file():
                     artifact_paths.append(candidate)
+                    if name == "pcap-index-v1.json":
+                        artifact_paths.extend(
+                            _pcap_artifact_paths(
+                                Path(self.spec.session_dir),
+                                candidate,
+                            )
+                        )
             self._record_artifacts(artifact_paths)
         except CancelledError:
             self._finish_manifest(JobState.CANCELLED)
@@ -131,7 +144,11 @@ class AnalysisJob:
                     name=path.name,
                     kind="derived",
                     path=relative,
-                    media_type="application/json",
+                    media_type=(
+                        "application/vnd.tcpdump.pcap"
+                        if path.suffix == ".pcap"
+                        else "application/json"
+                    ),
                     size_bytes=path.stat().st_size,
                 )
             )
@@ -144,3 +161,17 @@ def _relative_artifact(session_dir: str, artifact_path: str) -> str:
         return str(Path(artifact_path).relative_to(Path(session_dir)))
     except ValueError:
         return artifact_path
+
+
+def _pcap_artifact_paths(session: Path, index_path: Path) -> list[Path]:
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+    paths: list[Path] = []
+    for connection in payload.get("connections", []):
+        for side_name in ("pre_proxy", "post_proxy"):
+            side = connection.get(side_name, {})
+            if side.get("status") != "success" or not side.get("path"):
+                continue
+            candidate = session / side["path"]
+            if candidate.is_file():
+                paths.append(candidate)
+    return paths

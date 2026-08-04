@@ -58,6 +58,10 @@
       "additionalProperties": false,
       "properties": {
         "split_pcaps": { "type": "boolean", "default": true },
+        "pcap_split_mode": {
+          "enum": ["none", "unique_connections"],
+          "default": "unique_connections"
+        },
         "write_flow_index": { "type": "boolean", "default": true },
         "overwrite": { "type": "boolean", "default": false }
       }

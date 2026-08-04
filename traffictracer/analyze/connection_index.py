@@ -33,7 +33,9 @@ class ConnectionDecision:
 
 
 def stable_connection_id(
-    connection: TransportConnection, candidate_native_id: str = "",
+    connection: TransportConnection,
+    candidate_native_id: str = "",
+    collision_registry: dict[str, str] | None = None,
 ) -> str:
     """Return a deterministic ID for one observed transport connection."""
     canonical = json.dumps(
@@ -50,7 +52,24 @@ def stable_connection_id(
         ensure_ascii=True,
         separators=(",", ":"),
     )
-    return "conn-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+    digest = _stable_digest(canonical)
+    base_id = "conn-" + digest[:32]
+    if collision_registry is None:
+        return base_id
+    prior = collision_registry.get(base_id)
+    if prior is None or prior == digest:
+        collision_registry[base_id] = digest
+        return base_id
+    extended_id = f"{base_id}-{digest[32:40]}"
+    extended_prior = collision_registry.get(extended_id)
+    if extended_prior is not None and extended_prior != digest:
+        raise RuntimeError("stable connection ID collision exceeds 40 bits")
+    collision_registry[extended_id] = digest
+    return extended_id
+
+
+def _stable_digest(canonical: str) -> str:
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def rank_connection_candidates(
