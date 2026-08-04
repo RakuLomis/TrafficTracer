@@ -14,7 +14,7 @@ from traffictracer.contracts import validate_batch_manifest, validate_job
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import BATCH_MANIFEST_SCHEMA_VERSION, JOB_SCHEMA_VERSION
 
-from .models import CaptureInterfaces, CaptureJobOptions, ControllerSpec
+from .models import CaptureInterfaces, CaptureJobOptions, ControllerSpec, JobState
 
 
 BATCH_MANIFEST_NAME = "batch-manifest.json"
@@ -111,6 +111,8 @@ class BatchJobSpec:
         ]
         if len(identities) != len(set(identities)):
             raise ValueError("batch targets must not contain duplicates")
+        if not self.options.analyze_after_capture:
+            raise ValueError("serial batch requires analyze_after_capture")
 
     @classmethod
     def from_preview(
@@ -384,6 +386,27 @@ class BatchManifest:
             return self
         return replace(self, cancel_requested=True, updated_at=_utc(now))
 
+    def stop(
+        self,
+        state: BatchState,
+        *,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        if self.state is not BatchState.RUNNING or self.current_index is not None:
+            raise ValueError("only an idle running batch can stop directly")
+        if state not in {
+            BatchState.FAILED,
+            BatchState.CANCELLED,
+            BatchState.INTERRUPTED,
+        }:
+            raise ValueError("invalid direct batch stop state")
+        return replace(
+            self,
+            state=state,
+            stage=BatchStage.FINISHED,
+            updated_at=_utc(now),
+        )
+
     def to_dict(self, *, validate: bool = True) -> dict[str, Any]:
         payload = {
             "schema_version": self.schema_version,
@@ -495,3 +518,23 @@ def _format_time(value: datetime) -> str:
 
 def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+@dataclass(frozen=True)
+class BatchJobResult:
+    job_id: str
+    state: JobState
+    manifest_path: str
+    session_ids: tuple[str, ...]
+    completed_targets: int
+    total_targets: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "state": self.state.value,
+            "manifest_path": self.manifest_path,
+            "session_ids": list(self.session_ids),
+            "completed_targets": self.completed_targets,
+            "total_targets": self.total_targets,
+        }

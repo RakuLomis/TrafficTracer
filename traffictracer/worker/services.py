@@ -15,6 +15,8 @@ from traffictracer.capture.mihomo import MihomoManager
 from traffictracer.config import ConfigValidationError, load_target_config
 from traffictracer.diagnostics import EnvironmentSpec, diagnose_environment
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.batch import SerialBatchJob
+from traffictracer.jobs.batch_models import BatchJobSpec
 from traffictracer.jobs.models import (
     AnalysisJobOptions,
     AnalysisJobSpec,
@@ -57,6 +59,7 @@ class WorkerServices:
         self.jobs = JobManager(
             capture_factory=self._capture_factory,
             analysis_factory=self._analysis_factory,
+            batch_factory=self._batch_factory,
             notify=notify,
         )
 
@@ -328,6 +331,35 @@ class WorkerServices:
                 "SESSION_NOT_FOUND", "Analysis Session path does not match its manifest."
             )
         return AnalysisJob(spec, progress=progress, cancellation=cancellation)
+
+    def _batch_factory(
+        self,
+        spec,
+        progress: ProgressReporter,
+        cancellation: CancellationToken,
+        *,
+        resume: bool = False,
+    ):
+        assert isinstance(spec, BatchJobSpec)
+        self._require_output_root(spec.output_root)
+        return SerialBatchJob(
+            spec,
+            child_factory=self._capture_factory,
+            progress=progress,
+            cancellation=cancellation,
+            session_for_job=self._session_for_job,
+            resume=resume,
+        )
+
+    def _session_for_job(self, job_id: str) -> str | None:
+        return next(
+            (
+                manifest.session_id
+                for manifest in self.store.scan().sessions
+                if manifest.job_id == job_id
+            ),
+            None,
+        )
 
     def _require_output_root(self, value: str) -> None:
         if Path(value).resolve() != self.store.output_root:

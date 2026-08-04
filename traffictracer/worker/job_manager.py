@@ -11,6 +11,7 @@ from traffictracer.capture.tshark import PacketCaptureError
 from traffictracer.capture.quiescence import ChromeCleanupIncomplete
 from traffictracer.contracts import validate_worker_message
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.batch_models import BatchJobResult, BatchJobSpec
 from traffictracer.jobs.models import (
     AnalysisJobSpec,
     CaptureJobResult,
@@ -26,11 +27,11 @@ from .dispatcher import WorkerMethodError
 
 
 class RunnableJob(Protocol):
-    def run(self) -> CaptureJobResult: ...
+    def run(self) -> CaptureJobResult | BatchJobResult: ...
 
 
 JobFactory = Callable[
-    [CaptureJobSpec | AnalysisJobSpec, ProgressReporter, CancellationToken],
+    [CaptureJobSpec | AnalysisJobSpec | BatchJobSpec, ProgressReporter, CancellationToken],
     RunnableJob,
 ]
 NotificationCallback = Callable[[dict[str, Any]], None]
@@ -74,9 +75,11 @@ class JobManager:
         capture_factory: JobFactory,
         analysis_factory: JobFactory,
         notify: NotificationCallback,
+        batch_factory: JobFactory | None = None,
     ) -> None:
         self._capture_factory = capture_factory
         self._analysis_factory = analysis_factory
+        self._batch_factory = batch_factory
         self._notify = notify
         self._lock = Lock()
         self._jobs: dict[str, _ManagedJob] = {}
@@ -97,6 +100,18 @@ class JobManager:
     def start_analysis(self, params: dict[str, Any]) -> dict[str, Any]:
         payload = _job_payload(params)
         return self._start(AnalysisJobSpec.from_dict(payload), self._analysis_factory)
+
+    def start_batch(self, params: dict[str, Any], *, resume: bool = False) -> dict[str, Any]:
+        if self._batch_factory is None:
+            raise WorkerMethodError("METHOD_NOT_FOUND", "Batch Jobs are unavailable.")
+        payload = _job_payload(params)
+        spec = BatchJobSpec.from_dict(payload)
+        factory = self._batch_factory
+        if resume:
+            factory = lambda item, progress, token: self._batch_factory(
+                item, progress, token, resume=True
+            )
+        return self._start(spec, factory)
 
     def status(self, params: dict[str, Any]) -> dict[str, Any]:
         job_id = _required_job_id(params)
@@ -149,7 +164,7 @@ class JobManager:
 
     def _start(
         self,
-        spec: CaptureJobSpec | AnalysisJobSpec,
+        spec: CaptureJobSpec | AnalysisJobSpec | BatchJobSpec,
         factory: JobFactory,
     ) -> dict[str, Any]:
         token = CancellationToken()

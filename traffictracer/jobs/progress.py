@@ -24,6 +24,7 @@ class JobStage(str, Enum):
     ANALYZE_CORRELATE = "analyze.correlate"
     ANALYZE_SPLIT = "analyze.split"
     ANALYZE_WRITE = "analyze.write"
+    BATCH_TARGET = "batch.target"
     FINISHED = "finished"
 
 

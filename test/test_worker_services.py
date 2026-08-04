@@ -20,6 +20,7 @@ from traffictracer.worker.dispatcher import WorkerMethodError
 
 ROOT = Path(__file__).resolve().parents[1]
 CAPTURE_FIXTURE = ROOT / "test" / "fixtures" / "contracts" / "job-valid.json"
+BATCH_FIXTURE = ROOT / "test" / "fixtures" / "contracts" / "job-valid-batch.json"
 
 
 def _capture_payload(output_root):
@@ -138,6 +139,72 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
         "results/summary.json",
     ]
     assert any(item["method"] == "job.completed" for item in notifications)
+
+
+def test_internal_batch_orchestration_creates_three_serial_analyzed_sessions(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.services as module
+
+    config = tmp_path / "three-targets.yaml"
+    config.write_text(
+        """sites:
+  - domain: one.example.test
+    url: https://one.example.test/
+  - domain: two.example.test
+    url: https://two.example.test/
+  - domain: three.example.test
+    url: https://three.example.test/
+""",
+        encoding="utf-8",
+    )
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    preview = services.load_targets({"path": str(config)})
+    payload = json.loads(BATCH_FIXTURE.read_text(encoding="utf-8"))
+    payload["config_path"] = preview["config_path"]
+    payload["config_sha256"] = preview["sha256"]
+    payload["targets"] = preview["targets"]
+    payload["output_root"] = str(services.store.output_root)
+    active = [0]
+    maximum = [0]
+
+    class FakeCaptureJob:
+        def __init__(self, spec, **kwargs):
+            self.spec = spec
+            self.session = kwargs["session"]
+
+        def run(self):
+            active[0] += 1
+            maximum[0] = max(maximum[0], active[0])
+            try:
+                (self.session.directory / "captures").mkdir()
+                logs = self.session.directory / "logs"
+                logs.mkdir()
+                (logs / "capture.json").write_text("{}\n", encoding="utf-8")
+                return CaptureJobResult(
+                    self.spec.job_id,
+                    JobState.COMPLETED,
+                    session_id=self.session.session_id,
+                    artifacts=("logs/capture.json",),
+                )
+            finally:
+                active[0] -= 1
+
+    monkeypatch.setattr(module, "CaptureJob", FakeCaptureJob)
+    started = services.jobs.start_batch({"job": payload})
+    assert services.jobs.wait(started["job_id"], timeout=5)
+    status = services.jobs.status({"job_id": started["job_id"]})
+    sessions = services.session_list({})["sessions"]
+
+    assert status["state"] == "completed"
+    assert status["result"]["completed_targets"] == 3
+    assert len(sessions) == 3
+    assert all(session["state"] == "completed" for session in sessions)
+    assert maximum == [1]
 
 
 def test_session_flow_query_paginates_and_terminal_delete_is_scoped(
