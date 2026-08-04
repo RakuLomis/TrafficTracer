@@ -12,6 +12,7 @@ from traffictracer.session.store import (
     CorruptSessionError,
     SessionNotFoundError,
     SessionStore,
+    SessionStoreError,
     UnsafeSessionPathError,
 )
 
@@ -123,3 +124,66 @@ def test_constructor_and_ids_reject_ambiguous_paths(tmp_path, monkeypatch):
     store = SessionStore(tmp_path / "sessions")
     with pytest.raises(ValueError, match="invalid Session UUID"):
         store.get("not-a-uuid")
+
+
+def test_cleanup_preview_lists_legacy_pcaps_without_deleting_or_escaping(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    session = Path(manifest.session_dir)
+    legacy = session / "captures" / "example.com" / "all_1" / "flows" / "url"
+    legacy.mkdir(parents=True)
+    pcap = legacy / "pre_proxy.pcap"
+    pcap.write_bytes(b"legacy-pcap")
+    outside = tmp_path.parent / "cleanup-preview-outside.pcap"
+    outside.write_bytes(b"outside")
+    (legacy / "escape.pcap").symlink_to(outside)
+
+    preview = store.preview_derived_cleanup(manifest.session_id)
+
+    assert preview["delete_supported"] is False
+    assert preview["candidate_count"] == 1
+    assert preview["total_bytes"] == len(b"legacy-pcap")
+    assert preview["candidates"][0]["reason"] == "legacy_per_url_derived_pcap"
+    assert pcap.is_file()
+    assert outside.read_bytes() == b"outside"
+
+
+def test_scan_reads_v1_and_v2_manifests_together(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    current = _create(store, now=BASE_TIME)
+    legacy = _create(store, now=BASE_TIME + timedelta(seconds=1))
+    path = Path(legacy.session_dir) / "manifest.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1
+    payload["artifacts"] = []
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    sessions = store.list_sessions()
+
+    assert {item.schema_version for item in sessions} == {1, 2}
+    assert store.get(legacy.session_id).read_only is True
+    assert store.get(current.session_id).read_only is False
+    with pytest.raises(ValueError, match="read-only"):
+        store.get(legacy.session_id).with_warning("must not mutate")
+    with pytest.raises(SessionStoreError, match="read-only"):
+        store.save(store.get(legacy.session_id))
+
+
+def test_cleanup_preview_keeps_latest_generation(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    root = Path(manifest.session_dir) / "results" / "generations"
+    older = root / "11111111-1111-4111-8111-111111111111"
+    latest = root / "22222222-2222-4222-8222-222222222222"
+    older.mkdir(parents=True)
+    (older / "flow-index.json").write_bytes(b"old")
+    latest.mkdir()
+    (latest / "flow-index.json").write_bytes(b"new")
+
+    preview = store.preview_derived_cleanup(manifest.session_id)
+
+    assert preview["current_generation_id"] == latest.name
+    assert [item["path"] for item in preview["candidates"]] == [
+        f"results/generations/{older.name}/flow-index.json"
+    ]
+    assert (latest / "flow-index.json").read_bytes() == b"new"

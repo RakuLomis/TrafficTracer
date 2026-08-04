@@ -1,6 +1,7 @@
 """Lifecycle tests for progress-aware analysis jobs."""
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -87,6 +88,45 @@ def test_completed_session_can_be_explicitly_reanalyzed_without_duplicate_artifa
     ]
 
 
+def test_completed_v1_reanalysis_writes_independent_generation(tmp_path):
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    legacy_correlation = session_dir / "results" / "correlation.json"
+    legacy_correlation.write_text('{"legacy": true}\n', encoding="utf-8")
+    manifest_path = session_dir / "manifest.json"
+    legacy_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    legacy_manifest["schema_version"] = 1
+    legacy_manifest["artifacts"] = [
+        {
+            "name": item["name"],
+            "kind": (
+                "raw" if item["phase"] == "capture"
+                else "derived" if item["phase"] == "analysis"
+                else "diagnostic"
+            ),
+            "path": item["path"],
+            "media_type": item["media_type"],
+            "size_bytes": item["size_bytes"],
+        }
+        for item in legacy_manifest["artifacts"]
+    ]
+    manifest_path.write_text(json.dumps(legacy_manifest), encoding="utf-8")
+    manifest_before = manifest_path.read_bytes()
+
+    result = _job(tmp_path, session_dir, [], overwrite=True).run()
+
+    assert legacy_correlation.read_text(encoding="utf-8") == '{"legacy": true}\n'
+    generation_artifacts = [
+        path for path in result.artifacts if "/generations/" in f"/{path}"
+    ]
+    assert generation_artifacts
+    generation_roots = {
+        "/".join(path.split("/")[:3]) for path in generation_artifacts
+    }
+    assert len(generation_roots) == 1
+    assert manifest_path.read_bytes() == manifest_before
+
+
 def test_analysis_failure_preserves_raw_artifact_and_records_manifest_error(
     tmp_path, monkeypatch
 ):
@@ -127,3 +167,51 @@ def test_analysis_cancellation_marks_manifest_cancelled(tmp_path, monkeypatch):
         _job(tmp_path, session_dir, events, token=token).run()
     assert store.get(manifest.session_id).state is JobState.CANCELLED
     assert events[-1].state is JobState.CANCELLED
+
+
+def test_cancelled_v1_reanalysis_preserves_manifest_and_legacy_results(
+    tmp_path,
+    monkeypatch,
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    manifest_path = session_dir / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["schema_version"] = 1
+    payload["artifacts"] = [
+        {
+            "name": item["name"],
+            "kind": "derived",
+            "path": item["path"],
+            "media_type": item["media_type"],
+            "size_bytes": item["size_bytes"],
+        }
+        for item in payload["artifacts"]
+    ]
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+    manifest_before = manifest_path.read_bytes()
+    legacy = session_dir / "results" / "flow-index.json"
+    legacy.write_bytes(b"legacy-flow-index")
+    token = CancellationToken()
+
+    def cancel_after_partial(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        (output / ".partial.json").write_text("partial", encoding="utf-8")
+        token.cancel("cancel legacy reanalysis")
+        token.checkpoint()
+
+    monkeypatch.setattr(module, "run_analysis", cancel_after_partial)
+    with pytest.raises(CancelledError, match="cancel legacy reanalysis"):
+        _job(
+            tmp_path,
+            session_dir,
+            [],
+            token=token,
+            overwrite=True,
+        ).run()
+
+    assert manifest_path.read_bytes() == manifest_before
+    assert legacy.read_bytes() == b"legacy-flow-index"

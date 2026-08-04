@@ -192,6 +192,17 @@ def test_truncated_netlog_repair_never_mutates_raw_capture(tmp_path):
         repaired.unlink(missing_ok=True)
 
 
+def test_analysis_output_directory_cannot_escape_session(tmp_path):
+    session = tmp_path / "session"
+    (session / "captures").mkdir(parents=True)
+    (session / "logs").mkdir()
+    with pytest.raises(ValueError, match="escapes"):
+        run_analysis(
+            str(session),
+            output_dir=tmp_path / "outside",
+        )
+
+
 if __name__ == "__main__":
     test_result_v2_to_dict()
     test_analysis_cdp_path()

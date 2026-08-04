@@ -68,6 +68,7 @@ class WorkerServices:
             "session.list": self.session_list,
             "session.get": self.session_get,
             "session.delete": self.session_delete,
+            "session.cleanup.preview": self.session_cleanup_preview,
             "flow.query": self.flow_query,
             "worker.shutdown": self.shutdown,
         })
@@ -143,6 +144,17 @@ class WorkerServices:
         self.store.delete(manifest.session_id)
         return {"session_id": manifest.session_id, "deleted": True}
 
+    def session_cleanup_preview(self, params: dict[str, Any]) -> dict[str, Any]:
+        if set(params) != {"session_id"}:
+            raise WorkerMethodError(
+                "INVALID_PARAMS",
+                "session.cleanup.preview requires only session_id.",
+            )
+        try:
+            return self.store.preview_derived_cleanup(params["session_id"])
+        except (TypeError, ValueError) as exc:
+            raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
+
     def flow_query(self, params: dict[str, Any]) -> dict[str, Any]:
         manifest = self._manifest(params)
         required = ("network", "src_ip", "src_port", "dst_ip", "dst_port")
@@ -167,9 +179,7 @@ class WorkerServices:
             raise WorkerMethodError(
                 "INVALID_PARAMS", "offset must be non-negative and limit must be 1..1000."
             )
-        path = self.store.artifact_path(
-            manifest.session_id, "results/flow-index.json"
-        )
+        path = self._flow_index_path(manifest)
         try:
             with path.open(encoding="utf-8") as stream:
                 payload = json.load(stream)
@@ -188,6 +198,31 @@ class WorkerServices:
             "total": len(matches),
             "items": matches[offset : offset + limit],
         }
+
+    def _flow_index_path(self, manifest: SessionManifest) -> Path:
+        session = Path(manifest.session_dir)
+        generation_root = session / "results" / "generations"
+        generated = (
+            sorted(
+                generation_root.glob("*/flow-index.json"),
+                key=lambda path: (path.stat().st_mtime_ns, str(path)),
+                reverse=True,
+            )
+            if generation_root.is_dir()
+            else []
+        )
+        if generated:
+            relative = generated[0].relative_to(session)
+            return self.store.artifact_path(manifest.session_id, relative)
+        indexed = [
+            artifact.path
+            for artifact in manifest.artifacts
+            if getattr(artifact, "role", "") == "flow_index"
+        ]
+        return self.store.artifact_path(
+            manifest.session_id,
+            indexed[-1] if indexed else "results/flow-index.json",
+        )
 
     def shutdown(self, params: dict[str, Any]) -> dict[str, Any]:
         if params:

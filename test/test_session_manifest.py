@@ -107,6 +107,8 @@ def test_artifacts_and_warnings_are_immutable_additions():
     artifact = Artifact(
         name="correlation",
         kind="derived",
+        phase="analysis",
+        generation_id="78fdab68-4e5d-4b67-9910-33da00a2632a",
         path="analysis/correlation.json",
         media_type="application/json",
         size_bytes=42,

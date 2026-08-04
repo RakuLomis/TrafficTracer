@@ -23,7 +23,7 @@ def test_hello_returns_all_protocol_versions_and_methods():
     result = response["result"]
     assert result["api_version"] == 2
     assert result["job_schema_version"] == 2
-    assert result["session_schema_version"] == 1
+    assert result["session_schema_version"] == 2
     assert result["flow_schema_version"] == 1
     assert result["methods"] == list(METHODS)
 

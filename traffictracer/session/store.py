@@ -101,6 +101,8 @@ class SessionStore:
             raise
 
     def save(self, manifest: SessionManifest) -> None:
+        if manifest.read_only:
+            raise SessionStoreError("Session v1 manifest is read-only")
         session_dir = self._managed_directory(Path(manifest.session_dir))
         if not session_dir.is_dir():
             raise SessionNotFoundError(f"Session directory does not exist: {session_dir}")
@@ -145,6 +147,96 @@ class SessionStore:
         if candidate == session_dir or not candidate.is_relative_to(session_dir):
             raise UnsafeSessionPathError("artifact path escapes the Session directory")
         return candidate
+
+    def preview_derived_cleanup(self, session_id: str) -> dict:
+        """List safely removable legacy/stale derived files without deleting them."""
+        manifest = self.get(session_id)
+        session_dir = self._managed_directory(Path(manifest.session_dir))
+        candidates: dict[str, dict] = {}
+
+        generations = [
+            getattr(artifact, "generation_id", None)
+            for artifact in manifest.artifacts
+            if getattr(artifact, "generation_id", None)
+        ]
+        current_generation = generations[-1] if generations else None
+        generation_root = session_dir / "results" / "generations"
+        generation_dirs = (
+            sorted(
+                (path for path in generation_root.iterdir() if path.is_dir()),
+                key=lambda path: (path.stat().st_mtime_ns, path.name),
+            )
+            if generation_root.is_dir()
+            else []
+        )
+        if generation_dirs:
+            current_generation = generation_dirs[-1].name
+            for generation_dir in generation_dirs[:-1]:
+                for path in generation_dir.rglob("*"):
+                    if not path.is_file():
+                        continue
+                    self._add_cleanup_candidate(
+                        session_dir,
+                        path.relative_to(session_dir),
+                        "stale_analysis_generation",
+                        candidates,
+                    )
+        for artifact in manifest.artifacts:
+            generation_id = getattr(artifact, "generation_id", None)
+            if not generation_id or generation_id == current_generation:
+                continue
+            self._add_cleanup_candidate(
+                session_dir,
+                artifact.path,
+                "stale_analysis_generation",
+                candidates,
+            )
+
+        captures = session_dir / "captures"
+        if captures.is_dir():
+            for path in captures.glob("*/*/flows/**/*.pcap"):
+                try:
+                    relative = path.relative_to(session_dir)
+                except ValueError:
+                    continue
+                self._add_cleanup_candidate(
+                    session_dir,
+                    relative,
+                    "legacy_per_url_derived_pcap",
+                    candidates,
+                )
+
+        ordered = [candidates[key] for key in sorted(candidates)]
+        return {
+            "session_id": manifest.session_id,
+            "delete_supported": False,
+            "current_generation_id": current_generation,
+            "candidate_count": len(ordered),
+            "total_bytes": sum(item["size_bytes"] for item in ordered),
+            "candidates": ordered,
+        }
+
+    def _add_cleanup_candidate(
+        self,
+        session_dir: Path,
+        relative_path: str | Path,
+        reason: str,
+        output: dict[str, dict],
+    ) -> None:
+        relative = Path(relative_path)
+        if relative.is_absolute() or relative == Path("."):
+            return
+        candidate = (session_dir / relative).resolve(strict=False)
+        if candidate == session_dir or not candidate.is_relative_to(session_dir):
+            return
+        if not candidate.is_file():
+            return
+        normalized = str(candidate.relative_to(session_dir))
+        output[normalized] = {
+            "path": normalized,
+            "reason": reason,
+            "size_bytes": candidate.stat().st_size,
+        }
 
     def delete(self, session_id: str) -> None:
         manifest = self.get(session_id)

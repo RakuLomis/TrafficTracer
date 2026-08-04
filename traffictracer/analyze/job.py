@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.models import (
@@ -35,6 +35,10 @@ class AnalysisJob:
         self._store: SessionStore | None = None
         self._manifest: SessionManifest | None = None
         session_uri = Path(spec.session_dir).resolve().as_uri()
+        self._analysis_generation_id: str | None = str(
+            uuid5(NAMESPACE_URL, f"{session_uri}#analysis-v2")
+        )
+        self._results_dir = Path(spec.session_dir) / "results"
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
@@ -48,6 +52,8 @@ class AnalysisJob:
                 split_pcaps=self.spec.options.split_pcaps,
                 pcap_split_mode=self.spec.options.pcap_split_mode,
                 overwrite=self.spec.options.overwrite,
+                output_dir=self._results_dir,
+                analysis_generation_id=self._analysis_generation_id,
             )
             artifact_paths = [Path(correlation_path)]
             if self.spec.options.write_flow_index:
@@ -55,6 +61,7 @@ class AnalysisJob:
                 generated = persist_analysis_artifacts(
                     self.spec.session_dir,
                     self._session_id,
+                    output_dir=self._results_dir,
                 )
                 artifact_paths.extend([generated.flow_index, generated.summary])
                 self.cancellation.checkpoint()
@@ -63,7 +70,7 @@ class AnalysisJob:
                 "request-index-v2.json",
                 "pcap-index-v1.json",
             ):
-                candidate = Path(self.spec.session_dir) / "results" / name
+                candidate = self._results_dir / name
                 if candidate.is_file():
                     artifact_paths.append(candidate)
                     if name == "pcap-index-v1.json":
@@ -106,6 +113,20 @@ class AnalysisJob:
             return
         manifest = SessionManifest.load(manifest_path)
         store = SessionStore(self.spec.output_root)
+        self._session_id = manifest.session_id
+        if (
+            manifest.schema_version == 1
+            and manifest.state is JobState.COMPLETED
+            and self.spec.options.overwrite
+        ):
+            self._analysis_generation_id = str(uuid4())
+            self._results_dir = (
+                Path(self.spec.session_dir)
+                / "results"
+                / "generations"
+                / self._analysis_generation_id
+            )
+            return
         if manifest.state is JobState.CAPTURING:
             manifest = manifest.transition(JobState.ANALYZING)
             store.save(manifest)
@@ -117,7 +138,6 @@ class AnalysisJob:
             )
         self._store = store
         self._manifest = manifest
-        self._session_id = manifest.session_id
 
     def _finish_manifest(
         self,
@@ -143,6 +163,8 @@ class AnalysisJob:
                 Artifact(
                     name=path.name,
                     kind="derived",
+                    phase="analysis",
+                    generation_id=self._analysis_generation_id,
                     path=relative,
                     media_type=(
                         "application/vnd.tcpdump.pcap"

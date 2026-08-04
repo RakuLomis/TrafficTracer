@@ -41,7 +41,7 @@ components:
 protocols:
   worker_api: 2
   job_schema: 2
-  session_manifest: 1
+  session_manifest: 2
   flow_result: 1
   mihomo_tracing_api: 1
   mihomo_event_schema: 1

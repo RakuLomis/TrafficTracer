@@ -9,6 +9,11 @@ import pytest
 from traffictracer.jobs.models import CaptureJobResult, JobState
 from traffictracer.jobs.progress import JobStage
 from traffictracer.session.atomic import write_json_atomic
+from traffictracer.session.manifest import (
+    ComponentVersion,
+    ComponentVersions,
+    SessionTarget,
+)
 from traffictracer.worker.services import WorkerServices
 from traffictracer.worker.dispatcher import WorkerMethodError
 
@@ -193,3 +198,79 @@ def test_session_flow_query_paginates_and_terminal_delete_is_scoped(
     assert services.session_get({"session_id": session_id})["session_id"] == session_id
     assert services.session_delete({"session_id": session_id})["deleted"] is True
     assert services.session_list({})["sessions"] == []
+
+
+def test_session_cleanup_preview_is_read_only(tmp_path, monkeypatch):
+    import traffictracer.worker.services as module
+
+    services = WorkerServices(
+        tmp_path,
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    class FakeCaptureJob:
+        def __init__(self, spec, **kwargs):
+            self.spec = spec
+            self.session = kwargs["session"]
+
+        def run(self):
+            legacy = self.session.directory / "captures" / "d" / "r" / "flows"
+            legacy.mkdir(parents=True)
+            (legacy / "pre.pcap").write_bytes(b"pcap")
+            (self.session.directory / "logs").mkdir()
+            return CaptureJobResult(
+                self.spec.job_id,
+                JobState.COMPLETED,
+                session_id=self.session.session_id,
+            )
+
+    monkeypatch.setattr(module, "CaptureJob", FakeCaptureJob)
+    payload = _capture_payload(tmp_path)
+    payload["options"]["analyze_after_capture"] = False
+    started = services.jobs.start_capture(payload)
+    assert services.jobs.wait(started["job_id"], timeout=3)
+    session_id = services.session_list({})["sessions"][0]["session_id"]
+    preview = services.session_cleanup_preview({"session_id": session_id})
+    assert preview["candidate_count"] == 1
+    assert preview["delete_supported"] is False
+    assert services.store.artifact_path(
+        session_id,
+        preview["candidates"][0]["path"],
+    ).is_file()
+
+
+def test_flow_query_prefers_latest_reanalysis_generation(tmp_path, monkeypatch):
+    services = WorkerServices(
+        tmp_path,
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    manifest = services.store.create(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        target=SessionTarget("https://example.com/", "example.com"),
+        component_versions=ComponentVersions(
+            ComponentVersion("complete", "unknown"),
+            ComponentVersion("complete", "unknown"),
+            ComponentVersion("complete", "unknown"),
+        ),
+    )
+    session = Path(manifest.session_dir)
+    old = session / "results" / "flow-index.json"
+    new = (
+        session / "results" / "generations"
+        / "11111111-1111-4111-8111-111111111111"
+        / "flow-index.json"
+    )
+    old.parent.mkdir()
+    new.parent.mkdir(parents=True)
+    pre = {
+        "network": "tcp", "src_ip": "198.18.0.1", "src_port": 40000,
+        "dst_ip": "1.1.1.1", "dst_port": 443,
+    }
+    write_json_atomic(old, {"items": [{"flow_id": "old", "pre_flow": pre}]})
+    write_json_atomic(new, {"items": [{"flow_id": "new", "pre_flow": pre}]})
+
+    queried = services.flow_query({"session_id": manifest.session_id, **pre})
+
+    assert [item["flow_id"] for item in queried["items"]] == ["new"]

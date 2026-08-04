@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 import tempfile
 from typing import Callable
+from uuid import NAMESPACE_URL, uuid5
 
 from ..jobs.cancellation import CancellationToken
 from ..jobs.models import JobState
@@ -62,6 +63,8 @@ def run_analysis(
     split_pcaps: bool = True,
     pcap_split_mode: str | None = None,
     overwrite: bool = True,
+    output_dir: str | Path | None = None,
+    analysis_generation_id: str | None = None,
 ) -> str:
     setup_logging()
     token = cancellation or CancellationToken()
@@ -74,7 +77,8 @@ def run_analysis(
 
     logs_dir = session / "logs"
     captures_dir = session / "captures"
-    results_dir = ensure_dir(str(session / "results"))
+    results_path = _safe_results_path(session, output_dir)
+    results_dir = ensure_dir(str(results_path))
 
     all_correlations: dict[str, dict] = {}
     connection_results: list[VisitCorrelation] = []
@@ -165,8 +169,15 @@ def run_analysis(
         raise FileExistsError(f"Analysis result already exists: {corr_path}")
     write_json_atomic(corr_path, all_correlations)
     if connection_results:
+        generation_id = analysis_generation_id or str(
+            uuid5(NAMESPACE_URL, f"{session.resolve().as_uri()}#analysis-v2")
+        )
         generated = persist_connection_artifacts(
-            session, _session_id(session), connection_results,
+            session,
+            _session_id(session),
+            connection_results,
+            output_dir=results_path,
+            generation_id=generation_id,
         )
         persist_pcap_index(
             session,
@@ -174,11 +185,30 @@ def run_analysis(
             generated.generation_id,
             split_mode,
             pcap_results,
+            output_dir=results_path,
         )
     token.checkpoint()
 
     logger.info("Correlation results written to %s", corr_path)
     return corr_path
+
+
+def _safe_results_path(
+    session: Path,
+    output_dir: str | Path | None,
+) -> Path:
+    candidate = (
+        Path(output_dir)
+        if output_dir is not None
+        else session / "results"
+    )
+    if not candidate.is_absolute():
+        candidate = session / candidate
+    resolved_session = session.resolve()
+    resolved = candidate.resolve(strict=False)
+    if resolved == resolved_session or not resolved.is_relative_to(resolved_session):
+        raise ValueError("analysis output directory escapes the Session directory")
+    return resolved
 
 
 def _normalize_split_mode(split_pcaps: bool, explicit: str | None) -> str:

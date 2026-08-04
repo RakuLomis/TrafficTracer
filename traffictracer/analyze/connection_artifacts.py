@@ -30,8 +30,13 @@ def persist_connection_artifacts(
     session_dir: str | Path,
     session_id: str,
     results: list[VisitCorrelation],
+    *,
+    output_dir: str | Path | None = None,
+    generation_id: str | None = None,
 ) -> ConnectionArtifacts:
-    generation_id = str(uuid5(NAMESPACE_URL, f"{Path(session_dir).resolve().as_uri()}#analysis-v2"))
+    generation_id = generation_id or str(
+        uuid5(NAMESPACE_URL, f"{Path(session_dir).resolve().as_uri()}#analysis-v2")
+    )
     connections = _merge_connection_records([
         _connection_record(flow, session_id, generation_id)
         for result in results
@@ -44,7 +49,7 @@ def persist_connection_artifacts(
     connections.sort(key=lambda item: item["connection_id"])
     requests.sort(key=lambda item: item["request_id"])
 
-    output = Path(session_dir) / "results"
+    output = Path(output_dir) if output_dir is not None else Path(session_dir) / "results"
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
     connection_path = output / CONNECTION_INDEX_V2_NAME
     request_path = output / REQUEST_INDEX_V2_NAME
@@ -176,10 +181,13 @@ def persist_pcap_index(
     generation_id: str,
     split_mode: str,
     pcap_results: list[ConnectionPcapResult],
+    *,
+    output_dir: str | Path | None = None,
 ) -> Path:
     """Persist the authoritative connection-to-PCAP map and coverage counters."""
     session = Path(session_dir)
     merged = _merge_pcap_results(pcap_results)
+    output = Path(output_dir) if output_dir is not None else session / "results"
     payload = {
         "schema_version": PCAP_INDEX_SCHEMA_VERSION,
         "session_schema_version": SESSION_SCHEMA_V2_VERSION,
@@ -192,15 +200,15 @@ def persist_pcap_index(
         },
         "connections": [_pcap_record(item, session) for item in merged],
         "coverage": layered_coverage(
-            _index_items(session / "results" / REQUEST_INDEX_V2_NAME),
-            _index_items(session / "results" / CONNECTION_INDEX_V2_NAME),
+            _index_items(output / REQUEST_INDEX_V2_NAME),
+            _index_items(output / CONNECTION_INDEX_V2_NAME),
             core_flow_records(session, session_id),
         ),
     }
     validate_pcap_index(payload)
-    output = session / "results" / PCAP_INDEX_V1_NAME
-    write_json_atomic(output, payload)
-    return output
+    output_path = output / PCAP_INDEX_V1_NAME
+    write_json_atomic(output_path, payload)
+    return output_path
 
 
 def _merge_pcap_results(

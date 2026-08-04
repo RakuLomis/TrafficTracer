@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from traffictracer.contracts import validate_session
+from traffictracer.contracts import validate_session, validate_session_v2
 from traffictracer.jobs.models import JobState
 from traffictracer.version import SESSION_SCHEMA_VERSION, WORKER_API_VERSION
 
@@ -84,21 +84,34 @@ class ComponentVersions:
 @dataclass(frozen=True)
 class Artifact:
     name: str
-    kind: str
     path: str
     media_type: str
     size_bytes: int
+    kind: str = ""
+    artifact_id: str = ""
+    phase: str = ""
+    role: str = ""
+    generation_id: str | None = None
     sha256: str | None = None
     created_at: datetime | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self, *, schema_version: int = SESSION_SCHEMA_VERSION) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "name": self.name,
-            "kind": self.kind,
             "path": self.path,
             "media_type": self.media_type,
             "size_bytes": self.size_bytes,
         }
+        if schema_version == 1:
+            payload["kind"] = self.kind or _legacy_kind(self.phase)
+        else:
+            payload.update({
+                "artifact_id": self.artifact_id or _artifact_id(self.path),
+                "phase": self.phase or _phase(self.kind),
+                "role": self.role or _role(self.path),
+            })
+            if self.generation_id is not None:
+                payload["generation_id"] = self.generation_id
         if self.sha256 is not None:
             payload["sha256"] = self.sha256
         if self.created_at is not None:
@@ -134,7 +147,7 @@ class SessionManifest:
     artifacts: tuple[Artifact, ...] = ()
     warnings: tuple[str, ...] = ()
     error: SessionError | None = None
-    schema_version: int = field(default=SESSION_SCHEMA_VERSION, init=False)
+    schema_version: int = SESSION_SCHEMA_VERSION
 
     @classmethod
     def create(
@@ -157,6 +170,7 @@ class SessionManifest:
             session_dir=session_dir,
             target=target,
             component_versions=component_versions,
+            schema_version=SESSION_SCHEMA_VERSION,
         )
         manifest.validate()
         return manifest
@@ -164,7 +178,13 @@ class SessionManifest:
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> SessionManifest:
         data = dict(payload)
-        validate_session(data)
+        schema_version = data.get("schema_version")
+        if schema_version == 1:
+            validate_session(data)
+        elif schema_version == 2:
+            validate_session_v2(data)
+        else:
+            raise ValueError(f"unsupported Session schema_version: {schema_version}")
         versions = data["component_versions"]
         error = data.get("error")
         manifest = cls(
@@ -183,9 +203,13 @@ class SessionManifest:
                 clash_verge_rev=ComponentVersion(**versions["clash_verge_rev"]),
                 worker_api=versions["worker_api"],
             ),
-            artifacts=tuple(_artifact_from_dict(item) for item in data["artifacts"]),
+            artifacts=tuple(
+                _artifact_from_dict(item, schema_version)
+                for item in data["artifacts"]
+            ),
             warnings=tuple(data["warnings"]),
             error=SessionError(**error) if error is not None else None,
+            schema_version=schema_version,
         )
         manifest.validate()
         return manifest
@@ -205,6 +229,7 @@ class SessionManifest:
         error: SessionError | None = None,
         now: datetime | None = None,
     ) -> SessionManifest:
+        self._require_writable()
         if new_state not in _TRANSITIONS[self.state]:
             raise SessionTransitionError(
                 f"invalid Session transition: {self.state.value} -> {new_state.value}"
@@ -231,6 +256,7 @@ class SessionManifest:
         return result
 
     def with_artifact(self, artifact: Artifact, *, now: datetime | None = None) -> SessionManifest:
+        self._require_writable()
         result = replace(
             self,
             artifacts=(*self.artifacts, artifact),
@@ -240,6 +266,7 @@ class SessionManifest:
         return result
 
     def with_warning(self, warning: str, *, now: datetime | None = None) -> SessionManifest:
+        self._require_writable()
         normalized = warning.strip()
         if not normalized:
             raise ValueError("warning must not be empty")
@@ -268,7 +295,10 @@ class SessionManifest:
             "session_dir": self.session_dir,
             "target": self.target.to_dict(),
             "component_versions": self.component_versions.to_dict(),
-            "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+            "artifacts": [
+                artifact.to_dict(schema_version=self.schema_version)
+                for artifact in self.artifacts
+            ],
             "warnings": list(self.warnings),
         }
         if self.started_at is not None:
@@ -278,11 +308,11 @@ class SessionManifest:
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         if validate:
-            validate_session(payload)
+            self._validate_contract(payload)
         return payload
 
     def validate(self) -> None:
-        validate_session(self.to_dict(validate=False))
+        self._validate_contract(self.to_dict(validate=False))
         if self.updated_at < self.created_at:
             raise ValueError("updated_at cannot precede created_at")
         if self.started_at is not None and self.started_at < self.created_at:
@@ -300,17 +330,86 @@ class SessionManifest:
         if self.state is not JobState.FAILED and self.error is not None:
             raise ValueError("error details are only valid for failed Sessions")
 
+    @property
+    def read_only(self) -> bool:
+        return self.schema_version == 1
 
-def _artifact_from_dict(data: Mapping[str, Any]) -> Artifact:
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise ValueError("Session v1 manifest is read-only")
+
+    def _validate_contract(self, payload: dict[str, Any]) -> None:
+        if self.schema_version == 1:
+            validate_session(payload)
+        else:
+            validate_session_v2(payload)
+
+
+def _artifact_from_dict(data: Mapping[str, Any], schema_version: int) -> Artifact:
+    phase = data.get("phase", "")
     return Artifact(
         name=data["name"],
-        kind=data["kind"],
         path=data["path"],
         media_type=data["media_type"],
         size_bytes=data["size_bytes"],
+        kind=data.get("kind", _legacy_kind(phase)),
+        artifact_id=data.get("artifact_id", ""),
+        phase=phase,
+        role=data.get("role", ""),
+        generation_id=data.get("generation_id"),
         sha256=data.get("sha256"),
         created_at=_parse_optional_time(data.get("created_at")),
     )
+
+
+def _phase(kind: str) -> str:
+    return {
+        "raw": "capture",
+        "derived": "analysis",
+        "diagnostic": "diagnostic",
+    }.get(kind, "diagnostic")
+
+
+def _legacy_kind(phase: str) -> str:
+    return {
+        "capture": "raw",
+        "analysis": "derived",
+        "diagnostic": "diagnostic",
+    }.get(phase, "diagnostic")
+
+
+def _artifact_id(path: str) -> str:
+    import hashlib
+    import re
+
+    stem = re.sub(r"[^a-z0-9_-]+", "-", Path(path).stem.lower()).strip("-")
+    digest = hashlib.sha256(path.encode("utf-8")).hexdigest()[:12]
+    return f"artifact-{(stem or 'file')[:37]}-{digest}"
+
+
+def _role(path: str) -> str:
+    name = Path(path).name
+    exact = {
+        "tun.pcap": "tun_pcap",
+        "phys.pcap": "physical_pcap",
+        "capture_context.json": "capture_context",
+        "connection-index-v2.json": "connection_index",
+        "request-index-v2.json": "request_index",
+        "flow-index.json": "flow_index",
+        "pcap-index-v1.json": "pcap_index",
+        "summary.json": "coverage_summary",
+    }
+    if name in exact:
+        return exact[name]
+    if name.endswith(".pcap"):
+        return "derived_pcap"
+    if name.startswith("mihomo_trace_"):
+        return "mihomo_trace"
+    if name.startswith("netlog_"):
+        return "netlog"
+    if name.startswith("cdp_"):
+        return "cdp_events"
+    return "other"
 
 
 def _utc(value: datetime | None) -> datetime:

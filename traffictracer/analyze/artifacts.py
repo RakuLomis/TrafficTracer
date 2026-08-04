@@ -28,6 +28,8 @@ class AnalysisArtifacts:
 def persist_analysis_artifacts(
     session_dir: str | Path,
     session_id: str,
+    *,
+    output_dir: str | Path | None = None,
 ) -> AnalysisArtifacts:
     session = Path(session_dir)
     mappings = _load_mappings(session)
@@ -64,7 +66,8 @@ def persist_analysis_artifacts(
         "error_flows": error_count,
         "warnings": warnings,
     }
-    request_records, connection_records, generation_id = _v2_records(session)
+    results = Path(output_dir) if output_dir is not None else session / "results"
+    request_records, connection_records, generation_id = _v2_records(results)
     summary_payload["coverage"] = layered_coverage(
         request_records,
         connection_records,
@@ -82,7 +85,6 @@ def persist_analysis_artifacts(
     if generation_id:
         summary_payload["analysis_generation_id"] = generation_id
 
-    results = session / "results"
     results.mkdir(parents=True, exist_ok=True, mode=0o700)
     flow_index_path = results / FLOW_INDEX_NAME
     summary_path = results / SUMMARY_NAME
@@ -184,8 +186,7 @@ def _normalized_reason(value: object, fallback: str) -> str:
     return normalized or fallback
 
 
-def _v2_records(session: Path) -> tuple[list[dict], list[dict], str]:
-    results = session / "results"
+def _v2_records(results: Path) -> tuple[list[dict], list[dict], str]:
     request_payload = _read_index(results / "request-index-v2.json")
     connection_payload = _read_index(results / "connection-index-v2.json")
     request_generation = request_payload.get("analysis_generation_id", "")

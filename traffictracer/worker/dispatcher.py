@@ -32,6 +32,7 @@ METHODS = (
     "session.list",
     "session.get",
     "session.delete",
+    "session.cleanup.preview",
     "flow.query",
     "worker.shutdown",
 )
