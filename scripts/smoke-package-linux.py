@@ -103,6 +103,18 @@ def assert_executables(root: Path) -> dict[str, Path]:
 
 def smoke_worker(worker: Path, root: Path) -> None:
     sessions = root / "worker-sessions"
+    legacy = json.loads(
+        (Path(__file__).resolve().parents[1] / "test" / "fixtures" / "contracts" / "session-valid.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    legacy_dir = sessions / f"20260731T080000.000000Z_{legacy['session_id']}"
+    legacy_dir.mkdir(parents=True)
+    legacy["session_dir"] = str(legacy_dir)
+    legacy["artifacts"] = []
+    (legacy_dir / "manifest.json").write_text(
+        json.dumps(legacy, indent=2) + "\n", encoding="utf-8"
+    )
     requests = "\n".join((
         request("hello", "hello", {}),
         request("diagnose", "environment.diagnose", {
@@ -112,6 +124,8 @@ def smoke_worker(worker: Path, root: Path) -> None:
             "output_root": str(sessions),
             "min_free_bytes": 0,
         }),
+        request("sessions", "session.list", {}),
+        request("batches", "batch.list", {}),
         request("shutdown", "worker.shutdown", {}),
     )) + "\n"
     completed = run(
@@ -129,8 +143,27 @@ def smoke_worker(worker: Path, root: Path) -> None:
     checks = responses.get("diagnose", {}).get("result", {}).get("checks")
     if ready is None or hello.get("api_version") != 2:
         raise SmokeFailure("packaged Worker hello/ready handshake failed")
+    required_batch_methods = {
+        "batch.start",
+        "batch.status",
+        "batch.cancel",
+        "batch.list",
+        "batch.resume",
+    }
+    if not required_batch_methods.issubset(set(hello.get("methods", []))):
+        raise SmokeFailure("packaged Worker omits serial batch API methods")
     if not isinstance(checks, list) or len(checks) != 7:
         raise SmokeFailure("packaged Worker environment diagnose failed")
+    listed_sessions = responses.get("sessions", {}).get("result", {}).get("sessions", [])
+    if (
+        len(listed_sessions) != 1
+        or listed_sessions[0].get("schema_version") != 1
+        or Path(listed_sessions[0].get("session_dir", "")) != legacy_dir
+    ):
+        raise SmokeFailure("packaged Worker cannot read schema-v1 Session in custom root")
+    batches = responses.get("batches", {}).get("result", {})
+    if batches.get("batches") != [] or batches.get("corrupt") != []:
+        raise SmokeFailure("packaged Worker batch.list failed in custom root")
     if responses.get("shutdown", {}).get("result", {}).get("shutdown") is not True:
         raise SmokeFailure("packaged Worker shutdown failed")
 

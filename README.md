@@ -27,7 +27,7 @@ cd TrafficTracer
 make bootstrap
 ```
 
-安装版用户在 UI 中依次导入代理 YAML、选择 `verge-mihomo-tt`、测速选节点、安装服务并开启 TUN，然后在“流量追踪”页选择手工目标，或加载预先编写的 `sites.yaml` 并选择其中一项，再检测环境、开始捕获。捕获完成可自动分析，并可用代理前五元组查询全部匹配逻辑流及实际观测到的代理后五元组，无需运行 Python 命令。
+安装版用户在 UI 中依次导入代理 YAML、选择 `verge-mihomo-tt`、测速选节点、安装服务并开启 TUN，然后在“流量追踪”页选择手工目标，或加载预先编写的 `sites.yaml` 并全选/选择子集。多目标严格按 YAML 顺序串行执行捕获、Chrome 清理、分析和 checkpoint；失败或 Worker 中断后可从准确目标继续。每个子目标生成独立 Session，并可用代理前五元组查询全部匹配逻辑流及实际观测到的代理后五元组，无需运行 Python 命令。
 
 开发入口：
 
