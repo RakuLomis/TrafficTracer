@@ -34,6 +34,11 @@ METHODS = (
     "session.delete",
     "session.cleanup.preview",
     "flow.query",
+    "batch.start",
+    "batch.status",
+    "batch.cancel",
+    "batch.list",
+    "batch.resume",
     "worker.shutdown",
 )
 

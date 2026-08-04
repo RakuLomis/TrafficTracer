@@ -10,6 +10,19 @@
     "path": "/tmp/sites.yaml",
     "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
+  "execution": {
+    "interfaces": { "tun": "Meta", "physical": "eth0" },
+    "chrome_binary": "/usr/bin/chromium",
+    "controller_endpoint": "unix:///tmp/mihomo.sock",
+    "controller_generated_config": null,
+    "options": {
+      "capture_packets": true,
+      "collect_cdp": true,
+      "collect_netlog": true,
+      "analyze_after_capture": true,
+      "headless": false
+    }
+  },
   "targets": [
     {
       "index": 1,

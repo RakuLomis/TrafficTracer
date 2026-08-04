@@ -10,6 +10,7 @@ from .batch_models import (
     BatchJobResult,
     BatchManifest,
     BatchStage,
+    BatchStore,
     BatchState,
     BatchTarget,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "BatchJobResult",
     "BatchManifest",
     "BatchStage",
+    "BatchStore",
     "BatchState",
     "BatchTarget",
     "CancelledError",

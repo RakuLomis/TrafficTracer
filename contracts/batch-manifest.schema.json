@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "batch_id", "state", "stage", "created_at", "updated_at",
-    "output_root", "config", "targets", "current_index", "children", "fail_fast",
+    "output_root", "config", "execution", "targets", "current_index", "children", "fail_fast",
     "cancel_requested", "resume"
   ],
   "properties": {
@@ -23,6 +23,36 @@
       "properties": {
         "path": { "$ref": "#/$defs/absolutePath" },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["interfaces", "chrome_binary", "controller_endpoint", "controller_generated_config", "options"],
+      "properties": {
+        "interfaces": {
+          "type": "object", "additionalProperties": false,
+          "required": ["tun", "physical"],
+          "properties": {
+            "tun": { "type": "string", "minLength": 1 },
+            "physical": { "type": "string", "minLength": 1 }
+          }
+        },
+        "chrome_binary": { "$ref": "#/$defs/absolutePath" },
+        "controller_endpoint": { "type": "string", "minLength": 1 },
+        "controller_generated_config": {
+          "oneOf": [{ "$ref": "#/$defs/absolutePath" }, { "type": "null" }]
+        },
+        "options": {
+          "type": "object", "additionalProperties": false,
+          "required": ["capture_packets", "collect_cdp", "collect_netlog", "analyze_after_capture", "headless"],
+          "properties": {
+            "capture_packets": { "type": "boolean" },
+            "collect_cdp": { "type": "boolean" },
+            "collect_netlog": { "type": "boolean" },
+            "analyze_after_capture": { "const": true },
+            "headless": { "type": "boolean" }
+          }
+        }
       }
     },
     "targets": {

@@ -8,6 +8,7 @@ from enum import Enum
 import hashlib
 from pathlib import Path
 from typing import Any, Mapping
+from uuid import UUID
 
 from traffictracer.config import TargetConfigPreview
 from traffictracer.contracts import validate_batch_manifest, validate_job
@@ -128,8 +129,11 @@ class BatchJobSpec:
         )
 
     def verify_config_sha256(self) -> None:
-        path = Path(self.config_path).resolve(strict=True)
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            path = Path(self.config_path).resolve(strict=True)
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise ValueError("batch target configuration is unavailable") from exc
         if actual != self.config_sha256:
             raise ValueError("batch target configuration SHA-256 no longer matches")
 
@@ -227,6 +231,11 @@ class BatchManifest:
     output_root: str
     config_path: str
     config_sha256: str
+    interfaces: CaptureInterfaces
+    chrome_binary: str
+    controller_endpoint: str
+    controller_generated_config: str | None
+    options: CaptureJobOptions
     targets: tuple[BatchTarget, ...]
     current_index: int | None
     children: tuple[BatchChild, ...]
@@ -252,6 +261,11 @@ class BatchManifest:
             output_root=spec.output_root,
             config_path=spec.config_path,
             config_sha256=spec.config_sha256,
+            interfaces=spec.interfaces,
+            chrome_binary=spec.chrome_binary,
+            controller_endpoint=spec.controller.endpoint,
+            controller_generated_config=spec.controller.generated_config,
+            options=spec.options,
             targets=spec.targets,
             current_index=None,
             children=tuple(BatchChild(target.index) for target in spec.targets),
@@ -324,6 +338,22 @@ class BatchManifest:
         }:
             raise ValueError("invalid active batch stage")
         return replace(self, stage=stage, updated_at=_utc(now))
+
+    def attach_child_session(
+        self,
+        session_id: str,
+        *,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        if self.state is not BatchState.RUNNING or self.current_index is None:
+            raise ValueError("batch has no running child for Session attachment")
+        position = self.current_index
+        child = self.children[position]
+        if child.state is not BatchChildState.RUNNING:
+            raise ValueError("batch child is not running")
+        children = list(self.children)
+        children[position] = replace(child, session_id=session_id)
+        return replace(self, children=tuple(children), updated_at=_utc(now))
 
     def finish_child(
         self,
@@ -407,6 +437,24 @@ class BatchManifest:
             updated_at=_utc(now),
         )
 
+    def cancel_inactive(self, *, now: datetime | None = None) -> "BatchManifest":
+        if self.state is BatchState.CANCELLED:
+            return self
+        if self.state not in {
+            BatchState.CREATED,
+            BatchState.FAILED,
+            BatchState.INTERRUPTED,
+        }:
+            raise ValueError("active or completed batch cannot be cancelled as inactive")
+        return replace(
+            self,
+            state=BatchState.CANCELLED,
+            stage=BatchStage.FINISHED,
+            cancel_requested=True,
+            current_index=None,
+            updated_at=_utc(now),
+        )
+
     def to_dict(self, *, validate: bool = True) -> dict[str, Any]:
         payload = {
             "schema_version": self.schema_version,
@@ -417,6 +465,13 @@ class BatchManifest:
             "updated_at": _format_time(self.updated_at),
             "output_root": self.output_root,
             "config": {"path": self.config_path, "sha256": self.config_sha256},
+            "execution": {
+                "interfaces": self.interfaces.to_dict(),
+                "chrome_binary": self.chrome_binary,
+                "controller_endpoint": self.controller_endpoint,
+                "controller_generated_config": self.controller_generated_config,
+                "options": self.options.to_dict(),
+            },
             "targets": [target.to_dict() for target in self.targets],
             "current_index": self.current_index,
             "children": [child.to_dict() for child in self.children],
@@ -433,6 +488,7 @@ class BatchManifest:
         data = dict(payload)
         validate_batch_manifest(data)
         config = data["config"]
+        execution = data["execution"]
         children = tuple(
             BatchChild(
                 target_index=item["target_index"],
@@ -451,6 +507,11 @@ class BatchManifest:
             output_root=data["output_root"],
             config_path=config["path"],
             config_sha256=config["sha256"],
+            interfaces=CaptureInterfaces(**execution["interfaces"]),
+            chrome_binary=execution["chrome_binary"],
+            controller_endpoint=execution["controller_endpoint"],
+            controller_generated_config=execution["controller_generated_config"],
+            options=CaptureJobOptions(**execution["options"]),
             targets=tuple(BatchTarget.from_dict(item) for item in data["targets"]),
             current_index=data["current_index"],
             children=children,
@@ -468,6 +529,24 @@ class BatchManifest:
         )
         manifest._validate_consistency()
         return manifest
+
+    def to_job_spec(self, *, controller_secret: str | None = None) -> BatchJobSpec:
+        return BatchJobSpec(
+            job_id=self.batch_id,
+            config_path=self.config_path,
+            config_sha256=self.config_sha256,
+            targets=self.targets,
+            interfaces=self.interfaces,
+            output_root=self.output_root,
+            chrome_binary=self.chrome_binary,
+            controller=ControllerSpec(
+                endpoint=self.controller_endpoint,
+                secret=controller_secret,
+                generated_config=self.controller_generated_config,
+            ),
+            options=self.options,
+            fail_fast=self.fail_fast,
+        )
 
     def persist(self, directory: str | Path) -> Path:
         root = Path(directory)
@@ -538,3 +617,82 @@ class BatchJobResult:
             "completed_targets": self.completed_targets,
             "total_targets": self.total_targets,
         }
+
+
+@dataclass(frozen=True)
+class BatchScanError:
+    path: str
+    message: str
+
+
+@dataclass(frozen=True)
+class BatchScan:
+    batches: tuple[BatchManifest, ...]
+    corrupt: tuple[BatchScanError, ...]
+
+
+class BatchStore:
+    """Path-safe access and startup recovery for persisted batch manifests."""
+
+    def __init__(self, output_root: str | Path) -> None:
+        self.root = Path(output_root).resolve() / ".batches"
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+
+    def path(self, batch_id: str) -> Path:
+        canonical = str(UUID(batch_id))
+        candidate = self.root / canonical
+        if candidate.is_symlink():
+            raise ValueError("batch directory must not be a symlink")
+        return candidate / BATCH_MANIFEST_NAME
+
+    def get(self, batch_id: str) -> BatchManifest:
+        path = self.path(batch_id)
+        if not path.is_file():
+            raise FileNotFoundError("batch manifest does not exist")
+        manifest = BatchManifest.load(path)
+        if manifest.batch_id != str(UUID(batch_id)):
+            raise ValueError("batch manifest ID does not match directory")
+        return manifest
+
+    def save(self, manifest: BatchManifest) -> Path:
+        return manifest.persist(self.path(manifest.batch_id).parent)
+
+    def scan(self) -> BatchScan:
+        batches = []
+        corrupt = []
+        for directory in self.root.iterdir():
+            if not directory.is_dir() or directory.is_symlink():
+                continue
+            path = directory / BATCH_MANIFEST_NAME
+            if not path.is_file():
+                continue
+            try:
+                manifest = BatchManifest.load(path)
+                if directory.name != str(UUID(manifest.batch_id)):
+                    raise ValueError("batch directory does not match manifest ID")
+                batches.append(manifest)
+            except (OSError, ValueError) as exc:
+                corrupt.append(BatchScanError(str(path), str(exc)))
+        batches.sort(key=lambda item: (item.updated_at, item.batch_id), reverse=True)
+        corrupt.sort(key=lambda item: item.path)
+        return BatchScan(tuple(batches), tuple(corrupt))
+
+    def recover_running(self) -> tuple[str, ...]:
+        recovered = []
+        for manifest in self.scan().batches:
+            if manifest.state is not BatchState.RUNNING:
+                continue
+            if manifest.current_index is None:
+                interrupted = manifest.stop(BatchState.INTERRUPTED)
+            else:
+                interrupted = manifest.finish_child(
+                    BatchChildState.INTERRUPTED,
+                    session_id=manifest.children[manifest.current_index].session_id,
+                    error=BatchError(
+                        "WORKER_RESTARTED",
+                        "Worker restarted before the child checkpoint completed.",
+                    ),
+                )
+            self.save(interrupted)
+            recovered.append(manifest.batch_id)
+        return tuple(recovered)

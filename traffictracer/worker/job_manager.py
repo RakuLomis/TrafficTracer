@@ -111,7 +111,12 @@ class JobManager:
             factory = lambda item, progress, token: self._batch_factory(
                 item, progress, token, resume=True
             )
-        return self._start(spec, factory)
+        return self._start(spec, factory, allow_terminal_reuse=resume)
+
+    def maybe_status(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            managed = self._jobs.get(job_id)
+            return managed.snapshot() if managed is not None else None
 
     def status(self, params: dict[str, Any]) -> dict[str, Any]:
         job_id = _required_job_id(params)
@@ -166,6 +171,8 @@ class JobManager:
         self,
         spec: CaptureJobSpec | AnalysisJobSpec | BatchJobSpec,
         factory: JobFactory,
+        *,
+        allow_terminal_reuse: bool = False,
     ) -> dict[str, Any]:
         token = CancellationToken()
         done = Event()
@@ -180,9 +187,11 @@ class JobManager:
                         {"active_job_id": active.job_id},
                     )
             if spec.job_id in self._jobs:
-                raise WorkerMethodError(
-                    "INVALID_PARAMS", "job_id has already been used."
-                )
+                previous = self._jobs[spec.job_id]
+                if not allow_terminal_reuse or not previous.state.terminal:
+                    raise WorkerMethodError(
+                        "INVALID_PARAMS", "job_id has already been used."
+                    )
             thread = Thread(
                 target=self._run_job,
                 args=(managed, spec, factory),

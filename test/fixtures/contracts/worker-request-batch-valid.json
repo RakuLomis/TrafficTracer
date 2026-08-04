@@ -1,0 +1,7 @@
+{
+  "api_version": 2,
+  "type": "request",
+  "id": "batch-list-1",
+  "method": "batch.list",
+  "params": {}
+}

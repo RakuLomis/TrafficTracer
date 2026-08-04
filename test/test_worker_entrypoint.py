@@ -59,6 +59,7 @@ def test_worker_hello_diagnose_shutdown_stdout_is_protocol_only(tmp_path):
         if message.get("type") == "response"
     }
     assert responses["hello"]["result"]["api_version"] == 2
+    assert "batch.resume" in responses["hello"]["result"]["methods"]
     assert len(responses["diagnose"]["result"]["checks"]) == 7
     assert responses["shutdown"]["result"] == {
         "shutdown": True,

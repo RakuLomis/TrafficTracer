@@ -30,6 +30,7 @@ def test_every_worker_envelope_has_a_valid_fixture():
         "worker-response-valid.json",
         "worker-error-valid.json",
         "worker-notification-valid.json",
+        "worker-request-batch-valid.json",
     ):
         assert not _errors(_load(FIXTURE_ROOT / name)), name
 

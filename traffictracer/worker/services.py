@@ -16,7 +16,11 @@ from traffictracer.config import ConfigValidationError, load_target_config
 from traffictracer.diagnostics import EnvironmentSpec, diagnose_environment
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
 from traffictracer.jobs.batch import SerialBatchJob
-from traffictracer.jobs.batch_models import BatchJobSpec
+from traffictracer.jobs.batch_models import (
+    BatchJobSpec,
+    BatchState,
+    BatchStore,
+)
 from traffictracer.jobs.models import (
     AnalysisJobOptions,
     AnalysisJobSpec,
@@ -52,6 +56,7 @@ class WorkerServices:
         controller_secret: str = "",
     ) -> None:
         self.store = SessionStore(Path(output_root).expanduser().resolve())
+        self.batches = BatchStore(self.store.output_root)
         self.notify = notify
         self.shutdown_event = shutdown_event
         self.controller_endpoint = controller_endpoint
@@ -73,6 +78,11 @@ class WorkerServices:
             "session.delete": self.session_delete,
             "session.cleanup.preview": self.session_cleanup_preview,
             "flow.query": self.flow_query,
+            "batch.start": self.batch_start,
+            "batch.status": self.batch_status,
+            "batch.cancel": self.batch_cancel,
+            "batch.list": self.batch_list,
+            "batch.resume": self.batch_resume,
             "worker.shutdown": self.shutdown,
         })
         return handlers
@@ -235,6 +245,78 @@ class WorkerServices:
         clean = self.jobs.shutdown(timeout=5)
         self.shutdown_event.set()
         return {"shutdown": True, "jobs_stopped": clean}
+
+    def recover_batches(self) -> tuple[str, ...]:
+        return self.batches.recover_running()
+
+    def batch_start(self, params: dict[str, Any]) -> dict[str, Any]:
+        payload = params.get("job") if set(params) == {"job"} else params
+        if not isinstance(payload, dict):
+            raise WorkerMethodError("INVALID_PARAMS", "batch.start requires a Job object.")
+        spec = BatchJobSpec.from_dict(payload)
+        self._require_output_root(spec.output_root)
+        spec.verify_config_sha256()
+        return self.jobs.start_batch({"job": spec.to_dict()})
+
+    def batch_status(self, params: dict[str, Any]) -> dict[str, Any]:
+        batch_id = _batch_id(params)
+        manifest = self._batch_manifest(batch_id)
+        return {
+            "batch": manifest.to_dict(),
+            "job": self.jobs.maybe_status(batch_id),
+        }
+
+    def batch_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        if params:
+            raise WorkerMethodError("INVALID_PARAMS", "batch.list does not accept parameters.")
+        scan = self.batches.scan()
+        return {
+            "batches": [manifest.to_dict() for manifest in scan.batches],
+            "corrupt": [
+                {"path": item.path, "message": item.message}
+                for item in scan.corrupt
+            ],
+        }
+
+    def batch_cancel(self, params: dict[str, Any]) -> dict[str, Any]:
+        batch_id = _batch_id(params, allow_reason=True)
+        manifest = self._batch_manifest(batch_id)
+        job = self.jobs.maybe_status(batch_id)
+        if job is not None and not JobState(job["state"]).terminal:
+            cancelled = self.jobs.cancel({
+                "job_id": batch_id,
+                "reason": params.get("reason", "Batch cancelled by user."),
+            })
+            return {"batch": manifest.to_dict(), "job": cancelled}
+        if manifest.state is BatchState.COMPLETED:
+            return {"batch": manifest.to_dict(), "job": job}
+        if manifest.state is not BatchState.CANCELLED:
+            manifest = manifest.cancel_inactive()
+            self.batches.save(manifest)
+        return {"batch": manifest.to_dict(), "job": job}
+
+    def batch_resume(self, params: dict[str, Any]) -> dict[str, Any]:
+        batch_id = _batch_id(params)
+        manifest = self._batch_manifest(batch_id)
+        if manifest.state not in {BatchState.FAILED, BatchState.INTERRUPTED}:
+            raise WorkerMethodError(
+                "INVALID_PARAMS", "Only failed or interrupted batches can resume."
+            )
+        spec = manifest.to_job_spec(
+            controller_secret=self.controller_secret or None
+        )
+        # Resume never reloads target definitions. The source file is checked
+        # only as an immutable provenance guard against silent YAML changes.
+        spec.verify_config_sha256()
+        return self.jobs.start_batch({"job": spec.to_dict()}, resume=True)
+
+    def _batch_manifest(self, batch_id: str):
+        try:
+            return self.batches.get(batch_id)
+        except (OSError, ValueError) as exc:
+            raise WorkerMethodError(
+                "JOB_NOT_FOUND", "The requested batch does not exist."
+            ) from exc
 
     def restore_tracing(self, state: dict[str, object]) -> Any:
         if not self.controller_endpoint:
@@ -461,6 +543,16 @@ def _item_flow_key(item: object) -> str:
         )
     except (KeyError, TypeError, ValueError):
         return ""
+
+
+def _batch_id(params: dict[str, Any], *, allow_reason: bool = False) -> str:
+    allowed = {"batch_id", "reason"} if allow_reason else {"batch_id"}
+    if set(params) - allowed:
+        raise WorkerMethodError("INVALID_PARAMS", "Unknown batch parameter.")
+    batch_id = params.get("batch_id")
+    if not isinstance(batch_id, str) or not batch_id:
+        raise WorkerMethodError("INVALID_PARAMS", "batch_id must be a UUID string.")
+    return batch_id
 
 
 def _media_type(path: Path) -> str:

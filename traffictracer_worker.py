@@ -62,6 +62,10 @@ def main(argv=None) -> int:
         restore_tracing=services.restore_tracing,
         notify=writer.write,
     ).run()
+    try:
+        services.recover_batches()
+    except Exception as exc:
+        logging.error("Batch startup recovery failed: %s", exc)
     ready = {
         "api_version": WORKER_API_VERSION,
         "type": "notification",

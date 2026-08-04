@@ -88,11 +88,18 @@ class SerialBatchJob:
                     self._record_child_stage,
                 )
                 try:
-                    result = self.child_factory(
+                    runnable = self.child_factory(
                         child_spec,
                         child_progress,
                         self.cancellation,
-                    ).run()
+                    )
+                    session_id = self.session_for_job(child_spec.job_id)
+                    if session_id:
+                        manifest = (self.manifest or manifest).attach_child_session(
+                            session_id
+                        )
+                        self._save(manifest)
+                    result = runnable.run()
                     if result.state is not JobState.COMPLETED:
                         raise RuntimeError(
                             f"child returned non-completed state {result.state.value}"
