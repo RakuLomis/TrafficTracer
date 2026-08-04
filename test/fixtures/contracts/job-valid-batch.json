@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "kind": "batch",
+  "job_id": "8f376a9b-7f7f-43e4-a35f-0f04de7b95ef",
+  "config_path": "/tmp/sites.yaml",
+  "config_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "targets": [
+    {
+      "index": 1,
+      "url": "https://one.example.test/",
+      "domain": "one.example.test",
+      "duration_seconds": 10,
+      "network": "all",
+      "run_label": "video",
+      "wait_load_timeout": 30
+    },
+    {
+      "index": 3,
+      "url": "https://two.example.test/",
+      "domain": "two.example.test",
+      "duration_seconds": 12,
+      "network": "tcp",
+      "run_label": "page",
+      "wait_load_timeout": 45
+    }
+  ],
+  "interfaces": { "tun": "Meta", "physical": "eth0" },
+  "output_root": "/tmp/traffictracer-sessions",
+  "chrome_binary": "/usr/bin/chromium",
+  "controller": { "endpoint": "unix:///tmp/mihomo.sock" },
+  "options": {
+    "capture_packets": true,
+    "collect_cdp": true,
+    "collect_netlog": true,
+    "analyze_after_capture": true,
+    "headless": false
+  },
+  "fail_fast": true
+}

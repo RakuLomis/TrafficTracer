@@ -120,6 +120,7 @@ def test_validators_are_cached_but_loaded_schemas_are_defensive_copies():
 
 def test_unknown_contract_has_a_deterministic_error():
     assert available_contracts() == (
+        "batch_manifest",
         "flow",
         "flow_v2",
         "job",

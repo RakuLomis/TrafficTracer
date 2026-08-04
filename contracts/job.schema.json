@@ -5,7 +5,8 @@
   "description": "Versioned job specifications accepted by the TrafficTracer Complete worker.",
   "oneOf": [
     { "$ref": "#/$defs/captureJobSpec" },
-    { "$ref": "#/$defs/analysisJobSpec" }
+    { "$ref": "#/$defs/analysisJobSpec" },
+    { "$ref": "#/$defs/batchJobSpec" }
   ],
   "$defs": {
     "jobId": {
@@ -119,6 +120,46 @@
         "session_dir": { "$ref": "#/$defs/absolutePath" },
         "output_root": { "$ref": "#/$defs/absolutePath" },
         "options": { "$ref": "#/$defs/analysisOptions" }
+      }
+    },
+    "batchTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "url", "domain", "duration_seconds", "network", "run_label", "wait_load_timeout"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 253 },
+        "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "network": { "enum": ["tcp", "udp", "all"] },
+        "run_label": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "wait_load_timeout": { "type": "integer", "minimum": 1, "maximum": 3600 }
+      }
+    },
+    "batchJobSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version", "kind", "job_id", "config_path", "config_sha256",
+        "targets", "interfaces", "output_root", "chrome_binary", "controller",
+        "options", "fail_fast"
+      ],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "kind": { "const": "batch" },
+        "job_id": { "$ref": "#/$defs/jobId" },
+        "config_path": { "$ref": "#/$defs/absolutePath" },
+        "config_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "targets": {
+          "type": "array", "minItems": 1, "maxItems": 1000,
+          "uniqueItems": true, "items": { "$ref": "#/$defs/batchTarget" }
+        },
+        "interfaces": { "$ref": "#/$defs/interfaces" },
+        "output_root": { "$ref": "#/$defs/absolutePath" },
+        "chrome_binary": { "$ref": "#/$defs/absolutePath" },
+        "controller": { "$ref": "#/$defs/controller" },
+        "options": { "$ref": "#/$defs/captureOptions" },
+        "fail_fast": { "type": "boolean" }
       }
     },
     "targetSource": {

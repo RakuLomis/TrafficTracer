@@ -25,6 +25,7 @@ _CONTRACT_FILES = {
     "flow_v2": "flow-v2.schema.json",
     "pcap_index": "pcap-index.schema.json",
     "target_config": "target-config.schema.json",
+    "batch_manifest": "batch-manifest.schema.json",
 }
 _CONTRACT_ALIASES = {
     "worker-api": "worker_api",
@@ -32,6 +33,7 @@ _CONTRACT_ALIASES = {
     "session-v2": "session_v2",
     "flow-v2": "flow_v2",
     "pcap-index": "pcap_index",
+    "batch-manifest": "batch_manifest",
 }
 T = TypeVar("T")
 
@@ -153,6 +155,10 @@ def validate_pcap_index(payload: T) -> T:
 
 def validate_target_config(payload: T) -> T:
     return validate_contract("target_config", payload)
+
+
+def validate_batch_manifest(payload: T) -> T:
+    return validate_contract("batch_manifest", payload)
 
 
 def _canonical_name(contract: str) -> str:

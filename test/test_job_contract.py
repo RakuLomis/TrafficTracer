@@ -22,7 +22,7 @@ def test_job_schema_is_valid_draft_2020_12():
 
 def test_valid_capture_and_analysis_jobs_match_schema():
     validator = Draft202012Validator(_load(SCHEMA_PATH))
-    for name in ("job-valid.json", "job-valid-analysis.json"):
+    for name in ("job-valid.json", "job-valid-analysis.json", "job-valid-batch.json"):
         validator.validate(_load(FIXTURE_ROOT / name))
 
 
