@@ -56,8 +56,15 @@ def _capturing_store(tmp_path):
     return store, manifest
 
 
-def _record(pid=123, role="chrome"):
-    return ProcessRecord(StubProcess(pid), role, pid, NOW)
+def _record(pid=123, role="chrome", *, pgid=None, profile=""):
+    return ProcessRecord(
+        StubProcess(pid),
+        role,
+        pid,
+        NOW,
+        pgid=pgid,
+        profile=profile,
+    )
 
 
 def test_journal_capture_persist_and_load(tmp_path):
@@ -73,6 +80,47 @@ def test_journal_capture_persist_and_load(tmp_path):
     path = journal.persist(store)
     assert path == Path(manifest.session_dir) / "recovery.json"
     assert RecoveryJournal.load(path) == journal
+
+
+def test_journal_records_chrome_group_and_exact_profile(tmp_path):
+    store, manifest = _capturing_store(tmp_path)
+    fingerprint = ProcessFingerprint(123, "start-1", "/usr/bin/chrome")
+    journal = RecoveryJournal.capture(
+        session_id=manifest.session_id,
+        tracing=TracingSnapshot(False, ""),
+        processes=[_record(pgid=123, profile="/tmp/session profile")],
+        fingerprint=lambda pid: fingerprint,
+        now=NOW,
+    )
+
+    assert journal.schema_version == 2
+    assert journal.processes[0].pgid == 123
+    assert journal.processes[0].profile == "/tmp/session profile"
+    assert RecoveryJournal.from_dict(journal.to_dict()) == journal
+
+
+def test_recovery_terminates_exact_profile_group_after_leader_exits(tmp_path):
+    store, manifest = _capturing_store(tmp_path)
+    fingerprint = ProcessFingerprint(123, "start-1", "/usr/bin/chrome")
+    RecoveryJournal.capture(
+        session_id=manifest.session_id,
+        tracing=TracingSnapshot(False, ""),
+        processes=[_record(pgid=123, profile="/tmp/job-profile")],
+        fingerprint=lambda pid: fingerprint,
+        now=NOW,
+    ).persist(store)
+    groups = []
+    report = RecoveryManager(
+        store,
+        restore_tracing=lambda snapshot: None,
+        fingerprint=lambda pid: None,
+        terminate_group=groups.append,
+        profile_members=lambda profile, pgid: (124,),
+    ).recover()
+
+    assert groups == [123]
+    assert report.terminated_pids == (124,)
+    assert report.skipped_pids == ()
 
 
 def test_recovery_terminates_matching_process_restores_and_is_idempotent(tmp_path):

@@ -27,6 +27,10 @@ class ProcessRecord:
     role: str
     pid: int
     started_at: datetime
+    pgid: int | None = None
+    start_token: str = ""
+    executable: str = ""
+    profile: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,16 @@ class ProcessRegistry:
                 role=normalized_role,
                 pid=pid,
                 started_at=datetime.now(timezone.utc),
+                pgid=getattr(getattr(process, "ownership", None), "pgid", None),
+                start_token=getattr(
+                    getattr(process, "ownership", None), "start_token", ""
+                ),
+                executable=getattr(
+                    getattr(process, "ownership", None), "executable", ""
+                ),
+                profile=getattr(
+                    getattr(process, "ownership", None), "profile", ""
+                ),
             )
             self._records.append(record)
             return record

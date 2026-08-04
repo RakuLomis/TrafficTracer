@@ -18,7 +18,7 @@ from .store import SessionStore
 
 
 RECOVERY_JOURNAL_NAME = "recovery.json"
-RECOVERY_SCHEMA_VERSION = 1
+RECOVERY_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -48,14 +48,21 @@ class JournalProcess:
     pid: int
     start_token: str
     executable: str
+    pgid: int | None = None
+    profile: str = ""
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "role": self.role,
             "pid": self.pid,
             "start_token": self.start_token,
             "executable": self.executable,
         }
+        if self.pgid is not None:
+            payload["pgid"] = self.pgid
+        if self.profile:
+            payload["profile"] = self.profile
+        return payload
 
 
 @dataclass(frozen=True)
@@ -88,6 +95,8 @@ class RecoveryJournal:
                     pid=record.pid,
                     start_token=current.start_token,
                     executable=current.executable,
+                    pgid=record.pgid,
+                    profile=record.profile,
                 )
             )
         return cls(
@@ -102,7 +111,8 @@ class RecoveryJournal:
         expected = {"schema_version", "session_id", "tracing", "processes", "created_at"}
         if set(payload) != expected:
             raise ValueError("recovery journal has unknown or missing fields")
-        if payload["schema_version"] != RECOVERY_SCHEMA_VERSION:
+        schema_version = payload["schema_version"]
+        if schema_version not in {1, RECOVERY_SCHEMA_VERSION}:
             raise ValueError("unsupported recovery journal schema_version")
         tracing = payload["tracing"]
         processes = payload["processes"]
@@ -112,12 +122,9 @@ class RecoveryJournal:
             raise ValueError("invalid recovery process list")
         parsed_processes: list[JournalProcess] = []
         for item in processes:
-            if not isinstance(item, dict) or set(item) != {
-                "role",
-                "pid",
-                "start_token",
-                "executable",
-            }:
+            required = {"role", "pid", "start_token", "executable"}
+            allowed = required | ({"pgid", "profile"} if schema_version == 2 else set())
+            if not isinstance(item, dict) or not required <= set(item) or set(item) - allowed:
                 raise ValueError("invalid recovery process identity")
             parsed_processes.append(
                 JournalProcess(
@@ -125,6 +132,11 @@ class RecoveryJournal:
                     pid=_positive_int(item["pid"], "process pid"),
                     start_token=_required_string(item["start_token"], "process start_token"),
                     executable=_string(item["executable"], "process executable"),
+                    pgid=(
+                        _positive_int(item["pgid"], "process pgid")
+                        if "pgid" in item else None
+                    ),
+                    profile=_string(item.get("profile", ""), "process profile"),
                 )
             )
         return cls(
@@ -136,6 +148,7 @@ class RecoveryJournal:
             ),
             processes=tuple(parsed_processes),
             created_at=_parse_time(_required_string(payload["created_at"], "created_at")),
+            schema_version=schema_version,
         )
 
     @classmethod
@@ -177,11 +190,15 @@ class RecoveryManager:
         restore_tracing: Callable[[TracingSnapshot], None],
         fingerprint: Callable[[int], ProcessFingerprint | None] | None = None,
         terminate: Callable[[int], None] | None = None,
+        terminate_group: Callable[[int], None] | None = None,
+        profile_members: Callable[[str, int], tuple[int, ...]] | None = None,
     ) -> None:
         self._store = store
         self._restore_tracing = restore_tracing
         self._fingerprint = fingerprint or linux_process_fingerprint
         self._terminate = terminate or _terminate_process
+        self._terminate_group = terminate_group or _terminate_process_group
+        self._profile_members = profile_members or _profile_processes
 
     def recover(self) -> RecoveryReport:
         recovered: list[str] = []
@@ -211,12 +228,22 @@ class RecoveryManager:
             if journal is not None:
                 for process in reversed(journal.processes):
                     current = self._fingerprint(process.pid)
-                    if not _same_process(process, current):
+                    same_leader = _same_process(process, current)
+                    members = (
+                        self._profile_members(process.profile, process.pgid)
+                        if process.profile and process.pgid is not None
+                        else ()
+                    )
+                    if not same_leader and not members:
                         skipped.append(process.pid)
                         continue
                     try:
-                        self._terminate(process.pid)
-                        terminated.append(process.pid)
+                        if process.pgid is not None and (same_leader or members):
+                            self._terminate_group(process.pgid)
+                            terminated.extend(members or (process.pid,))
+                        else:
+                            self._terminate(process.pid)
+                            terminated.append(process.pid)
                     except ProcessLookupError:
                         skipped.append(process.pid)
                     except OSError as exc:
@@ -280,6 +307,23 @@ def _same_process(
 
 def _terminate_process(pid: int) -> None:
     os.kill(pid, signal.SIGTERM)
+
+
+def _terminate_process_group(pgid: int) -> None:
+    os.killpg(pgid, signal.SIGTERM)
+
+
+def _profile_processes(profile: str, pgid: int) -> tuple[int, ...]:
+    """Find exact-profile Chrome processes; never match by executable name."""
+    from traffictracer.capture.chrome import linux_processes
+
+    argument = f"--user-data-dir={Path(profile).resolve()}"
+    return tuple(sorted(
+        identity.pid
+        for identity in linux_processes()
+        if argument in identity.command
+        and (identity.pgid == pgid or identity.pid == pgid)
+    ))
 
 
 def _string(value: object, name: str) -> str:
