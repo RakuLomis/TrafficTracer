@@ -112,6 +112,10 @@ def check_sources(lock: dict) -> None:
         "job_schema": version.JOB_SCHEMA_VERSION,
         "session_manifest": version.SESSION_SCHEMA_VERSION,
         "flow_result": version.FLOW_SCHEMA_VERSION,
+        "connection_index": version.FLOW_SCHEMA_V2_VERSION,
+        "request_index": version.FLOW_SCHEMA_V2_VERSION,
+        "pcap_index": version.PCAP_INDEX_SCHEMA_VERSION,
+        "batch_manifest": version.BATCH_MANIFEST_SCHEMA_VERSION,
         "mihomo_tracing_api": version.MIHOMO_TRACING_API_VERSION,
         "mihomo_event_schema": version.MIHOMO_EVENT_SCHEMA_VERSION,
     }

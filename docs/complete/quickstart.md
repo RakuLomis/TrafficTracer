@@ -10,8 +10,12 @@ TrafficTracer Complete 把定制 Mihomo、TrafficTracer Worker 和 Clash Verge U
 | --- | --- |
 | Worker JSONL API | 2 |
 | Job schema | 2 |
-| Session manifest | 1 |
+| Session manifest | 2 |
 | Flow result | 1 |
+| Connection index | 2 |
+| Request index | 2 |
+| PCAP index | 1 |
+| Batch manifest | 1 |
 | Mihomo tracing API | 1 |
 | Mihomo event schema | 1 |
 

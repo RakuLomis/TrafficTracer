@@ -7,6 +7,7 @@ python_bin="${PYTHON:-python}"
 go_bin="${GO:-go}"
 cargo_bin="${CARGO:-cargo}"
 golden_dir="${repo_root}/test/fixtures/tracing"
+contract_dir="${repo_root}/test/fixtures/contracts"
 mihomo_dir="${repo_root}/components/mihomo"
 ui_dir="${repo_root}/components/clash-verge-rev"
 
@@ -40,8 +41,9 @@ cd "$repo_root"
 (
   cd "$ui_dir"
   TRAFFICTRACER_GOLDEN_DIR="$golden_dir" \
+  TRAFFICTRACER_CONTRACT_DIR="$contract_dir" \
     "$cargo_bin" test --manifest-path src-tauri/Cargo.toml \
-      golden_complete_tracing_events --lib
+      golden_complete_ --lib
 )
 
 echo "TrafficTracer Complete Python/Go/Rust contract gate passed."
