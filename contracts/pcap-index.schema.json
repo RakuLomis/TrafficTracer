@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/pcap-index.schema.json",
+  "title": "TrafficTracer Complete PCAP index",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session_schema_version", "session_id", "analysis_generation_id", "split_mode", "raw_capture", "connections", "coverage"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "session_schema_version": { "const": 2 },
+    "session_id": { "$ref": "#/$defs/uuid" },
+    "analysis_generation_id": { "$ref": "#/$defs/uuid" },
+    "split_mode": { "enum": ["none", "unique_connections"] },
+    "raw_capture": { "$ref": "#/$defs/rawCapture" },
+    "connections": { "type": "array", "items": { "$ref": "#/$defs/connectionPcap" } },
+    "coverage": { "$ref": "#/$defs/coverage" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" },
+    "connectionId": {
+      "type": "string",
+      "description": "Stable ID: conn- plus the first 32 SHA-256 hex characters of canonical protocol, normalized pre-flow, transport source ID and first-observed timestamp; append the next 8 hex characters after a dash only on collision.",
+      "pattern": "^conn-[0-9a-f]{32}(-[0-9a-f]{8})?$"
+    },
+    "artifactId": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "relativeArtifactPath": { "type": "string", "minLength": 1, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$" },
+    "rawCapture": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tun_artifact_id", "physical_artifact_id"],
+      "properties": {
+        "tun_artifact_id": { "$ref": "#/$defs/artifactId" },
+        "physical_artifact_id": { "$ref": "#/$defs/artifactId" }
+      }
+    },
+    "pcapResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "display_filter", "packet_count", "byte_count"],
+      "properties": {
+        "status": { "enum": ["success", "empty", "failed", "not_requested"] },
+        "artifact_id": { "$ref": "#/$defs/artifactId" },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "display_filter": { "type": "string" },
+        "packet_count": { "type": "integer", "minimum": 0 },
+        "byte_count": { "type": "integer", "minimum": 0 },
+        "error_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "const": "success" } }, "required": ["status"] }, "then": { "required": ["artifact_id", "path"], "not": { "required": ["error_code"] } } },
+        { "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] }, "then": { "required": ["error_code"], "not": { "anyOf": [{ "required": ["artifact_id"] }, { "required": ["path"] }] } } }
+      ]
+    },
+    "connectionPcap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["connection_id", "protocol", "request_ids", "pre_proxy", "post_proxy"],
+      "properties": {
+        "connection_id": { "$ref": "#/$defs/connectionId" },
+        "protocol": { "enum": ["tcp", "udp"] },
+        "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "pre_proxy": { "$ref": "#/$defs/pcapResult" },
+        "post_proxy": { "$ref": "#/$defs/pcapResult" }
+      }
+    },
+    "partition": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "matched", "ambiguous", "unmatched"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "matched": { "type": "integer", "minimum": 0 },
+        "ambiguous": { "type": "integer", "minimum": 0 },
+        "unmatched": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coreCoverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "with_post_flow", "shared", "missing_post_flow"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "with_post_flow": { "type": "integer", "minimum": 0 },
+        "shared": { "type": "integer", "minimum": 0 },
+        "missing_post_flow": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "coverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["browser_requests", "transport_connections", "core_logical_flows", "unmatched_reasons"],
+      "properties": {
+        "browser_requests": { "$ref": "#/$defs/partition" },
+        "transport_connections": { "$ref": "#/$defs/partition" },
+        "core_logical_flows": { "$ref": "#/$defs/coreCoverage" },
+        "unmatched_reasons": {
+          "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

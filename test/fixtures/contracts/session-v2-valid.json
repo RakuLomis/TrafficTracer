@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "job_id": "2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+  "state": "completed",
+  "created_at": "2026-08-04T08:00:00Z",
+  "updated_at": "2026-08-04T08:00:24Z",
+  "started_at": "2026-08-04T08:00:01Z",
+  "completed_at": "2026-08-04T08:00:24Z",
+  "session_dir": "/tmp/traffictracer/sessions/20260804-example",
+  "target": { "url": "https://example.com/", "domain": "example.com" },
+  "component_versions": {
+    "traffictracer": { "version": "0.1.0-dev", "commit": "468b7479e658644952743e774cd443131db8c0b1" },
+    "mihomo": { "version": "1.19.14-traffictracer", "commit": "c24743d9259615c8420582714d1daee493ca58e8" },
+    "clash_verge_rev": { "version": "2.5.2-traffictracer", "commit": "9273a9967b82b30e2cfcf5fb8224e3c3d49fc7d3" },
+    "worker_api": 2
+  },
+  "artifacts": [
+    {
+      "artifact_id": "capture-tun-pcap",
+      "name": "TUN raw capture",
+      "phase": "capture",
+      "role": "tun_pcap",
+      "path": "capture/tun.pcap",
+      "media_type": "application/vnd.tcpdump.pcap",
+      "size_bytes": 4096,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "created_at": "2026-08-04T08:00:20Z"
+    },
+    {
+      "artifact_id": "analysis-pcap-index",
+      "name": "PCAP index",
+      "phase": "analysis",
+      "role": "pcap_index",
+      "generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+      "path": "analysis/pcap-index.json",
+      "media_type": "application/json",
+      "size_bytes": 2048,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "created_at": "2026-08-04T08:00:23Z"
+    }
+  ],
+  "warnings": []
+}

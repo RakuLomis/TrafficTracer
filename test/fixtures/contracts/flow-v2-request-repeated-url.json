@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "record_type": "request",
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "analysis_generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+  "request_id": "7856.12",
+  "url": "https://example.com/repeated.js",
+  "resource_type": "Script",
+  "relation": "same_site",
+  "connection_id": "conn-11111111111111111111111111111111",
+  "candidate_connection_ids": ["conn-11111111111111111111111111111111"],
+  "attribution": { "status": "matched", "method": "netlog_socket", "confidence": 1.0 }
+}

@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/flow-v2.schema.json",
+  "title": "TrafficTracer Complete connection-centric records v2",
+  "oneOf": [
+    { "$ref": "#/$defs/requestRecord" },
+    { "$ref": "#/$defs/connectionRecord" }
+  ],
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" },
+    "connectionId": {
+      "type": "string",
+      "description": "Stable ID: conn- plus the first 32 SHA-256 hex characters of canonical protocol, normalized pre-flow, transport source ID and first-observed timestamp; append the next 8 hex characters after a dash only on collision.",
+      "pattern": "^conn-[0-9a-f]{32}(-[0-9a-f]{8})?$"
+    },
+    "ipAddress": { "type": "string", "oneOf": [{ "format": "ipv4" }, { "format": "ipv6" }] },
+    "flowTuple": {
+      "type": "object", "additionalProperties": false,
+      "required": ["network", "src_ip", "src_port", "dst_ip", "dst_port", "complete", "source", "scope", "shared"],
+      "properties": {
+        "network": { "enum": ["tcp", "udp"] },
+        "src_ip": { "$ref": "#/$defs/ipAddress" },
+        "src_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "dst_ip": { "$ref": "#/$defs/ipAddress" },
+        "dst_port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "dst_host": { "type": "string" },
+        "complete": { "type": "boolean" },
+        "source": { "type": "string", "minLength": 1 },
+        "scope": { "enum": ["pre_proxy", "post_proxy"] },
+        "shared": { "type": "boolean" }
+      }
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["connection_id", "score", "evidence"],
+      "properties": {
+        "connection_id": { "$ref": "#/$defs/connectionId" },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "match": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "method", "confidence", "candidates"],
+      "properties": {
+        "status": { "enum": ["matched", "ambiguous", "unmatched"] },
+        "method": { "enum": ["exact_pre_flow", "netlog_socket", "endpoint_time", "host_time", "none"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "candidates": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/candidate" } },
+        "unmatched_reason": { "enum": ["missing_pre_flow", "missing_post_flow", "no_candidate", "multiple_candidates", "insufficient_time", "unsupported_protocol"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "const": "unmatched" } }, "required": ["status"] }, "then": { "required": ["unmatched_reason"] } },
+        { "if": { "properties": { "status": { "const": "ambiguous" } }, "required": ["status"] }, "then": { "properties": { "candidates": { "minItems": 2 } }, "required": ["unmatched_reason"] } },
+        { "if": { "properties": { "status": { "const": "matched" } }, "required": ["status"] }, "then": { "properties": { "candidates": { "minItems": 1 } } } }
+      ]
+    },
+    "requestAttribution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "method", "confidence"],
+      "properties": {
+        "status": { "enum": ["matched", "ambiguous", "unmatched"] },
+        "method": { "enum": ["netlog_socket", "endpoint_time", "host_time", "none"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "unmatched_reason": { "enum": ["no_transport_connection", "multiple_candidates", "insufficient_time", "missing_request_metadata"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "enum": ["ambiguous", "unmatched"] } }, "required": ["status"] }, "then": { "required": ["unmatched_reason"] } }
+      ]
+    },
+    "requestRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "record_type", "session_id", "analysis_generation_id", "request_id", "url", "relation", "connection_id", "candidate_connection_ids", "attribution"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "record_type": { "const": "request" },
+        "session_id": { "$ref": "#/$defs/uuid" },
+        "analysis_generation_id": { "$ref": "#/$defs/uuid" },
+        "request_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "url": { "type": "string", "pattern": "^https?://" },
+        "resource_type": { "type": "string" },
+        "relation": { "enum": ["same_site", "cross_site", "unknown"] },
+        "connection_id": { "oneOf": [{ "$ref": "#/$defs/connectionId" }, { "type": "null" }] },
+        "candidate_connection_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectionId" } },
+        "attribution": { "$ref": "#/$defs/requestAttribution" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "attribution": { "properties": { "status": { "const": "matched" } }, "required": ["status"] } } },
+          "then": { "properties": { "connection_id": { "$ref": "#/$defs/connectionId" }, "candidate_connection_ids": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "attribution": { "properties": { "status": { "const": "ambiguous" } }, "required": ["status"] } } },
+          "then": { "properties": { "connection_id": { "type": "null" }, "candidate_connection_ids": { "minItems": 2 } } }
+        },
+        {
+          "if": { "properties": { "attribution": { "properties": { "status": { "const": "unmatched" } }, "required": ["status"] } } },
+          "then": { "properties": { "connection_id": { "type": "null" } } }
+        }
+      ]
+    },
+    "connectionRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "record_type", "session_id", "analysis_generation_id", "connection_id", "protocol", "pre_flow", "post_flow", "shared", "match", "request_ids"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "record_type": { "const": "connection" },
+        "session_id": { "$ref": "#/$defs/uuid" },
+        "analysis_generation_id": { "$ref": "#/$defs/uuid" },
+        "connection_id": { "$ref": "#/$defs/connectionId" },
+        "protocol": { "enum": ["tcp", "udp"] },
+        "pre_flow": { "$ref": "#/$defs/flowTuple" },
+        "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
+        "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "shared": { "type": "boolean" },
+        "match": { "$ref": "#/$defs/match" },
+        "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_version": 2,
+  "record_type": "connection",
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "analysis_generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+  "connection_id": "conn-11111111111111111111111111111111",
+  "protocol": "tcp",
+  "pre_flow": {
+    "network": "tcp", "src_ip": "10.0.0.2", "src_port": 52844,
+    "dst_ip": "93.184.216.34", "dst_port": 443, "dst_host": "example.com",
+    "complete": true, "source": "netlog", "scope": "pre_proxy", "shared": false
+  },
+  "post_flow": {
+    "network": "tcp", "src_ip": "192.0.2.10", "src_port": 43120,
+    "dst_ip": "203.0.113.8", "dst_port": 443, "dst_host": "proxy.example",
+    "complete": true, "source": "mihomo", "scope": "post_proxy", "shared": true
+  },
+  "outer_connection_id": "01J42S6F1M16S8SAGB1W43FQ04",
+  "shared": true,
+  "match": {
+    "status": "matched", "method": "exact_pre_flow", "confidence": 1.0,
+    "candidates": [{
+      "connection_id": "conn-11111111111111111111111111111111",
+      "score": 1.0, "evidence": ["normalized_pre_flow", "netlog_source_id"]
+    }]
+  },
+  "request_ids": ["7856.12", "7856.13", "7856.14"]
+}

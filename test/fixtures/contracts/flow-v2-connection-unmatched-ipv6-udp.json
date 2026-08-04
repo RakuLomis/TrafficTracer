@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "record_type": "connection",
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "analysis_generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+  "connection_id": "conn-22222222222222222222222222222222",
+  "protocol": "udp",
+  "pre_flow": {
+    "network": "udp", "src_ip": "2001:db8::10", "src_port": 53000,
+    "dst_ip": "2001:db8::53", "dst_port": 443, "dst_host": "video.example",
+    "complete": true, "source": "mihomo", "scope": "pre_proxy", "shared": false
+  },
+  "post_flow": null,
+  "shared": false,
+  "match": {
+    "status": "unmatched", "method": "none", "confidence": 0,
+    "candidates": [], "unmatched_reason": "missing_post_flow"
+  },
+  "request_ids": ["7856.20"]
+}

@@ -20,12 +20,18 @@ _CONTRACT_FILES = {
     "job": "job.schema.json",
     "worker_api": "worker-api.schema.json",
     "session": "session.schema.json",
+    "session_v2": "session-v2.schema.json",
     "flow": "flow.schema.json",
+    "flow_v2": "flow-v2.schema.json",
+    "pcap_index": "pcap-index.schema.json",
     "target_config": "target-config.schema.json",
 }
 _CONTRACT_ALIASES = {
     "worker-api": "worker_api",
     "worker": "worker_api",
+    "session-v2": "session_v2",
+    "flow-v2": "flow_v2",
+    "pcap-index": "pcap_index",
 }
 T = TypeVar("T")
 
@@ -131,6 +137,18 @@ def validate_session(payload: T) -> T:
 
 def validate_flow(payload: T) -> T:
     return validate_contract("flow", payload)
+
+
+def validate_session_v2(payload: T) -> T:
+    return validate_contract("session_v2", payload)
+
+
+def validate_flow_v2(payload: T) -> T:
+    return validate_contract("flow_v2", payload)
+
+
+def validate_pcap_index(payload: T) -> T:
+    return validate_contract("pcap_index", payload)
 
 
 def validate_target_config(payload: T) -> T:

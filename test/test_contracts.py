@@ -13,8 +13,11 @@ from traffictracer.contracts import (
     load_schema,
     validate_contract,
     validate_flow,
+    validate_flow_v2,
+    validate_pcap_index,
     validate_job,
     validate_session,
+    validate_session_v2,
     validate_worker_message,
 )
 
@@ -38,7 +41,13 @@ def _fixture(name: str) -> dict:
         ("worker_api", "worker-error-valid.json"),
         ("worker_api", "worker-notification-valid.json"),
         ("session", "session-valid.json"),
+        ("session_v2", "session-v2-valid.json"),
         ("flow", "flow-valid.json"),
+        ("flow_v2", "flow-v2-connection-shared-http2.json"),
+        ("flow_v2", "flow-v2-connection-unmatched-ipv6-udp.json"),
+        ("flow_v2", "flow-v2-request-repeated-url.json"),
+        ("flow_v2", "flow-v2-request-ambiguous.json"),
+        ("pcap_index", "pcap-index-v1-valid.json"),
         ("flow", "flow-valid-unmatched-ipv6.json"),
     ],
 )
@@ -64,7 +73,10 @@ def test_boundary_helpers_share_the_same_validation_path():
     assert validate_job(_fixture("job-valid.json"))["kind"] == "capture"
     assert validate_worker_message(_fixture("worker-request-valid.json"))["type"] == "request"
     assert validate_session(_fixture("session-valid.json"))["state"] == "completed"
+    assert validate_session_v2(_fixture("session-v2-valid.json"))["schema_version"] == 2
     assert validate_flow(_fixture("flow-valid.json"))["match"]["status"] == "matched"
+    assert validate_flow_v2(_fixture("flow-v2-connection-shared-http2.json"))["record_type"] == "connection"
+    assert validate_pcap_index(_fixture("pcap-index-v1-valid.json"))["split_mode"] == "unique_connections"
 
 
 def test_validation_error_is_stable_structured_and_value_safe():
@@ -109,8 +121,11 @@ def test_validators_are_cached_but_loaded_schemas_are_defensive_copies():
 def test_unknown_contract_has_a_deterministic_error():
     assert available_contracts() == (
         "flow",
+        "flow_v2",
         "job",
+        "pcap_index",
         "session",
+        "session_v2",
         "target_config",
         "worker_api",
     )

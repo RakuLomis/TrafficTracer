@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "session_schema_version": 2,
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "analysis_generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+  "split_mode": "unique_connections",
+  "raw_capture": {
+    "tun_artifact_id": "capture-tun-pcap",
+    "physical_artifact_id": "capture-physical-pcap"
+  },
+  "connections": [
+    {
+      "connection_id": "conn-11111111111111111111111111111111",
+      "protocol": "tcp",
+      "request_ids": ["7856.12", "7856.13", "7856.14"],
+      "pre_proxy": {
+        "status": "success",
+        "artifact_id": "pcap-conn-111-pre",
+        "path": "analysis/pcap/conn-11111111111111111111111111111111/pre.pcap",
+        "display_filter": "tcp.stream eq 7",
+        "packet_count": 18,
+        "byte_count": 12440
+      },
+      "post_proxy": {
+        "status": "success",
+        "artifact_id": "pcap-conn-111-post",
+        "path": "analysis/pcap/conn-11111111111111111111111111111111/post.pcap",
+        "display_filter": "tcp.stream eq 3",
+        "packet_count": 16,
+        "byte_count": 11822
+      }
+    },
+    {
+      "connection_id": "conn-22222222222222222222222222222222",
+      "protocol": "udp",
+      "request_ids": ["7856.20"],
+      "pre_proxy": {
+        "status": "success",
+        "artifact_id": "pcap-conn-222-pre",
+        "path": "analysis/pcap/conn-22222222222222222222222222222222/pre.pcap",
+        "display_filter": "ipv6.src == 2001:db8::10 && udp.srcport == 53000",
+        "packet_count": 7,
+        "byte_count": 5110
+      },
+      "post_proxy": {
+        "status": "empty",
+        "display_filter": "",
+        "packet_count": 0,
+        "byte_count": 0
+      }
+    }
+  ],
+  "coverage": {
+    "browser_requests": { "total": 5, "matched": 3, "ambiguous": 1, "unmatched": 1 },
+    "transport_connections": { "total": 2, "matched": 1, "ambiguous": 0, "unmatched": 1 },
+    "core_logical_flows": { "total": 2, "with_post_flow": 1, "shared": 1, "missing_post_flow": 1 },
+    "unmatched_reasons": { "multiple_candidates": 1, "no_transport_connection": 1, "missing_post_flow": 1 }
+  }
+}

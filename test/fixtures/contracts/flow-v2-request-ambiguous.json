@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "record_type": "request",
+  "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+  "analysis_generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+  "request_id": "7856.30",
+  "url": "https://cdn.example.net/chunk.m4s",
+  "resource_type": "Media",
+  "relation": "cross_site",
+  "connection_id": null,
+  "candidate_connection_ids": ["conn-11111111111111111111111111111111", "conn-33333333333333333333333333333333"],
+  "attribution": { "status": "ambiguous", "method": "host_time", "confidence": 0.45, "unmatched_reason": "multiple_candidates" }
+}
