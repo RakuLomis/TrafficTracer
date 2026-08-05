@@ -10,7 +10,7 @@ from traffictracer.analyze.pcap_splitter import (
     ConnectionPcapResult,
     PcapSideResult,
 )
-from traffictracer.models import AttributedRequest, CorrelatedFlowV2, FlowTuple, VisitCorrelation
+from traffictracer.models import AttributedRequest, CorrelatedFlowV2, FlowTerminal, FlowTuple, VisitCorrelation
 
 
 SESSION_ID = "5027aee9-c6e4-41de-8625-7ea0869a3307"
@@ -59,6 +59,7 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
             {"connection_id": "conn-33333333333333333333333333333333", "native_id": "b", "score": 0.85, "evidence": ["source_and_destination", "time_unavailable"]},
         ],
         netlog_source_id=17,
+        terminal=FlowTerminal("dial_error", "dial", "timeout", 0, 0, 123),
         match_reason="multiple_candidates",
         match_evidence=["top_score_tie"],
     )
@@ -77,6 +78,8 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
 
     assert len(connections) == 1
     assert connections[0]["netlog_source_id"] == 17
+    assert connections[0]["terminal"]["status"] == "dial_error"
+    assert connections[0]["terminal"]["stage"] == "dial"
     assert connections[0]["connection_id"] == CONNECTION_ID
     assert connections[0]["request_ids"] == ["1.1", "1.2"]
     assert connections[0]["match"]["status"] == "ambiguous"

@@ -432,6 +432,7 @@ def _result_v2_to_dict(result: VisitCorrelation) -> dict:
                 "connection_reused": f.connection_reused,
                 "pre_flow": asdict(f.pre_flow) if f.pre_flow else None,
                 "post_flow": asdict(f.post_flow) if f.post_flow else None,
+                "terminal": asdict(f.terminal) if f.terminal else None,
                 "match_status": f.match_status,
                 "match_confidence": f.match_confidence,
                 "conn_id": f.conn_id,

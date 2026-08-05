@@ -116,6 +116,8 @@ def _connection_record(flow: CorrelatedFlowV2, session_id: str, generation_id: s
         "match": match,
         "request_ids": sorted(set(flow.request_ids)),
     }
+    if flow.terminal is not None:
+        record["terminal"] = asdict(flow.terminal)
     if flow.netlog_source_id is not None:
         record["netlog_source_id"] = flow.netlog_source_id
     if flow.conn_id:

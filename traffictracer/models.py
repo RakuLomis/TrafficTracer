@@ -65,6 +65,16 @@ class TransportConnection:
     first_observed: float | None = None
 
 
+@dataclass(frozen=True)
+class FlowTerminal:
+    status: str
+    stage: str = ""
+    error: str = ""
+    bytes_up: int = 0
+    bytes_down: int = 0
+    duration_ms: int = 0
+
+
 @dataclass
 class CorrelatedFlowV2:
     url: str
@@ -89,6 +99,7 @@ class CorrelatedFlowV2:
     match_candidates: list[dict] = field(default_factory=list)
     match_reason: str = ""
     match_evidence: list[str] = field(default_factory=list)
+    terminal: FlowTerminal | None = None
     netlog_source_id: int | None = None
 
 

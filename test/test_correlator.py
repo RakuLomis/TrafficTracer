@@ -185,7 +185,10 @@ def test_correlate_v2_direct_connection():
                 host="www.bilibili.com",
             ),
             proxy_dial=None,
-            close=None,
+            close=TcpClose(
+                "", "c2", 0, 0, 123,
+                status="dial_error", stage="dial", error="timeout",
+            ),
         ),
     }
 
@@ -200,6 +203,10 @@ def test_correlate_v2_direct_connection():
     flow = result.flows[0]
     assert flow.post_proxy_src == ""
     assert flow.post_proxy_dst == "223.111.250.57:443"
+    assert flow.terminal is not None
+    assert flow.terminal.status == "dial_error"
+    assert flow.terminal.stage == "dial"
+    assert flow.terminal.error == "timeout"
 
 
 def test_correlate_v2_no_match():

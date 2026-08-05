@@ -10,12 +10,12 @@ components:
     path: components/mihomo
     repository: https://github.com/RakuLomis/mihomo.git
     branch: TrafficTracer
-    commit: a077b2691b44dfcea483f9fde17152bbd68131a6
+    commit: dcf2215aa223f655c5df3d82b515ab98acc5a4bb
   clash_verge_rev:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
     branch: feat/traffic-tracer
-    commit: 0004d0f288928325ae5111a0622276ae78fb678d
+    commit: fdca54729d49df2dc7e863731b3232393530d6a4
   clash_verge_service:
     repository: https://github.com/clash-verge-rev/clash-verge-service-ipc
     tag: v2.6.1

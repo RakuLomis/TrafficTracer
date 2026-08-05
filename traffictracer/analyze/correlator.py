@@ -7,7 +7,7 @@ from typing import NamedTuple
 from .netlog import FiveTupleData, DomainConnections, _parse_addr
 from .connection_index import rank_connection_candidates, stable_connection_id
 from .mihomo_log import MihomoConnection, UdpConnect, UdpClose, UdpConnection
-from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTuple
+from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTerminal, FlowTuple
 
 
 class CorrelatedFlow(NamedTuple):
@@ -165,6 +165,7 @@ def correlate_v2(
             match_confidence=decision.confidence,
             conn_id=decision.selected_native_id or "",
             netlog_source_id=tc.netlog_source_id,
+            terminal=_terminal_from_close(mconn.close if mconn else None),
             outer_conn_id=(
                 mconn.proxy_dial.outer_conn_id
                 if mconn and mconn.proxy_dial
@@ -273,6 +274,7 @@ def correlate_cdp_direct(
             protocol="QUIC" if rep.connection_reused else "",
             request_ids=rids,
             connection_reused=rep.connection_reused,
+            terminal=_terminal_from_close(mconn.close),
         ))
 
     if udp_conns:
@@ -344,9 +346,23 @@ def _correlate_cdp_udp(
             match_confidence=0.35,
             conn_id=rich.conn_key if rich else uc.conn_key,
             outer_conn_id=rich.proxy_dial.outer_conn_id if rich and rich.proxy_dial else "",
+            terminal=_terminal_from_close(rich.close if rich else None),
         ))
 
     return flows
+
+
+def _terminal_from_close(close) -> FlowTerminal | None:
+    if close is None:
+        return None
+    return FlowTerminal(
+        status=close.status,
+        stage=close.stage,
+        error=close.error,
+        bytes_up=close.bytes_up,
+        bytes_down=close.bytes_down,
+        duration_ms=close.duration_ms,
+    )
 
 
 def _flow_key(network: str, src_ip: str, src_port: int, dst_ip: str, dst_port: int) -> str:
