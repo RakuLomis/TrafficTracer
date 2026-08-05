@@ -110,8 +110,8 @@ make dev
 5. 安装 Clash Verge 服务并开启 TUN。
 6. 打开“流量追踪”，选择“手工输入”并填写单目标，或选择“YAML 配置”加载 `sites.yaml` 后全选/选择子集；再填写 TUN/物理接口、Chrome 绝对路径和输出绝对目录。
 7. 点击“检测环境”，关闭所有阻断项。
-8. 点击“开始捕获”。单目标沿用普通任务；多目标创建持久化批次，并强制每项完成分析后才进入下一项。
-9. 批次卡片展示当前 N/total、阶段、子 Session 和错误；可请求取消，failed/interrupted 状态可从准确目标继续。
+8. 点击“开始捕获”。所选目标组成一个 Capture group，并强制每项完成分析后才进入下一项。
+9. Capture group 卡片展示当前 N/total、阶段、页面 Session 和错误；可请求取消，failed/interrupted 状态可从准确目标继续。
 10. 在“会话”查看状态、警告和产物，或点击“重新分析”。
 11. 在“规范化流”输入代理前五元组，查询全部 Session。
 
@@ -125,10 +125,11 @@ sites:
     url: https://example.com/
     wait: 15
     traffic_type: all
+    page_type: main-page
     wait_load_timeout: 30
 ```
 
-UI 只读取 `sites`，不会应用文件中的 `global.mihomo`、`global.chrome`、`global.network` 或 `global.output`；这些运行环境仍由 Clash Verge 和当前表单管理。`wait` 映射为捕获持续时间，`wait_load_timeout` 映射为页面加载超时，`traffic_type` 为 `tcp`、`udp` 或 `all` 时同时决定捕获协议。其他由字母、数字、点、下划线或连字符组成的安全值会保留为运行标签，同时协议回退为 `all` 并显示警告。
+UI 只应用 `sites` 目标；`global.output.base_dir` 仅作为输出目录建议值预览，必须由用户在 UI 确认。文件中的 `global.mihomo`、`global.chrome` 和 `global.network` 不会覆盖 Clash Verge 运行环境。`wait` 映射为捕获持续时间，`wait_load_timeout` 映射为页面加载超时，`page_type` 决定页面目录标签；`traffic_type` 为 `tcp`、`udp` 或 `all` 时决定捕获协议，其他安全值作为兼容运行标签且协议回退为 `all`。
 
 加载时 Worker 仅返回规范化目标、绝对路径、警告和文件 SHA-256，不返回代理 secret 或其他 `global` 内容。开始捕获前 UI 后端会重新读取文件并比对 SHA-256、目标序号及所有规范化字段；文件若已变化，必须点击刷新并重新选择，避免预览与实际任务不一致。选择一项时走普通捕获 API；选择多项时按 YAML 原始顺序建立固定目标快照，即使 URL/domain 重复也以配置索引区分。批次最大子任务并发为 1，严格执行 capture → Chrome quiescence → analysis → checkpoint；只有上一个受管 Chrome 进程组清理完毕后才会启动下一项，不会按进程名终止用户的其他 Chrome。
 
@@ -141,6 +142,7 @@ UI 只读取 `sites`，不会应用文件中的 `global.mihomo`、`global.chrome
 | `wait` | 1–86400 的整数，默认 10 秒 |
 | `wait_load_timeout` | 1–3600 的整数，默认 30 秒 |
 | `traffic_type` | 默认 `all`；1–64 位字母、数字、点、下划线或连字符，首位必须是字母或数字 |
+| `page_type` | 推荐显式填写；小写字母、数字和连字符，配置内唯一；旧 YAML 会从 `traffic_type` 稳定推导 |
 
 ### P0 工作区与 TUN 约定
 
@@ -153,7 +155,7 @@ TrafficTracer 页面是 Complete 捕获功能的唯一入口；“设置 → Cla
 - 切换失败时会尝试恢复原工作区；
 - 切换不会搬移旧 Session，新旧目录中的历史记录彼此独立。
 
-TUN 的配置名、自动默认名和实际捕获接口是三个不同概念：Linux 的 TUN `device` 留空时由 Mihomo 自动使用 `Meta`；显式填写时使用填写值。环境检测展示配置值、自动默认值和当前实际捕获接口。若系统中只发现一个 TUN 候选会自动选中；发现多个候选时必须人工选择，避免把 `Meta`、`Meta0` 等接口猜错。每次捕获还会把最终使用的 TUN/物理接口写入 Session 的 `logs/capture_context_*.json` 并登记为 artifact，供后续审计和关联分析使用。
+TUN 的配置名、自动默认名和实际捕获接口是三个不同概念：Linux 的 TUN `device` 留空时由 Mihomo 自动使用 `Meta`；显式填写时使用填写值。环境检测展示配置值、自动默认值和当前实际捕获接口。若系统中只发现一个 TUN 候选会自动选中；发现多个候选时必须人工选择，避免把 `Meta`、`Meta0` 等接口猜错。每次捕获还会把最终使用的 TUN/物理接口写入页面 Session 的 `raw/capture-context.json` 并登记为 artifact，供后续审计和关联分析使用。
 
 Linux 可用以下命令辅助选择接口：
 
@@ -190,17 +192,30 @@ ls -l /run/clash-verge-service/service.sock
 
 ## 6. Session、恢复与取消
 
-每次捕获在输出根目录创建独立 Session。manifest 记录状态、组件版本、接口、警告、错误和 artifact，是 UI/Worker 的事实来源。
+一次启动在输出根目录创建一个时间戳 Capture group，每个目标页面是独立 Session。manifest 记录状态、组件版本、接口、警告、错误和 artifact，是 UI/Worker 的事实来源：
+
+```text
+<output-root>/<YYYYMMDD-HHMMSS-mmm>/
+└── <domain>/
+    └── <page_type>__<readable-target-url>/
+        ├── raw/
+        └── analysis/
+            └── pcap/
+                └── <ordinal>__<readable-request-url>/
+                    ├── mapping.json
+                    ├── pre.pcap
+                    └── post.pcap
+```
 
 - “取消任务”会触发协作式取消、终止受管子进程并恢复 Mihomo tracing；
 - 关闭 TrafficTracer 页面不会取消后台任务；
-- 多目标批次不依赖页面持续打开，刷新后会从 Worker manifest 恢复进度；
-- 批次默认 fail-fast；修复故障后可从失败项继续，已完成项不会重跑；
+- Capture group 不依赖页面持续打开，刷新后会从 Worker manifest 恢复进度；
+- Capture group 默认 fail-fast；修复故障后可从失败项继续，已完成项不会重跑；
 - 应用/Worker 异常退出后，下次启动会把未完成 Session 恢复为 `interrupted`；
 - 恢复警告不会阻止读取历史 Session；
 - 分析失败保留原始 trace、CDP、NetLog 和 pcap，可从 UI 重新分析；
 - 任务运行时不要移动或修改 Session 目录。
-- 不要在批次中途修改目标 YAML；继续操作会校验启动时 SHA，拒绝静默使用变化后的文件。
+- 不要在 Capture group 中途修改目标 YAML；继续操作会校验启动时 SHA，拒绝静默使用变化后的文件。
 
 如果 Worker 显示 unavailable 或 API mismatch，安装版应重装同一 Complete 包；开发版运行 `make prepare-dev` 后重启 UI。
 
@@ -214,7 +229,7 @@ ls -l /run/clash-verge-service/service.sock
 - `post_flow.shared=true`：多个逻辑流共享外层连接，不是一对一 NAT；
 - `post_flow=null`：没有观测到完整拨号结果，不会用 `pre_flow` 伪造。
 
-当前 pcap artifact 属于 Session；schema 不承诺每条 Flow 都有独立 pcap。
+启用拆分时，`analysis/pcap` 为每个稳定连接生成一组双侧 PCAP；HTTP/2、QUIC 等复用连接可对应多个请求 URL，完整集合记录在同目录 `mapping.json` 和 connection/request index 中。
 
 ## 8. Linux 打包
 

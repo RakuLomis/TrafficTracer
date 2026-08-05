@@ -214,7 +214,8 @@ class WorkerServices:
 
     def _flow_index_path(self, manifest: SessionManifest) -> Path:
         session = Path(manifest.session_dir)
-        generation_root = session / "results" / "generations"
+        result_root = session / ("analysis" if (session / "raw").is_dir() else "results")
+        generation_root = result_root / "generations"
         generated = (
             sorted(
                 generation_root.glob("*/flow-index.json"),
@@ -232,10 +233,15 @@ class WorkerServices:
             for artifact in manifest.artifacts
             if getattr(artifact, "role", "") == "flow_index"
         ]
-        return self.store.artifact_path(
-            manifest.session_id,
-            indexed[-1] if indexed else "results/flow-index.json",
-        )
+        if indexed:
+            relative = indexed[-1]
+        else:
+            preferred = result_root / "flow-index.json"
+            legacy = session / "results" / "flow-index.json"
+            relative = str(
+                (legacy if legacy.is_file() else preferred).relative_to(session)
+            )
+        return self.store.artifact_path(manifest.session_id, relative)
 
     def shutdown(self, params: dict[str, Any]) -> dict[str, Any]:
         if params:
@@ -356,6 +362,8 @@ class WorkerServices:
                 component_version,
                 component_version,
             ),
+            page_type=spec.page_type,
+            capture_group=spec.capture_group,
         )
         manifest = manifest.transition(JobState.PREPARING)
         manifest = manifest.transition(JobState.CAPTURING)

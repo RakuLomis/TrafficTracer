@@ -115,7 +115,7 @@
     },
     "connectionRecord": {
       "type": "object", "additionalProperties": false,
-      "required": ["schema_version", "record_type", "session_id", "analysis_generation_id", "connection_id", "protocol", "pre_flow", "post_flow", "shared", "match", "request_ids"],
+      "required": ["schema_version", "record_type", "session_id", "analysis_generation_id", "connection_id", "protocol", "pre_flow", "post_flow", "shared", "match", "request_ids", "primary_url", "urls"],
       "properties": {
         "schema_version": { "const": 2 },
         "record_type": { "const": "connection" },
@@ -131,7 +131,9 @@
         "mihomo_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "shared": { "type": "boolean" },
         "match": { "$ref": "#/$defs/match" },
-        "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }
+        "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "primary_url": { "type": ["string", "null"], "pattern": "^https?://" },
+        "urls": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^https?://" } }
       }
     }
   }

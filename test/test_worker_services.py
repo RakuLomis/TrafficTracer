@@ -62,6 +62,7 @@ sites:
         "network": "all",
         "run_label": "browser",
         "wait_load_timeout": 45,
+        "page_type": "browser",
     }]
     assert preview["warnings"]
     assert "must-not-leak" not in str(preview)
@@ -134,9 +135,9 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
     assert manifest["state"] == "completed"
     assert [item["path"] for item in manifest["artifacts"]] == [
         "logs/capture.json",
-        "results/correlation.json",
-        "results/flow-index.json",
-        "results/summary.json",
+        "analysis/correlation.json",
+        "analysis/flow-index.json",
+        "analysis/summary.json",
     ]
     assert any(item["method"] == "job.completed" for item in notifications)
 

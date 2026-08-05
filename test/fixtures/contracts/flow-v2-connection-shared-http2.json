@@ -25,5 +25,7 @@
     }],
     "evidence": ["normalized_pre_flow", "netlog_source_id"]
   },
-  "request_ids": ["7856.12", "7856.13", "7856.14"]
+  "request_ids": ["7856.12", "7856.13", "7856.14"],
+  "primary_url": "https://example.com/",
+  "urls": ["https://example.com/", "https://example.com/video"]
 }

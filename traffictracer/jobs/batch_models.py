@@ -61,6 +61,7 @@ class BatchTarget:
     network: str
     run_label: str
     wait_load_timeout: int
+    page_type: str = "capture"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,11 +72,21 @@ class BatchTarget:
             "network": self.network,
             "run_label": self.run_label,
             "wait_load_timeout": self.wait_load_timeout,
+            "page_type": self.page_type,
         }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "BatchTarget":
-        return cls(**{name: payload[name] for name in cls.__dataclass_fields__})
+        return cls(
+            index=payload["index"],
+            url=payload["url"],
+            domain=payload["domain"],
+            duration_seconds=payload["duration_seconds"],
+            network=payload["network"],
+            run_label=payload["run_label"],
+            wait_load_timeout=payload["wait_load_timeout"],
+            page_type=payload.get("page_type", payload["run_label"].lower().replace("_", "-")),
+        )
 
 
 @dataclass(frozen=True)
@@ -95,7 +106,7 @@ class BatchJobSpec:
 
     def __post_init__(self) -> None:
         if not self.targets:
-            raise ValueError("batch targets must not be empty")
+            raise ValueError("capture group targets must not be empty")
         indices = [target.index for target in self.targets]
         if len(indices) != len(set(indices)):
             raise ValueError("batch target indexes must be unique")
@@ -107,13 +118,14 @@ class BatchJobSpec:
                 target.network,
                 target.run_label,
                 target.wait_load_timeout,
+                target.page_type,
             )
             for target in self.targets
         ]
         if len(identities) != len(set(identities)):
-            raise ValueError("batch targets must not contain duplicates")
+            raise ValueError("capture group targets must not contain duplicates")
         if not self.options.analyze_after_capture:
-            raise ValueError("serial batch requires analyze_after_capture")
+            raise ValueError("capture group requires analyze_after_capture")
 
     @classmethod
     def from_preview(

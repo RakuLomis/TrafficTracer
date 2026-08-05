@@ -9,6 +9,9 @@ import subprocess
 from uuid import uuid4
 from typing import Any
 
+from traffictracer.layout import safe_url_slug
+from traffictracer.session.atomic import write_json_atomic
+
 from ..models import FlowTuple, VisitCorrelation
 from ..utils import logger, ensure_dir
 from .correlator import CorrelationResult
@@ -155,8 +158,11 @@ def split_flows_v2(
         if flow.stable_connection_id:
             unique.setdefault(flow.stable_connection_id, []).append(flow)
 
+    request_urls = {request.request_id: request.url for request in result.requests}
     outputs: list[ConnectionPcapResult] = []
-    for connection_id, connection_flows in sorted(unique.items()):
+    for ordinal, (connection_id, connection_flows) in enumerate(
+        sorted(unique.items()), start=1
+    ):
         flow = max(
             connection_flows,
             key=lambda item: (
@@ -179,7 +185,27 @@ def split_flows_v2(
             pre = PcapSideResult("not_requested", pre_filter)
             post = PcapSideResult("not_requested", post_filter)
         else:
-            connection_dir = Path(output_base) / connection_id
+            request_ids = sorted({
+                request_id
+                for connection_flow in connection_flows
+                for request_id in connection_flow.request_ids
+            })
+            urls = sorted({
+                request_urls[item]
+                for item in request_ids
+                if item in request_urls
+            })
+            primary_url = urls[0] if urls else (result.visit_url or f"https://{result.domain}/")
+            connection_dir = Path(output_base) / (
+                f"{ordinal:04d}__{safe_url_slug(primary_url)}"
+            )
+            connection_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            write_json_atomic(connection_dir / "mapping.json", {
+                "connection_id": connection_id,
+                "primary_url": primary_url,
+                "urls": urls,
+                "request_ids": request_ids,
+            })
             pre = _extract_side(
                 tun_pcap, pre_filter, connection_dir / "pre.pcap",
                 f"pcap-{connection_id[5:]}-pre",

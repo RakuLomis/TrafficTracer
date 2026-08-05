@@ -267,6 +267,22 @@ class CaptureJob:
             raise errors[0]
 
     def _prepare_paths(self) -> dict[str, Path]:
+        raw_dir = self.session.directory / "raw"
+        if raw_dir.is_dir():
+            return {
+                "mihomo_trace": raw_dir / "mihomo-trace.jsonl",
+                "proxy_info": raw_dir / "proxy-info.json",
+                "capture_context": raw_dir / "capture-context.json",
+                "netlog": raw_dir / "netlog.json",
+                "cdp": raw_dir / "cdp.json",
+                "tun_pcap": raw_dir / "tun.pcap",
+                "phys_pcap": raw_dir / "phys.pcap",
+                "profile": Path(self.runtime.user_data_dir)
+                / self.spec.domain
+                / self.spec.page_type,
+            }
+
+        # Compatibility for Sessions written before the Capture Group layout.
         domain_dir = self.session.directory / "captures" / self.spec.domain
         logs_dir = self.session.directory / "logs"
         domain_dir.mkdir(parents=True, exist_ok=True)

@@ -31,7 +31,8 @@
       "duration_seconds": 10,
       "network": "all",
       "run_label": "video",
-      "wait_load_timeout": 30
+      "wait_load_timeout": 30,
+      "page_type": "video"
     },
     {
       "index": 3,
@@ -40,7 +41,8 @@
       "duration_seconds": 12,
       "network": "tcp",
       "run_label": "page",
-      "wait_load_timeout": 45
+      "wait_load_timeout": 45,
+      "page_type": "page"
     }
   ],
   "current_index": 0,

@@ -224,7 +224,13 @@ def core_flow_records(
 
 def _load_mappings(session: Path) -> list[FlowMapping]:
     mappings: list[FlowMapping] = []
-    for trace_path in sorted((session / "logs").glob("mihomo_trace_*.jsonl")):
+    raw_trace = session / "raw" / "mihomo-trace.jsonl"
+    trace_paths = (
+        [raw_trace]
+        if raw_trace.is_file()
+        else sorted((session / "logs").glob("mihomo_trace_*.jsonl"))
+    )
+    for trace_path in trace_paths:
         mappings.extend(FlowIndex.from_log(str(trace_path)).mappings)
     return [
         mapping

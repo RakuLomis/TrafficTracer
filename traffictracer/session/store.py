@@ -10,6 +10,9 @@ import shutil
 from typing import Callable
 from uuid import UUID, uuid4
 
+from traffictracer.layout import CapturePageLayout, group_directory_name
+
+
 from .atomic import write_json_atomic
 from .manifest import ComponentVersions, SessionManifest, SessionTarget
 
@@ -72,14 +75,36 @@ class SessionStore:
         target: SessionTarget,
         component_versions: ComponentVersions,
         now: datetime | None = None,
+        page_type: str | None = None,
+        capture_group: str = "",
     ) -> SessionManifest:
         timestamp = _utc(now)
         session_id = str(self._id_factory())
         _validate_session_id(session_id)
-        directory_name = f"{timestamp.strftime('%Y%m%dT%H%M%S.%fZ')}_{session_id}"
-        session_dir = self._root / directory_name
+        if page_type is None:
+            directory_name = f"{timestamp.strftime('%Y%m%dT%H%M%S.%fZ')}_{session_id}"
+            session_dir = self._root / directory_name
+        else:
+            layout = CapturePageLayout(
+                self._root / (capture_group or group_directory_name(timestamp)),
+                target.domain,
+                page_type,
+                target.url,
+            )
+            session_dir = layout.page_root
+            retry = 2
+            while session_dir.exists():
+                session_dir = layout.page_root.with_name(
+                    f"{layout.page_root.name}__retry{retry}"
+                )
+                retry += 1
         try:
-            session_dir.mkdir(mode=0o700)
+            if page_type is None and session_dir.exists():
+                raise FileExistsError(session_dir)
+            session_dir.mkdir(parents=page_type is not None, mode=0o700)
+            if page_type is not None:
+                (session_dir / "raw").mkdir(mode=0o700)
+                (session_dir / "analysis").mkdir(mode=0o700)
         except FileExistsError as exc:
             raise SessionStoreError(f"Session directory already exists: {session_dir}") from exc
         try:
@@ -106,26 +131,40 @@ class SessionStore:
         session_dir = self._managed_directory(Path(manifest.session_dir))
         if not session_dir.is_dir():
             raise SessionNotFoundError(f"Session directory does not exist: {session_dir}")
-        if not session_dir.name.endswith(f"_{manifest.session_id}"):
+        if session_dir.parent == self._root and not session_dir.name.endswith(f"_{manifest.session_id}"):
             raise UnsafeSessionPathError("Session directory name does not match session_id")
         write_json_atomic(session_dir / MANIFEST_NAME, manifest.to_dict())
 
     def get(self, session_id: str) -> SessionManifest:
         canonical = _validate_session_id(session_id)
-        matches = tuple(self._root.glob(f"*_{canonical}"))
+        matches: list[SessionManifest] = []
+        matching_corrupt: list[Exception] = []
+        for manifest_path in self._root.rglob(MANIFEST_NAME):
+            try:
+                manifest = self._load_managed_manifest(manifest_path.parent)
+            except (OSError, ValueError, json.JSONDecodeError, SessionStoreError) as exc:
+                try:
+                    raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    raw = {}
+                if raw.get("session_id") == canonical:
+                    matching_corrupt.append(exc)
+                continue
+            if manifest.session_id == canonical:
+                matches.append(manifest)
         if not matches:
+            if matching_corrupt:
+                raise CorruptSessionError(str(matching_corrupt[0]))
             raise SessionNotFoundError(f"Session not found: {canonical}")
         if len(matches) != 1:
             raise CorruptSessionError(f"multiple Session directories found for {canonical}")
-        return self._load_managed_manifest(matches[0])
+        return matches[0]
 
     def scan(self) -> SessionScanResult:
         sessions: list[SessionManifest] = []
         corrupt: list[CorruptSession] = []
-        for child in self._root.iterdir():
-            manifest_path = child / MANIFEST_NAME
-            if not manifest_path.is_file():
-                continue
+        for manifest_path in self._root.rglob(MANIFEST_NAME):
+            child = manifest_path.parent
             try:
                 sessions.append(self._load_managed_manifest(child))
             except (OSError, ValueError, json.JSONDecodeError, SessionStoreError) as exc:
@@ -241,7 +280,7 @@ class SessionStore:
     def delete(self, session_id: str) -> None:
         manifest = self.get(session_id)
         session_dir = self._managed_directory(Path(manifest.session_dir))
-        if session_dir.parent != self._root or session_dir == self._root:
+        if session_dir == self._root or not session_dir.is_relative_to(self._root):
             raise UnsafeSessionPathError("refusing to delete outside output_root")
         shutil.rmtree(session_dir)
 
@@ -258,7 +297,7 @@ class SessionStore:
             raise CorruptSessionError(str(exc)) from exc
         if declared != managed:
             raise CorruptSessionError("manifest session_dir does not match its containing directory")
-        if not managed.name.endswith(f"_{manifest.session_id}"):
+        if managed.parent == self._root and not managed.name.endswith(f"_{manifest.session_id}"):
             raise CorruptSessionError("manifest session_id does not match its directory name")
         return manifest
 
@@ -266,7 +305,7 @@ class SessionStore:
         if not path.is_absolute():
             raise UnsafeSessionPathError("Session directory must be absolute")
         resolved = path.resolve(strict=False)
-        if resolved == self._root or resolved.parent != self._root:
+        if resolved == self._root or not resolved.is_relative_to(self._root):
             raise UnsafeSessionPathError("Session directory is outside output_root")
         return resolved
 

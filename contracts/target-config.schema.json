@@ -4,7 +4,7 @@
   "title": "TrafficTracer normalized target configuration preview",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "config_path", "sha256", "targets", "warnings"],
+  "required": ["schema_version", "config_path", "sha256", "targets", "warnings", "suggested_output_root"],
   "properties": {
     "schema_version": { "const": 1 },
     "config_path": { "type": "string", "minLength": 1, "pattern": "^/" },
@@ -17,6 +17,10 @@
     "warnings": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
+    },
+    "suggested_output_root": {
+      "type": ["string", "null"],
+      "pattern": "^/"
     }
   },
   "$defs": {
@@ -30,7 +34,8 @@
         "duration_seconds",
         "network",
         "run_label",
-        "wait_load_timeout"
+        "wait_load_timeout",
+        "page_type"
       ],
       "properties": {
         "index": { "type": "integer", "minimum": 0 },
@@ -47,7 +52,11 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
         },
-        "wait_load_timeout": { "type": "integer", "minimum": 1, "maximum": 3600 }
+        "wait_load_timeout": { "type": "integer", "minimum": 1, "maximum": 3600 },
+        "page_type": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        }
       }
     }
   }

@@ -38,7 +38,10 @@ class AnalysisJob:
         self._analysis_generation_id: str | None = str(
             uuid5(NAMESPACE_URL, f"{session_uri}#analysis-v2")
         )
-        self._results_dir = Path(spec.session_dir) / "results"
+        session = Path(spec.session_dir)
+        self._results_dir = (
+            session / "analysis" if (session / "raw").is_dir() else session / "results"
+        )
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:

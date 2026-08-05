@@ -44,6 +44,15 @@ def persist_connection_artifacts(
         if flow.stable_connection_id
     ])
     requests = _request_records(results, session_id, generation_id)
+    urls_by_connection: dict[str, set[str]] = {}
+    for request in requests:
+        connection_id = request.get("connection_id")
+        if connection_id:
+            urls_by_connection.setdefault(connection_id, set()).add(request["url"])
+    for connection in connections:
+        urls = sorted(urls_by_connection.get(connection["connection_id"], set()))
+        connection["urls"] = urls
+        connection["primary_url"] = urls[0] if urls else None
     for record in [*connections, *requests]:
         validate_flow_v2(record)
     connections.sort(key=lambda item: item["connection_id"])

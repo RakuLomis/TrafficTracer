@@ -8,6 +8,8 @@
   "network": "all",
   "wait_load_timeout": 30,
   "run_label": "all",
+  "page_type": "capture",
+  "capture_group": "",
   "target_source": {
     "mode": "manual"
   },

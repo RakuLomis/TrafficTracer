@@ -72,6 +72,8 @@ def test_load_target_config_normalizes_legacy_sites(tmp_path):
 global:
   mihomo:
     secret: must-not-leak
+  output:
+    base_dir: ./sessions
 sites:
   - domain: Example.COM.
     url: https://www.example.com/
@@ -97,6 +99,10 @@ sites:
     assert payload["targets"][1]["wait_load_timeout"] == 45
     assert "must-not-leak" not in str(payload)
     assert len(payload["warnings"]) == 1
+    assert [target["page_type"] for target in payload["targets"]] == [
+        "tcp", "video-play"
+    ]
+    assert payload["suggested_output_root"] == str((tmp_path / "sessions").resolve())
 
 
 def test_load_target_config_rejects_unsafe_label(tmp_path):

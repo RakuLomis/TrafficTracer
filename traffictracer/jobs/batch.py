@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Callable, Protocol
 from uuid import UUID, uuid5
 
+from traffictracer.layout import group_directory_name
+
+
 from .batch_models import (
     BATCH_MANIFEST_NAME,
     BatchChildState,
@@ -80,7 +83,12 @@ class SerialBatchJob:
                 manifest = manifest.start_child(position)
                 self._save(manifest)
                 target = manifest.targets[position]
-                child_spec = self._child_spec(target, position, manifest.resume.attempt)
+                child_spec = self._child_spec(
+                    target,
+                    position,
+                    manifest.resume.attempt,
+                    group_directory_name(manifest.created_at),
+                )
                 child_progress = _ChildProgress(
                     self.progress,
                     position,
@@ -182,6 +190,7 @@ class SerialBatchJob:
         target: BatchTarget,
         position: int,
         attempt: int,
+        capture_group: str,
     ) -> CaptureJobSpec:
         child_id = str(
             uuid5(UUID(self.spec.job_id), f"target:{position}:attempt:{attempt}")
@@ -199,6 +208,8 @@ class SerialBatchJob:
             options=self.spec.options,
             wait_load_timeout=target.wait_load_timeout,
             run_label=target.run_label,
+            page_type=target.page_type,
+            capture_group=capture_group,
             target_source=TargetSource(
                 mode="config",
                 config_path=self.spec.config_path,

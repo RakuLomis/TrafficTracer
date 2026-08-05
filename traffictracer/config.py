@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import yaml
 
 from traffictracer.contracts import validate_target_config
+from traffictracer.layout import normalize_page_types
 
 
 TARGET_CONFIG_SCHEMA_VERSION = 1
@@ -74,6 +75,7 @@ class SiteConfig:
     wait: int = 10
     traffic_type: str = "all"
     wait_load_timeout: int = 30
+    page_type: str | None = None
 
 
 @dataclass
@@ -91,6 +93,7 @@ class TargetConfigEntry:
     network: str
     run_label: str
     wait_load_timeout: int
+    page_type: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -101,6 +104,7 @@ class TargetConfigEntry:
             "network": self.network,
             "run_label": self.run_label,
             "wait_load_timeout": self.wait_load_timeout,
+            "page_type": self.page_type,
         }
 
 
@@ -110,6 +114,7 @@ class TargetConfigPreview:
     sha256: str
     targets: tuple[TargetConfigEntry, ...]
     warnings: tuple[str, ...] = ()
+    suggested_output_root: str | None = None
     schema_version: int = TARGET_CONFIG_SCHEMA_VERSION
 
     def to_dict(self) -> dict[str, object]:
@@ -119,6 +124,7 @@ class TargetConfigPreview:
             "sha256": self.sha256,
             "targets": [target.to_dict() for target in self.targets],
             "warnings": list(self.warnings),
+            "suggested_output_root": self.suggested_output_root,
         }
         validate_target_config(payload)
         return payload
@@ -182,6 +188,7 @@ def load_config(path: str) -> Config:
             wait=s.get("wait", 10),
             traffic_type=s.get("traffic_type", "all"),
             wait_load_timeout=s.get("wait_load_timeout", 30),
+            page_type=s.get("page_type"),
         ))
 
     if not sites:
@@ -222,6 +229,7 @@ def load_target_config(path: str | Path) -> TargetConfigPreview:
 
     targets: list[TargetConfigEntry] = []
     warnings: list[str] = []
+    normalized_sites: list[tuple[dict, str]] = []
     for index, site in enumerate(sites):
         field = f"sites[{index}]"
         if not isinstance(site, dict):
@@ -251,6 +259,10 @@ def load_target_config(path: str | Path) -> TargetConfigPreview:
             warnings.append(
                 f"{field}.traffic_type={traffic_type!r} is a run label; network defaults to 'all'."
             )
+        page_type = site.get("page_type")
+        if page_type is not None and not isinstance(page_type, str):
+            raise ConfigValidationError(f"{field}.page_type", "must be a string")
+        normalized_sites.append((site, traffic_type))
         targets.append(
             TargetConfigEntry(
                 index=index,
@@ -260,14 +272,39 @@ def load_target_config(path: str | Path) -> TargetConfigPreview:
                 network=network,
                 run_label=traffic_type,
                 wait_load_timeout=load_timeout,
+                page_type="",
             )
         )
+
+    try:
+        page_types = normalize_page_types(
+            [(site.get("page_type"), run_label) for site, run_label in normalized_sites]
+        )
+    except ValueError as exc:
+        raise ConfigValidationError("sites[].page_type", str(exc)) from exc
+    targets = [
+        TargetConfigEntry(**{**target.__dict__, "page_type": page_types[index]})
+        for index, target in enumerate(targets)
+    ]
+
+    suggested_output_root: str | None = None
+    global_section = raw.get("global")
+    if isinstance(global_section, dict):
+        output_section = global_section.get("output")
+        if isinstance(output_section, dict):
+            configured_root = output_section.get("base_dir")
+            if isinstance(configured_root, str) and configured_root.strip():
+                candidate = Path(configured_root).expanduser()
+                if not candidate.is_absolute():
+                    candidate = resolved.parent / candidate
+                suggested_output_root = str(candidate.resolve(strict=False))
 
     preview = TargetConfigPreview(
         config_path=str(resolved),
         sha256=hashlib.sha256(content).hexdigest(),
         targets=tuple(targets),
         warnings=tuple(warnings),
+        suggested_output_root=suggested_output_root,
     )
     preview.to_dict()
     return preview

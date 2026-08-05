@@ -120,6 +120,8 @@ class CaptureJobSpec:
     wait_load_timeout: int = 30
     run_label: str = "all"
     target_source: TargetSource = field(default_factory=TargetSource)
+    page_type: str = "capture"
+    capture_group: str = ""
 
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="capture", init=False)
@@ -141,6 +143,8 @@ class CaptureJobSpec:
             "wait_load_timeout": self.wait_load_timeout,
             "run_label": self.run_label,
             "target_source": self.target_source.to_dict(),
+            "page_type": self.page_type,
+            "capture_group": self.capture_group,
         }
         if validate:
             validate_job(payload)
@@ -182,6 +186,8 @@ class CaptureJobSpec:
             wait_load_timeout=data.get("wait_load_timeout", 30),
             run_label=data.get("run_label", data["network"]),
             target_source=TargetSource.from_dict(data.get("target_source")),
+            page_type=data.get("page_type", data.get("run_label", "capture")).lower().replace("_", "-"),
+            capture_group=data.get("capture_group", ""),
         )
 
 

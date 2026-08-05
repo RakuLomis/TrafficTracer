@@ -16,5 +16,7 @@
     "status": "unmatched", "method": "none", "confidence": 0,
     "candidates": [], "evidence": ["post_flow_missing"], "unmatched_reason": "missing_post_flow"
   },
-  "request_ids": ["7856.20"]
+  "request_ids": ["7856.20"],
+  "primary_url": "https://video.example/watch/1",
+  "urls": ["https://video.example/watch/1"]
 }

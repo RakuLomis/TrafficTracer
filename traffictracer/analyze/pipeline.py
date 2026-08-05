@@ -75,8 +75,6 @@ def run_analysis(
     if not session.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
 
-    logs_dir = session / "logs"
-    captures_dir = session / "captures"
     results_path = _safe_results_path(session, output_dir)
     results_dir = ensure_dir(str(results_path))
 
@@ -85,20 +83,8 @@ def run_analysis(
     pcap_results: list[ConnectionPcapResult] = []
     split_mode = _normalize_split_mode(split_pcaps, pcap_split_mode)
 
-    for domain_dir in sorted(captures_dir.iterdir()):
-        if not domain_dir.is_dir():
-            continue
-
-        domain = domain_dir.name
-
-        for run_dir in sorted(domain_dir.glob("*")):
-            if not run_dir.is_dir():
-                continue
-            run_tag = run_dir.name
-
-            netlog_path = logs_dir / f"netlog_{domain}_{run_tag}.json"
-            cdp_path = logs_dir / f"cdp_{domain}_{run_tag}.json"
-            trace_path = logs_dir / f"mihomo_trace_{domain}_{run_tag}.jsonl"
+    for domain, runs in _analysis_runs(session):
+        for run_tag, run_dir, netlog_path, cdp_path, trace_path in runs:
 
             tag = f"{domain}_{run_tag}"
 
@@ -192,6 +178,49 @@ def run_analysis(
     logger.info("Correlation results written to %s", corr_path)
     return corr_path
 
+
+def _analysis_runs(session: Path):
+    """Discover normalized raw inputs while retaining legacy Session support."""
+
+    raw = session / "raw"
+    if raw.is_dir():
+        domain = session.parent.name
+        manifest_path = session / "manifest.json"
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            target = payload.get("target", {})
+            if isinstance(target, dict) and isinstance(target.get("domain"), str):
+                domain = target["domain"]
+        except (OSError, json.JSONDecodeError):
+            pass
+        run_tag = session.name.split("__", 1)[0]
+        return [
+            (
+                domain,
+                [
+                    (
+                        run_tag,
+                        raw,
+                        raw / "netlog.json",
+                        raw / "cdp.json",
+                        raw / "mihomo-trace.jsonl",
+                    )
+                ],
+            )
+        ]
+
+    logs = session / "logs"
+    captures = session / "captures"
+    output = []
+    for domain_dir in sorted(captures.iterdir()):
+        if not domain_dir.is_dir():
+            continue
+        runs = []
+        for run_dir in sorted(path for path in domain_dir.iterdir() if path.is_dir()):
+            tag = run_dir.name
+            runs.append((tag, run_dir, logs / f"netlog_{domain_dir.name}_{tag}.json", logs / f"cdp_{domain_dir.name}_{tag}.json", logs / f"mihomo_trace_{domain_dir.name}_{tag}.jsonl"))
+        output.append((domain_dir.name, runs))
+    return output
 
 def _safe_results_path(
     session: Path,

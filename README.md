@@ -29,6 +29,47 @@ make bootstrap
 
 安装版用户在 UI 中依次导入代理 YAML、选择 `verge-mihomo-tt`、测速选节点、安装服务并开启 TUN，然后在“流量追踪”页选择手工目标，或加载预先编写的 `sites.yaml` 并全选/选择子集。多目标严格按 YAML 顺序串行执行捕获、Chrome 清理、分析和 checkpoint；失败或 Worker 中断后可从准确目标继续。每个子目标生成独立 Session，并可用代理前五元组查询全部匹配逻辑流及实际观测到的代理后五元组，无需运行 Python 命令。
 
+Complete 的推荐目标配置显式填写 `page_type`：
+
+```yaml
+global:
+  output:
+    base_dir: ./traffictracer-sessions  # UI 预览建议值；最终目录仍由 UI 确认
+sites:
+  - domain: bilibili.com
+    url: https://www.bilibili.com/
+    page_type: main-page
+    traffic_type: all
+    wait: 15
+  - domain: bilibili.com
+    url: https://www.bilibili.com/video/BV1xx
+    page_type: video-play1
+    traffic_type: all
+    wait: 30
+```
+
+`page_type` 只能使用小写字母、数字和连字符，并且在同一 YAML 中必须唯一。旧配置没有该字段时仍会规范化：`video-mainpage` 变为 `main-page`，重复的 `video-play` 按顺序变为 `video-play1`、`video-play2`。`traffic_type` 继续只负责兼容的网络/运行标签语义。
+
+一次 UI 启动对应一个 Capture group，用户可见目录固定为：
+
+```text
+<session-root>/<YYYYMMDD-HHMMSS-mmm>/
+└── bilibili.com/
+    ├── main-page__https_www.bilibili.com/
+    │   ├── raw/       # NetLog、CDP、Mihomo trace、双侧原始 PCAP
+    │   └── analysis/  # correlation、request/connection/pcap index
+    └── video-play1__https_www.bilibili.com_video_BV1xx/
+        ├── raw/
+        └── analysis/
+            └── pcap/
+                └── 0001__https_cdn.example_video.m4s/
+                    ├── mapping.json  # connection_id、primary_url、全部 URLs/request_ids
+                    ├── pre.pcap
+                    └── post.pcap
+```
+
+连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。历史损坏 Session 会在列表中单独报告，不会阻塞新的 Capture group；恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
+
 开发入口：
 
 ```bash
@@ -204,9 +245,10 @@ Important settings:
 #### Target YAML normalization
 
 Each item under `sites` is normalized to a fixed target containing `url`,
-`domain`, `duration_seconds`, `wait_load_timeout`, `network`, `run_label`, and
-its original list index. The current YAML format keeps the legacy
-`traffic_type` field and interprets it as follows:
+`domain`, `duration_seconds`, `wait_load_timeout`, `network`, `run_label`,
+`page_type`, and its original list index. Complete prefers an explicit
+`page_type`; legacy files derive it deterministically from `traffic_type`. The
+current YAML format keeps the legacy `traffic_type` field and interprets it as follows:
 
 | YAML value | Normalized `network` | Normalized `run_label` | Result |
 |---|---|---|---|

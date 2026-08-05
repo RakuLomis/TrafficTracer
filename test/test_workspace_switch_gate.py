@@ -61,12 +61,16 @@ def _capture_analyze_list_and_read(
     sessions = services.session_list({})["sessions"]
     assert len(sessions) == 1
     manifest = sessions[0]
-    assert Path(manifest["session_dir"]).parent == root.resolve()
+    relative_session = Path(manifest["session_dir"]).relative_to(root.resolve())
+    assert len(relative_session.parts) == 3
+    assert relative_session.parts[1] == "example.test"
+    assert relative_session.parts[2].startswith("capture__https_")
+    assert (Path(manifest["session_dir"]) / "raw").is_dir()
     assert manifest["target"]["url"] == url
 
     summary = next(
         artifact for artifact in manifest["artifacts"]
-        if artifact["path"] == "results/summary.json"
+        if artifact["path"] == "analysis/summary.json"
     )
     opened = services.store.artifact_path(
         manifest["session_id"], summary["path"]

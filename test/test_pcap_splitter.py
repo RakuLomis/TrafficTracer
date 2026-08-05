@@ -1,6 +1,7 @@
 """Tests for pcap splitter filter generation."""
 
 import sys
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -138,9 +139,13 @@ def test_unique_connections_split_once_for_many_requests(tmp_path, monkeypatch):
     assert set(outputs[0].request_ids) == {
         f"request-{index}" for index in range(8)
     }
-    assert {path.name for path in tmp_path.iterdir()} == {first}
-    assert all((tmp_path / item.connection_id / "pre.pcap").is_file() for item in outputs)
-    assert all((tmp_path / item.connection_id / "post.pcap").is_file() for item in outputs)
+    flow_dir = tmp_path / "0001__https_example.com"
+    assert {path.name for path in tmp_path.iterdir()} == {flow_dir.name}
+    assert (flow_dir / "pre.pcap").is_file()
+    assert (flow_dir / "post.pcap").is_file()
+    mapping = json.loads((flow_dir / "mapping.json").read_text(encoding="utf-8"))
+    assert mapping["connection_id"] == first
+    assert mapping["primary_url"] == "https://example.com/"
 
 
 def test_repeated_and_long_urls_do_not_create_url_directories(tmp_path, monkeypatch):
@@ -157,7 +162,9 @@ def test_repeated_and_long_urls_do_not_create_url_directories(tmp_path, monkeypa
     outputs = split_flows_v2(
         _result(flows), "tun.pcap", "phys.pcap", str(tmp_path)
     )
-    assert [path.name for path in tmp_path.iterdir()] == [connection_id]
+    names = [path.name for path in tmp_path.iterdir()]
+    assert names == ["0001__https_example.com"]
+    assert len(names[0].encode()) <= 255
     assert outputs[0].request_ids == ("one", "two")
 
 
