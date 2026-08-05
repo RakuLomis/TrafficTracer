@@ -80,6 +80,12 @@ def test_parse_skips_requests_without_url():
         "requests": [
             {"request_id": "1.1", "target_id": "T1", "frame_id": "",
              "url": "", "resource_type": "Other", "timestamp": 0},
+            {"request_id": "1.3", "target_id": "T1", "frame_id": "",
+             "url": "data:image/png;base64,AAAA", "resource_type": "Image",
+             "timestamp": 1.1},
+            {"request_id": "1.4", "target_id": "T1", "frame_id": "",
+             "url": "blob:https://example.com/id", "resource_type": "Other",
+             "timestamp": 1.2},
             {"request_id": "1.2", "target_id": "T1", "frame_id": "",
              "url": "https://example.com/api", "resource_type": "XHR",
              "timestamp": 1.0},

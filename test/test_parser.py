@@ -122,6 +122,28 @@ def test_event_grouping():
     print("  ✓ event grouping pass")
 
 
+def test_dump_specific_type_ids_are_canonicalized():
+    """Chrome's emitted numeric IDs must not leak into parser semantics."""
+    constants = NetLogConstants({
+        "logSourceType": {"URL_REQUEST": 101, "SOCKET": 110},
+        "logEventTypes": {"REQUEST_ALIVE": 200, "TCP_CONNECT": 250},
+    })
+    events = [
+        _make_event(1000, 200, 0, 1, 101, params={"url": "https://example.com/"}),
+        _make_event(
+            1010, 250, 2, 2, 110,
+            params={"local_address": "198.18.0.1:40000",
+                    "remote_address": "198.18.0.2:443"},
+        ),
+    ]
+    entries = process_events(events, constants)
+    assert entries[1].source_type == 1
+    assert entries[1].entries[0]["type"] == 0
+    assert entries[2].source_type == 3
+    assert entries[2].entries[0]["type"] == 4
+    assert entries[1].description == "https://example.com/"
+
+
 def test_dependency_chain():
     """Test dependency chain tracing through source_dependency."""
     raw_constants = {

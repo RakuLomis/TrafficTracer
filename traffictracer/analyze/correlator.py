@@ -164,6 +164,7 @@ def correlate_v2(
             match_status=decision.status,
             match_confidence=decision.confidence,
             conn_id=decision.selected_native_id or "",
+            netlog_source_id=tc.netlog_source_id,
             outer_conn_id=(
                 mconn.proxy_dial.outer_conn_id
                 if mconn and mconn.proxy_dial

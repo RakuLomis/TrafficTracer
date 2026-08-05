@@ -22,7 +22,9 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
 
     for raw in raw_requests:
         url = raw.get("url", "")
-        if not url:
+        # data:, blob:, chrome-extension: and similar schemes do not create a
+        # standalone HTTP transport and cannot satisfy the flow-v2 contract.
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             continue
 
         result.append(AttributedRequest(

@@ -153,6 +153,32 @@ def test_quic_host_time_multiple_candidates_remain_ambiguous():
     assert decision.reason == "multiple_candidates"
 
 
+def test_exact_pre_flow_accepts_incomparable_monotonic_and_utc_clocks():
+    key = "tcp|198.18.0.1:44000|9.9.9.9:443"
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", 44000, "9.9.9.9", 443,
+        key=key, complete=True,
+    )
+    candidate = MihomoConnection(
+        "utc",
+        TcpConnect(
+            "2026-08-05T02:47:08.153618521Z", "utc",
+            "198.18.0.1:44000", "cdn.example.net:443",
+            "cdn.example.net", pre_flow=pre,
+        ),
+        None,
+        None,
+    )
+    decision = rank_connection_candidates(
+        _transport(first_observed=231263.345188),
+        {"utc": candidate},
+    )
+    assert decision.status == "matched"
+    assert decision.method == "exact_pre_flow"
+    assert decision.selected_native_id == "utc"
+    assert "time_unavailable" in decision.candidates[0].evidence
+
+
 def test_no_candidate_is_explicitly_unmatched():
     decision = rank_connection_candidates(_transport(), {})
     assert decision.status == "unmatched"

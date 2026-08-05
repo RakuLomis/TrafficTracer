@@ -435,6 +435,7 @@ def _result_v2_to_dict(result: VisitCorrelation) -> dict:
                 "match_status": f.match_status,
                 "match_confidence": f.match_confidence,
                 "conn_id": f.conn_id,
+                "netlog_source_id": f.netlog_source_id,
                 "outer_conn_id": f.outer_conn_id,
                 "stable_connection_id": f.stable_connection_id,
                 "match_method": f.match_method,

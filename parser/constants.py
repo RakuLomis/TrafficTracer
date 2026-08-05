@@ -250,6 +250,20 @@ class NetLogConstants:
     def get_phase_name(self, phase_id: int) -> str:
         return PHASE_NAMES.get(phase_id, f"UNKNOWN({phase_id})")
 
+    def canonical_source_type(self, type_id: int) -> int:
+        """Translate a dump-specific source type ID to our stable ID."""
+        name = self.source_type_names.get(type_id)
+        if name is None:
+            return type_id
+        return _source_type_ids_by_name().get(name, type_id)
+
+    def canonical_event_type(self, type_id: int) -> int:
+        """Translate a dump-specific event type ID to our stable ID."""
+        name = self.event_type_names.get(type_id)
+        if name is None:
+            return type_id
+        return _event_type_ids_by_name().get(name, type_id)
+
     def get_net_error_name(self, code: int) -> str:
         return self.net_error.get(code, str(code))
 
@@ -257,3 +271,11 @@ class NetLogConstants:
 def _invert_map(d: dict[str, int]) -> dict[int, str]:
     """Invert {name: id} → {id: name}."""
     return {v: k for k, v in d.items()}
+
+
+def _source_type_ids_by_name() -> dict[str, int]:
+    return {name: type_id for type_id, name in SOURCE_TYPE_NAMES.items()}
+
+
+def _event_type_ids_by_name() -> dict[str, int]:
+    return {name: type_id for type_id, name in EVENT_TYPE_NAMES.items()}

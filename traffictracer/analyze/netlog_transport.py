@@ -9,7 +9,12 @@ from urllib.parse import urlparse
 from ..models import AttributedRequest, TransportConnection
 from ..utils import logger
 
-from parser.constants import NetLogConstants, SRC_URL_REQUEST
+from parser.constants import (
+    NetLogConstants, SRC_URL_REQUEST, SRC_TRANSPORT_CONNECT_JOB, SRC_SOCKET,
+    SRC_SSL_CONNECT_JOB, SRC_SOCKS_CONNECT_JOB, SRC_HTTP_PROXY_CONNECT_JOB,
+    SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB, SRC_HTTP2_SESSION, SRC_QUIC_SESSION,
+    SRC_PROXY_CLIENT_SOCKET, SRC_TCP_STREAM_ATTEMPT, SRC_TLS_STREAM_ATTEMPT,
+)
 from parser.event_processor import process_events
 from parser.dependency_graph import (
     build_connection_chain,
@@ -66,10 +71,13 @@ def trace_transport(
             ft = chain.five_tuple
 
             sibling_source_id = None
-            if not ft.src_ip and not ft.dst_ip:
+            if not _complete_five_tuple(ft):
                 sibling_source_id = _fill_from_siblings(sid, entries, children_index, ft)
 
-            if not ft.src_ip and not ft.dst_ip:
+            # A connection record represents a real pre-proxy flow. Requests
+            # without a complete transport remain explicit unmatched request
+            # records instead of becoming invalid partial connection records.
+            if not _complete_five_tuple(ft):
                 continue
 
             transport_source_id = _transport_source_id(chain, sibling_source_id or sid)
@@ -100,7 +108,7 @@ def trace_transport(
                 first_observed=first_observed,
             )
 
-    connections = list(connections_by_source.values())
+    connections = _merge_alias_connections(list(connections_by_source.values()))
     logger.info("Traced %d transport connections for %d CDP requests",
                 len(connections), len(requests))
     return connections
@@ -131,21 +139,23 @@ def _fill_from_siblings(sid, entries, children_index, ft) -> int | None:
         if child_id == sid:
             continue
         child = entries.get(child_id)
-        if child is None:
+        if child is None or child.source_type not in _SIBLING_TRANSPORT_TYPES:
             continue
         for event in child.entries:
             params = event.get("params") or {}
             local = params.get("local_address")
-            if isinstance(local, str) and not ft.src_ip:
+            remote = params.get("remote_address")
+            if not (isinstance(local, str) and isinstance(remote, str)):
+                continue
+            if not ft.src_ip:
                 parsed = _parse_ip_port(local)
                 if parsed:
                     ft.src_ip, ft.src_port = parsed
-            remote = params.get("remote_address")
-            if isinstance(remote, str) and not ft.dst_ip:
+            if not ft.dst_ip:
                 parsed = _parse_ip_port(remote)
                 if parsed:
                     ft.dst_ip, ft.dst_port = parsed
-            if ft.src_ip or ft.dst_ip:
+            if _complete_five_tuple(ft):
                 return int(child_id)
     return None
 
@@ -180,3 +190,52 @@ def _normalize_url(url: str) -> str:
 
 def _denormalize_url(normalized: str) -> str:
     return normalized
+
+
+_SIBLING_TRANSPORT_TYPES = {
+    SRC_TRANSPORT_CONNECT_JOB, SRC_SOCKET, SRC_SSL_CONNECT_JOB,
+    SRC_SOCKS_CONNECT_JOB, SRC_HTTP_PROXY_CONNECT_JOB,
+    SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB, SRC_HTTP2_SESSION, SRC_QUIC_SESSION,
+    SRC_PROXY_CLIENT_SOCKET, SRC_TCP_STREAM_ATTEMPT, SRC_TLS_STREAM_ATTEMPT,
+}
+
+
+def _merge_alias_connections(
+    connections: list[TransportConnection],
+) -> list[TransportConnection]:
+    """Merge NetLog aliases that describe the same active logical flow."""
+    merged: list[TransportConnection] = []
+    for connection in connections:
+        duplicate = next(
+            (
+                existing for existing in merged
+                if _transport_tuple(existing) == _transport_tuple(connection)
+                and set(existing.request_ids).intersection(connection.request_ids)
+            ),
+            None,
+        )
+        if duplicate is None:
+            merged.append(connection)
+            continue
+        duplicate.request_ids = list(dict.fromkeys([
+            *duplicate.request_ids, *connection.request_ids,
+        ]))
+        if connection.first_observed is not None:
+            duplicate.first_observed = (
+                min(duplicate.first_observed, connection.first_observed)
+                if duplicate.first_observed is not None
+                else connection.first_observed
+            )
+    return merged
+
+
+def _transport_tuple(connection: TransportConnection) -> tuple:
+    return (
+        connection.protocol.lower(),
+        connection.src_ip, connection.src_port,
+        connection.dst_ip, connection.dst_port,
+    )
+
+
+def _complete_five_tuple(ft) -> bool:
+    return bool(ft.src_ip and ft.src_port and ft.dst_ip and ft.dst_port)

@@ -20,7 +20,9 @@ def _make_netlog(events: list[dict]) -> str:
                 "URL_REQUEST": 1, "TRANSPORT_CONNECT_JOB": 2,
                 "SOCKET": 3, "HTTP_STREAM_JOB": 5,
                 "HTTP_PROXY_CONNECT_JOB": 10, "TCP_STREAM_ATTEMPT": 20,
-                "HTTP2_SESSION": 14,
+                "HTTP2_SESSION": 14, "HTTP_STREAM_JOB_CONTROLLER": 12,
+                "HOST_RESOLVER_IMPL_JOB": 4, "DNS_TRANSACTION": 25,
+                "UDP_SOCKET": 19,
             },
             "logEventPhase": {"PHASE_BEGIN": 0, "PHASE_END": 1, "PHASE_NONE": 2},
         },
@@ -185,6 +187,79 @@ def test_trace_multiple_requests_same_connection():
         all_rids.update(c.request_ids)
     assert "4.1" in all_rids
     assert "4.2" in all_rids
+
+def test_dns_only_dependency_is_not_a_browser_transport():
+    events = [
+        {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},
+         "params": {"url": "https://dns-only.example/", "source_dependency": {"id": 200, "type": 4}}},
+        {"time": "1010", "type": 1, "phase": 2, "source": {"id": 200, "type": 4},
+         "params": {"source_dependency": {"id": 300, "type": 25}}},
+        {"time": "1020", "type": 1, "phase": 2, "source": {"id": 300, "type": 25},
+         "params": {"source_dependency": {"id": 400, "type": 19}}},
+        {"time": "1030", "type": 43, "phase": 2, "source": {"id": 400, "type": 19},
+         "params": {"address": "127.0.0.53:53"}},
+    ]
+    path = _make_netlog(events)
+    requests = [AttributedRequest("dns.1", "T", "F", "https://dns-only.example/", "Document", 1.0)]
+    try:
+        assert trace_transport(requests, path) == []
+    finally:
+        os.unlink(path)
+
+
+def test_successful_socket_branch_wins_over_failed_dns_branch():
+    events = [
+        {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},
+         "params": {"url": "https://cdn.example/asset.js", "source_dependency": {"id": 110, "type": 12}}},
+        {"time": "1001", "type": 21, "phase": 2, "source": {"id": 110, "type": 12},
+         "params": {"source_dependency": {"id": 120, "type": 5}}},
+        {"time": "1002", "type": 21, "phase": 2, "source": {"id": 110, "type": 12},
+         "params": {"source_dependency": {"id": 130, "type": 5}}},
+        {"time": "1010", "type": 21, "phase": 2, "source": {"id": 120, "type": 5},
+         "params": {"source_dependency": {"id": 140, "type": 4}}},
+        {"time": "1011", "type": 1, "phase": 2, "source": {"id": 140, "type": 4},
+         "params": {"source_dependency": {"id": 150, "type": 25}}},
+        {"time": "1012", "type": 43, "phase": 2, "source": {"id": 150, "type": 25},
+         "params": {"address": "127.0.0.53:53"}},
+        {"time": "1020", "type": 21, "phase": 2, "source": {"id": 130, "type": 5},
+         "params": {"source_dependency": {"id": 160, "type": 3}}},
+        {"time": "1021", "type": 4, "phase": 2, "source": {"id": 160, "type": 3},
+         "params": {"local_address": "198.18.0.1:42000", "remote_address": "198.18.0.8:443"}},
+    ]
+    path = _make_netlog(events)
+    requests = [AttributedRequest("branch.1", "T", "F", "https://cdn.example/asset.js", "Script", 1.0)]
+    try:
+        connections = trace_transport(requests, path)
+    finally:
+        os.unlink(path)
+    assert len(connections) == 1
+    assert connections[0].netlog_source_id == 160
+    assert connections[0].src_ip == "198.18.0.1"
+    assert connections[0].dst_ip == "198.18.0.8"
+
+
+
+
+def test_duplicate_transport_aliases_with_overlapping_requests_are_merged():
+    events = [
+        {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},
+         "params": {"url": "https://alias.example/a.js", "source_dependency": {"id": 200, "type": 14}}},
+        {"time": "1001", "type": 0, "phase": 0, "source": {"id": 101, "type": 1},
+         "params": {"url": "https://alias.example/a.js", "source_dependency": {"id": 201, "type": 14}}},
+        {"time": "1010", "type": 50, "phase": 2, "source": {"id": 200, "type": 14},
+         "params": {"local_address": "198.18.0.1:43000", "remote_address": "198.18.0.9:443"}},
+        {"time": "1011", "type": 50, "phase": 2, "source": {"id": 201, "type": 14},
+         "params": {"local_address": "198.18.0.1:43000", "remote_address": "198.18.0.9:443"}},
+    ]
+    path = _make_netlog(events)
+    requests = [AttributedRequest("alias.1", "T", "F", "https://alias.example/a.js", "Script", 1.0)]
+    try:
+        connections = trace_transport(requests, path)
+    finally:
+        os.unlink(path)
+    assert len(connections) == 1
+    assert connections[0].request_ids == ["alias.1"]
+
 
 
 if __name__ == "__main__":

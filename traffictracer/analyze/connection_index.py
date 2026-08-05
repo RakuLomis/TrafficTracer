@@ -159,7 +159,12 @@ def _time_delta(observed: float | None, raw: str | None) -> float | None:
             candidate = datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
         except ValueError:
             return None
-    return abs(float(observed) - candidate)
+    observed_value = float(observed)
+    epoch_threshold = 1_000_000_000
+    if (observed_value >= epoch_threshold) != (candidate >= epoch_threshold):
+        # CDP timestamps are monotonic; Mihomo timestamps are UTC wall time.
+        return None
+    return abs(observed_value - candidate)
 
 
 def _transport_key(connection: TransportConnection) -> str:

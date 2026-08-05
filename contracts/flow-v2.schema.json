@@ -114,6 +114,8 @@
         "pre_flow": { "$ref": "#/$defs/flowTuple" },
         "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
         "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "netlog_source_id": { "type": "integer", "minimum": 1 },
+        "mihomo_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "shared": { "type": "boolean" },
         "match": { "$ref": "#/$defs/match" },
         "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } }

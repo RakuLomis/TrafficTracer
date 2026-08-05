@@ -89,6 +89,7 @@ class CorrelatedFlowV2:
     match_candidates: list[dict] = field(default_factory=list)
     match_reason: str = ""
     match_evidence: list[str] = field(default_factory=list)
+    netlog_source_id: int | None = None
 
 
 @dataclass

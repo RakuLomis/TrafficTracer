@@ -116,6 +116,10 @@ def _connection_record(flow: CorrelatedFlowV2, session_id: str, generation_id: s
         "match": match,
         "request_ids": sorted(set(flow.request_ids)),
     }
+    if flow.netlog_source_id is not None:
+        record["netlog_source_id"] = flow.netlog_source_id
+    if flow.conn_id:
+        record["mihomo_connection_id"] = flow.conn_id
     if flow.outer_conn_id:
         record["outer_connection_id"] = flow.outer_conn_id
     return record

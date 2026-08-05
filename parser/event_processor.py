@@ -18,19 +18,21 @@ def process_events(
     """
     entries: dict[int, SourceEntry] = {}
 
-    for event in events:
-        source = event.get("source")
+    for raw_event in events:
+        source = raw_event.get("source")
         if not isinstance(source, dict):
             continue
 
         sid = source.get("id")
         if sid is None:
             continue
+        event = _canonical_event(raw_event, constants)
+        canonical_source = event["source"]
 
         if sid not in entries:
             entries[sid] = SourceEntry(
                 source_id=sid,
-                source_type=source.get("type", 0),
+                source_type=canonical_source.get("type", 0),
             )
 
         entries[sid].feed(event, constants)
@@ -45,6 +47,31 @@ def process_events(
         entry.description = entry._extract_description(constants, registry)
 
     return entries
+
+
+def _canonical_event(
+    event: dict[str, Any],
+    constants: NetLogConstants,
+) -> dict[str, Any]:
+    """Return a shallow copy with dump-specific numeric types normalized."""
+    normalized = dict(event)
+    source = dict(event.get("source") or {})
+    source["type"] = constants.canonical_source_type(int(source.get("type", 0)))
+    normalized["source"] = source
+    normalized["type"] = constants.canonical_event_type(int(event.get("type", 0)))
+
+    params = event.get("params")
+    if isinstance(params, dict):
+        dependency = params.get("source_dependency")
+        if isinstance(dependency, dict) and dependency.get("type") is not None:
+            params = dict(params)
+            dependency = dict(dependency)
+            dependency["type"] = constants.canonical_source_type(
+                int(dependency["type"])
+            )
+            params["source_dependency"] = dependency
+            normalized["params"] = params
+    return normalized
 
 
 def find_events_by_type(

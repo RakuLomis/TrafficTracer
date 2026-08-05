@@ -58,6 +58,7 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
             {"connection_id": "conn-22222222222222222222222222222222", "native_id": "a", "score": 0.85, "evidence": ["source_and_destination", "time_unavailable"]},
             {"connection_id": "conn-33333333333333333333333333333333", "native_id": "b", "score": 0.85, "evidence": ["source_and_destination", "time_unavailable"]},
         ],
+        netlog_source_id=17,
         match_reason="multiple_candidates",
         match_evidence=["top_score_tie"],
     )
@@ -75,6 +76,7 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     requests = json.loads(artifacts.request_index.read_text(encoding="utf-8"))["items"]
 
     assert len(connections) == 1
+    assert connections[0]["netlog_source_id"] == 17
     assert connections[0]["connection_id"] == CONNECTION_ID
     assert connections[0]["request_ids"] == ["1.1", "1.2"]
     assert connections[0]["match"]["status"] == "ambiguous"

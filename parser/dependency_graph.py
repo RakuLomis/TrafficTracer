@@ -11,6 +11,9 @@ from .constants import (
     SRC_TRANSPORT_CONNECT_JOB,
     SRC_SOCKET,
     SRC_HOST_RESOLVER_IMPL_JOB,
+    SRC_ASYNC_HOST_RESOLVER_REQUEST,
+    SRC_DNS_OVER_HTTPS,
+    SRC_HOST_RESOLVER_IMPL_PROC_TASK,
     SRC_HTTP_STREAM_JOB,
     SRC_SSL_CONNECT_JOB,
     SRC_SOCKS_CONNECT_JOB,
@@ -55,8 +58,22 @@ HTTP_STREAM_POOL_QUIC_TASK = SRC_HTTP_STREAM_POOL_QUIC_TASK
 SSL_CONNECT = EVT_SSL_CONNECT
 
 # Source types we consider "leaf" nodes for five-tuple extraction
-_LEAF_TYPES = {TCP_STREAM_ATTEMPT, TLS_STREAM_ATTEMPT, UDP_SOCKET,
-               QUIC_SESSION, HTTP2_SESSION}
+_LEAF_TYPES = {
+    SOCKET, PROXY_CLIENT_SOCKET, TCP_STREAM_ATTEMPT, TLS_STREAM_ATTEMPT,
+    UDP_SOCKET, QUIC_SESSION, HTTP2_SESSION,
+}
+
+_DNS_SOURCE_TYPES = {
+    HOST_RESOLVER_IMPL_JOB, SRC_ASYNC_HOST_RESOLVER_REQUEST, DNS_TRANSACTION,
+    SRC_DNS_OVER_HTTPS, SRC_HOST_RESOLVER_IMPL_PROC_TASK,
+}
+
+_BUSINESS_TRANSPORT_TYPES = {
+    TRANSPORT_CONNECT_JOB, SOCKET, SSL_CONNECT_JOB, SOCKS_CONNECT_JOB,
+    HTTP_PROXY_CONNECT_JOB, SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB,
+    HTTP2_SESSION, QUIC_SESSION, PROXY_CLIENT_SOCKET,
+    TCP_STREAM_ATTEMPT, TLS_STREAM_ATTEMPT,
+}
 
 
 @dataclass
@@ -165,19 +182,83 @@ def trace_chain(
 
         chain.append(entry)
 
-        # Find parent via source_dependency in any event, skipping
-        # dependencies that point to already-visited nodes (cycles).
-        current_id = None
-        for event in entry.entries:
-            parent_id = extract_deps_from_event(event)
-            if (parent_id is not None
-                    and parent_id != entry.source_id
-                    and parent_id not in visited):
-                current_id = parent_id
-                break
+        # A source may reference several competing attempts (for example a
+        # failed QUIC/DNS branch and a successful HTTP/2 socket). Prefer the
+        # path that contains concrete business transport evidence.
+        candidates = [
+            dep_id for dep_id in _dependency_ids(entry)
+            if dep_id != entry.source_id and dep_id not in visited
+        ]
+        current_id = max(
+            candidates,
+            key=lambda dep_id: _dependency_path_score(
+                dep_id, entries, visited=set(visited), max_depth=8,
+            ),
+            default=None,
+        )
 
     chain.reverse()  # root first
     return chain
+
+
+def _dependency_ids(entry: SourceEntry) -> list[int]:
+    return list(dict.fromkeys(
+        dep_id
+        for event in entry.entries
+        if (dep_id := extract_deps_from_event(event)) is not None
+    ))
+
+
+def _dependency_path_score(
+    source_id: int,
+    entries: dict[int, SourceEntry],
+    visited: set[int],
+    max_depth: int,
+) -> int:
+    """Score a dependency branch by its strongest transport evidence."""
+    if source_id in visited or max_depth <= 0:
+        return -10_000
+    entry = entries.get(source_id)
+    if entry is None:
+        return -10_000
+    visited.add(source_id)
+
+    if entry.source_type in _DNS_SOURCE_TYPES:
+        own_score = -1_000
+    elif _entry_has_complete_endpoints(entry):
+        own_score = 1_000
+    elif entry.source_type in (SOCKET, PROXY_CLIENT_SOCKET):
+        own_score = 600
+    elif entry.source_type in (HTTP2_SESSION, QUIC_SESSION):
+        own_score = 500
+    elif entry.source_type in _BUSINESS_TRANSPORT_TYPES:
+        own_score = 400
+    elif entry.source_type in (HTTP_STREAM_JOB, SRC_HTTP_STREAM_JOB_CONTROLLER):
+        own_score = 100
+    else:
+        own_score = 0
+
+    descendants = [
+        _dependency_path_score(
+            dep_id, entries, visited=set(visited), max_depth=max_depth - 1,
+        ) - 10
+        for dep_id in _dependency_ids(entry)
+        if dep_id not in visited
+    ]
+    return max([own_score, *descendants])
+
+
+def _entry_has_complete_endpoints(entry: SourceEntry) -> bool:
+    for event in entry.entries:
+        params = event.get("params") or {}
+        if (
+            isinstance(params.get("local_address"), str)
+            and isinstance(params.get("remote_address"), str)
+            and _parse_ip_port(params["local_address"])
+            and _parse_ip_port(params["remote_address"])
+        ):
+            return True
+    return False
 
 
 def _find_downstream_leaves(
@@ -358,12 +439,16 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
         # Chrome 149+ uses HTTP_PROXY_CONNECT_JOB with SSL_CONNECT events
         # that carry local_address and remote_address.
         for event in entry.entries:
-            _extract_address_from_event(event, ft)
+            _extract_address_from_event(event, ft, st)
 
     return ft
 
 
-def _extract_address_from_event(event: dict[str, Any], ft: FiveTuple) -> None:
+def _extract_address_from_event(
+    event: dict[str, Any],
+    ft: FiveTuple,
+    source_type: int | None = None,
+) -> None:
     """Pull local/remote address from an event's params into the FiveTuple."""
     params = event.get("params")
     if not isinstance(params, dict):
@@ -383,8 +468,9 @@ def _extract_address_from_event(event: dict[str, Any], ft: FiveTuple) -> None:
             ft.dst_ip = ft.dst_ip or parsed[0]
             ft.dst_port = ft.dst_port or parsed[1]
 
-    # TCP_CONNECT (event type 4) uses "address" for remote endpoint
-    if not ft.dst_ip:
+    # Resolver and UDP events use "address" for the DNS server. Only accept
+    # this field from a source known to represent a business transport.
+    if not ft.dst_ip and source_type in _BUSINESS_TRANSPORT_TYPES:
         addr = params.get("address")
         if isinstance(addr, str):
             parsed = _parse_ip_port(addr)
