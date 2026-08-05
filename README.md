@@ -182,7 +182,7 @@ sites:
     url: "https://www.bilibili.com"
     wait: 15
     wait_load_timeout: 30
-    traffic_type: video-mainpage
+    traffic_type: video-mainpage  # run label; normalized network is "all"
 ```
 
 Important settings:
@@ -196,7 +196,32 @@ Important settings:
   of `chrome.headless`.
 - `wait_load_timeout` limits the wait for `Page.loadEventFired`; `wait` is the
   additional collection period after navigation.
-- `traffic_type` is currently a run label, not a packet-capture filter.
+- `traffic_type` is a compatibility field used during target normalization:
+  exact lowercase `tcp`, `udp`, or `all` becomes both the network selector and
+  run label; any other safe label becomes the run label while `network`
+  defaults to `all`.
+
+#### Target YAML normalization
+
+Each item under `sites` is normalized to a fixed target containing `url`,
+`domain`, `duration_seconds`, `wait_load_timeout`, `network`, `run_label`, and
+its original list index. The current YAML format keeps the legacy
+`traffic_type` field and interprets it as follows:
+
+| YAML value | Normalized `network` | Normalized `run_label` | Result |
+|---|---|---|---|
+| `tcp` | `tcp` | `tcp` | TCP target |
+| `udp` | `udp` | `udp` | UDP target |
+| `all` or omitted | `all` | `all` | TCP and UDP target |
+| `Video-mainpage` | `all` | `Video-mainpage` | Safe run label; Complete UI shows an informational fallback warning |
+
+The three network keywords are case-sensitive. Labels must contain 1–64
+letters, digits, `.`, `_`, or `-`, and must start with a letter or digit;
+unsafe values such as `../video` are rejected. The current schema does not yet
+accept independent `network` and `run_label` keys, so a custom label cannot be
+combined with a TCP-only or UDP-only selector. When multiple sites are selected
+in Complete, their original YAML order and indexes are preserved, including
+entries with duplicate URL/domain values.
 
 ### 3. Capture a visit
 
@@ -738,7 +763,7 @@ flows.
 | `domain` | Target domain name (used for file naming and NetLog analysis) |
 | `url` | Full URL to visit |
 | `wait` | Seconds to wait after page load before stopping capture (default: 10) |
-| `traffic_type` | Run label used in `<traffic_type>_<N>` directory and log names; it does not filter packets |
+| `traffic_type` | Compatibility field: lowercase `tcp`, `udp`, or `all` selects the normalized network; any other safe value is a run label and falls back to network `all` |
 | `wait_load_timeout` | Max seconds to wait for Page.loadEventFired in CDP mode (default: `30`) |
 
 ## Mihomo Configuration
