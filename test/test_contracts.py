@@ -79,6 +79,12 @@ def test_boundary_helpers_share_the_same_validation_path():
     assert validate_pcap_index(_fixture("pcap-index-v1-valid.json"))["split_mode"] == "unique_connections"
 
 
+def test_flow_v2_allows_transport_network_reconciliation_method():
+    payload = _fixture("flow-v2-connection-shared-http2.json")
+    payload["match"]["method"] = "transport_network_reconciled"
+    assert validate_flow_v2(payload) is payload
+
+
 def test_validation_error_is_stable_structured_and_value_safe():
     payload = _fixture("job-valid-analysis.json")
     payload["output_root"] = "sensitive-relative-output"

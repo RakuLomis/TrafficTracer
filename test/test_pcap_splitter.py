@@ -183,6 +183,11 @@ def test_transport_retries_share_one_url_resource_directory(tmp_path, monkeypatc
         url="https://media.example/videoplayback?id=v&rn=2&alr=yes",
     )
     quic.protocol = "QUIC"
+    quic.pre_flow = FlowTuple(
+        "udp", quic.pre_flow.src_ip, quic.pre_flow.src_port,
+        quic.pre_flow.dst_ip, quic.pre_flow.dst_port,
+        key=quic.pre_flow.key, complete=True, source="netlog",
+    )
     quic.post_flow = None
     quic.match_status = "ambiguous"
     calls = []

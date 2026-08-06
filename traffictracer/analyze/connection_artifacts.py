@@ -157,7 +157,11 @@ def _connection_record(
         "session_id": session_id,
         "analysis_generation_id": generation_id,
         "connection_id": flow.stable_connection_id,
-        "protocol": _network(flow.protocol),
+        "protocol": (
+            flow.pre_flow.network
+            if flow.pre_flow and flow.pre_flow.network in {"tcp", "udp"}
+            else _network(flow.protocol)
+        ),
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
         "post_flow": _flow_payload(flow.post_flow, "post_proxy") if flow.post_flow else None,
         "sharing": {

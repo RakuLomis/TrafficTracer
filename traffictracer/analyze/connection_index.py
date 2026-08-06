@@ -8,7 +8,7 @@ import hashlib
 import json
 from urllib.parse import urlparse
 
-from traffictracer.models import TransportConnection
+from traffictracer.models import FlowTuple, TransportConnection
 
 from .flow_index import flow_key
 from .mihomo_log import MihomoConnection
@@ -40,7 +40,7 @@ def stable_connection_id(
     """Return a deterministic ID for one observed transport connection."""
     canonical = json.dumps(
         [
-            _network(connection.protocol),
+            _connection_network(connection),
             connection.src_ip,
             int(connection.src_port),
             connection.dst_ip,
@@ -100,6 +100,19 @@ def rank_connection_candidates(
             elif time_delta is None:
                 score = 0.95
                 evidence.extend(("normalized_pre_flow", "time_unavailable"))
+        elif pre and pre.complete and _same_endpoints(connection, pre):
+            method = "transport_network_reconciled"
+            score = 0.0
+            evidence.extend((
+                "normalized_transport_endpoints",
+                f"network_reconciled:{_connection_network(connection)}->{pre.network}",
+            ))
+            if time_delta is not None and time_delta <= 2.0:
+                score = 0.98
+                evidence.append(f"time_delta_ms:{round(time_delta * 1000)}")
+            elif time_delta is None:
+                score = 0.93
+                evidence.append("time_unavailable")
         elif endpoint_src and endpoint_dst and connect.src == endpoint_src and connect.dst == endpoint_dst:
             method = "netlog_socket"
             if time_delta is not None and time_delta <= 2.0:
@@ -170,15 +183,31 @@ def _time_delta(observed: float | None, raw: str | None) -> float | None:
 def _transport_key(connection: TransportConnection) -> str:
     try:
         return flow_key(
-            _network(connection.protocol), connection.src_ip, connection.src_port,
+            _connection_network(connection), connection.src_ip, connection.src_port,
             connection.dst_ip, connection.dst_port,
         )
     except ValueError:
         return ""
 
 
+def _connection_network(connection: TransportConnection) -> str:
+    network = connection.network.lower()
+    if network in {"tcp", "udp"}:
+        return network
+    return _network(connection.protocol)
+
+
 def _network(value: str) -> str:
     return "udp" if value.lower().startswith(("udp", "quic")) else "tcp"
+
+
+def _same_endpoints(connection: TransportConnection, flow: FlowTuple) -> bool:
+    return (
+        connection.src_ip == flow.src_ip
+        and int(connection.src_port) == int(flow.src_port)
+        and connection.dst_ip == flow.dst_ip
+        and int(connection.dst_port) == int(flow.dst_port)
+    )
 
 
 def _endpoint(ip: str, port: int) -> str:

@@ -104,6 +104,8 @@ def trace_transport(
             protocol=ft.protocol or "",
             request_ids=list(matched_request_ids),
             first_observed=first_observed,
+            network=ft.network or "",
+            attempted_protocols=list(ft.attempted_protocols),
         )
 
     connections = _merge_alias_connections(list(connections_by_source.values()))
@@ -305,7 +307,7 @@ def _merge_alias_connections(
 
 def _transport_tuple(connection: TransportConnection) -> tuple:
     return (
-        connection.protocol.lower(),
+        (connection.network or connection.protocol).lower(),
         connection.src_ip, connection.src_port,
         connection.dst_ip, connection.dst_port,
     )

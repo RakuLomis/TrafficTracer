@@ -117,17 +117,18 @@ def correlate_v2(
             if decision.selected_native_id is not None
             else None
         )
+        network = _transport_network(tc)
         pre_flow = (
             mconn.connect.pre_flow
             if mconn and mconn.connect and mconn.connect.pre_flow
             else FlowTuple(
-                network="udp" if tc.protocol.lower().startswith(("udp", "quic")) else "tcp",
+                network=network,
                 src_ip=tc.src_ip,
                 src_port=tc.src_port,
                 dst_ip=tc.dst_ip,
                 dst_port=tc.dst_port,
                 key=_flow_key(
-                    "udp" if tc.protocol.lower().startswith(("udp", "quic")) else "tcp",
+                    network,
                     tc.src_ip, tc.src_port, tc.dst_ip, tc.dst_port,
                 ),
                 complete=bool(tc.src_ip and tc.src_port and tc.dst_ip and tc.dst_port),
@@ -378,6 +379,17 @@ def _terminal_from_close(close) -> FlowTerminal | None:
         bytes_up=close.bytes_up,
         bytes_down=close.bytes_down,
         duration_ms=close.duration_ms,
+    )
+
+
+def _transport_network(connection: TransportConnection) -> str:
+    network = connection.network.lower()
+    if network in {"tcp", "udp"}:
+        return network
+    return (
+        "udp"
+        if connection.protocol.lower().startswith(("udp", "quic"))
+        else "tcp"
     )
 
 

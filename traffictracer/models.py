@@ -67,6 +67,8 @@ class TransportConnection:
     protocol: str
     request_ids: list[str] = field(default_factory=list)
     first_observed: float | None = None
+    network: str = ""
+    attempted_protocols: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

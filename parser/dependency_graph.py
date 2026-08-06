@@ -84,6 +84,11 @@ class FiveTuple:
     dst_ip: str | None = None
     dst_port: int | None = None
     protocol: str | None = None  # "TCP", "UDP", "QUIC", "HTTP2"
+    # The IP transport is independent from the application/session protocol.
+    # A NetLog chain may contain a failed QUIC attempt followed by a successful
+    # TCP fallback; the socket carrying the tuple remains authoritative.
+    network: str | None = None  # "tcp" or "udp"
+    attempted_protocols: list[str] = field(default_factory=list)
 
     def __str__(self) -> str:
         src = f"{self.src_ip or '*'}:{self.src_port or '*'}"
@@ -397,11 +402,15 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
     found in newer Chrome versions using HTTP_PROXY_CONNECT_JOB).
     """
     ft = FiveTuple()
+    saw_tcp_transport = False
+    saw_udp_transport = False
+    saw_quic_attempt = False
 
     for entry in chain:
         st = entry.source_type
 
         if st == TCP_STREAM_ATTEMPT:
+            saw_tcp_transport = True
             ip_port = entry.description  # e.g. "93.184.216.34:443"
             parsed = _parse_ip_port(ip_port)
             if parsed:
@@ -415,6 +424,7 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
                 ft.dst_port = ft.dst_port or parsed[1]
 
         elif st == UDP_SOCKET:
+            saw_udp_transport = True
             addr = entry.description  # e.g. "8.8.8.8:53"
             if " [" in addr:
                 addr = addr.split(" [")[0]
@@ -424,8 +434,12 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
                 ft.protocol = ft.protocol or "UDP"
 
         elif st == HTTP2_SESSION:
+            saw_tcp_transport = True
             ft.protocol = "HTTP2"
         elif st == QUIC_SESSION or st == SRC_HTTP_STREAM_POOL_QUIC_TASK:
+            saw_quic_attempt = True
+            if "QUIC" not in ft.attempted_protocols:
+                ft.attempted_protocols.append("QUIC")
             ft.protocol = "QUIC"
 
         elif st == URL_REQUEST:
@@ -440,6 +454,18 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
         # that carry local_address and remote_address.
         for event in entry.entries:
             _extract_address_from_event(event, ft, st)
+
+    # Concrete socket evidence wins over retained session attempts. In
+    # particular, a failed QUIC branch cannot turn a successful TCP fallback
+    # tuple into UDP.
+    if saw_tcp_transport:
+        ft.network = "tcp"
+    elif saw_udp_transport or saw_quic_attempt:
+        ft.network = "udp"
+    elif ft.protocol:
+        ft.network = (
+            "udp" if ft.protocol.lower().startswith(("udp", "quic")) else "tcp"
+        )
 
     return ft
 

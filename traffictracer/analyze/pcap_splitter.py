@@ -169,7 +169,15 @@ def split_flows_v2(
                 bool(item.post_flow and item.post_flow.complete),
             ),
         )
-        protocol = "udp" if flow.protocol.lower().startswith(("udp", "quic")) else "tcp"
+        protocol = (
+            flow.pre_flow.network
+            if flow.pre_flow and flow.pre_flow.network in {"tcp", "udp"}
+            else (
+                "udp"
+                if flow.protocol.lower().startswith(("udp", "quic"))
+                else "tcp"
+            )
+        )
         pre_filter = (
             build_flow_tuple_filter(flow.pre_flow)
             if flow.pre_flow and flow.pre_flow.complete
