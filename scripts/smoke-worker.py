@@ -12,6 +12,10 @@ import tempfile
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--require-build-metadata", action="store_true",
+        help="fail when packaged component commits are absent",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     command = args.command
@@ -66,6 +70,19 @@ def main(argv=None) -> int:
         raise RuntimeError("Worker did not emit worker.ready")
     if responses.get("hello", {}).get("result", {}).get("api_version") != 2:
         raise RuntimeError("Worker hello handshake failed")
+    if args.require_build_metadata:
+        versions = responses["hello"]["result"].get("component_versions", {})
+        for name in ("traffictracer", "mihomo", "clash_verge_rev"):
+            component = versions.get(name, {})
+            commit = component.get("commit")
+            if not (
+                isinstance(commit, str)
+                and len(commit) == 40
+                and all(char in "0123456789abcdef" for char in commit)
+            ):
+                raise RuntimeError(
+                    f"Worker packaged build metadata is missing for {name}"
+                )
     checks = responses.get("diagnose", {}).get("result", {}).get("checks")
     if not isinstance(checks, list) or len(checks) != 7:
         raise RuntimeError("Worker diagnose smoke failed")

@@ -244,10 +244,23 @@ canonical connection 使用 `pre.pcap/post.pcap`，有报文的其他候选使�
 `mapping.json` 中记录为 alternative 及其状态。HTTP/2 复用的全部 URL/request ID
 也保留在 mapping 和 connection/request index 中。
 
+HTTP/2/keep-alive 的后续请求可能没有新的 NetLog transport occurrence。若该请求
+收到响应、CDP 标记连接复用，且其正数 `connectionId` 在当前页面只对应一个已确认
+canonical connection，分析器会以 `cdp_connection_reuse` 回填；证据会记录原请求
+ID 与 CDP connectionId。多候选、无响应或 `connectionId=0` 始终保持未关联。
+
 浏览器 coverage 中 `non_network` 表示 CDP 明确报告 disk cache、Service Worker、
 prefetch，或收到响应但 `connectionId=0` 的浏览器内部响应。这些请求没有可捕获的
 独立五元组，不计为抓包缺失；它们仍保留 URL、request ID 与分类证据。旧 Session
 没有这些 CDP 标志时保持兼容，不会凭空伪造缓存来源。
+`no_response` 表示 Chrome 没有报告响应，`response_transport_unbound` 表示已经收到
+响应但仍缺少唯一 transport；两者不能混为同一种关联失败。
+
+UI 中 `Page flows` 只描述当前页面关联的 transport pipeline；
+`Capture-global core flows` 是同一捕获窗口内全部 Mihomo 流量，可能包含后台 TUN
+连接，只用于全局诊断。页面连接失败会按 hostname 与稳定 `error_class` 聚合。
+新构建还会把三个组件的完整 Git commit 写入 Worker hello 和 Session manifest；
+旧 Session 的 `unknown` 只表示当时的构建未嵌入版本元数据。
 
 ## 8. Linux 打包
 

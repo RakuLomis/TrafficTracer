@@ -1,0 +1,124 @@
+"""Regression tests for canonical browser request resolution."""
+
+from traffictracer.analyze.request_resolver import resolve_visit_requests
+from traffictracer.models import AttributedRequest, CorrelatedFlowV2, FlowTuple, VisitCorrelation
+
+
+def _request(
+    request_id: str,
+    *,
+    cdp_connection_id: int | None,
+    response_status: int = 206,
+    reused: bool = True,
+) -> AttributedRequest:
+    return AttributedRequest(
+        request_id=request_id,
+        target_id="target",
+        frame_id="frame",
+        url=f"https://media.example/video.m4s?range={request_id}",
+        resource_type="Media",
+        timestamp=100.0,
+        connection_id=cdp_connection_id,
+        connection_reused=reused,
+        response_status=response_status,
+    )
+
+
+def _flow(connection_id: str, request_ids: list[str], port: int) -> CorrelatedFlowV2:
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", port, "198.18.0.39", 443,
+        key=f"tcp|198.18.0.1:{port}|198.18.0.39:443",
+        complete=True,
+    )
+    return CorrelatedFlowV2(
+        url="https://media.example/video.m4s",
+        resource_type="Media",
+        target_type="page",
+        relation="cross_site",
+        pre_proxy_src=pre.src,
+        pre_proxy_dst=pre.dst,
+        post_proxy_src="192.0.2.1:50000",
+        post_proxy_dst="203.0.113.1:443",
+        protocol="HTTPS",
+        request_ids=request_ids,
+        pre_flow=pre,
+        match_status="matched",
+        match_confidence=1.0,
+        stable_connection_id=connection_id,
+        match_method="exact_pre_flow",
+    )
+
+
+def test_positive_response_reuses_unique_cdp_connection():
+    connection_id = "conn-11111111111111111111111111111111"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[_flow(connection_id, ["range.1"], 44001)],
+        requests=[
+            _request("range.1", cdp_connection_id=338, reused=False),
+            _request("range.2", cdp_connection_id=338),
+            _request("range.3", cdp_connection_id=338),
+        ],
+    )
+
+    resolutions = resolve_visit_requests(result, [])
+
+    assert [item.flow.stable_connection_id for item in resolutions] == [
+        connection_id, connection_id, connection_id,
+    ]
+    assert resolutions[1].method == "cdp_connection_reuse"
+    assert resolutions[1].evidence == (
+        "cdp_connection_id:338",
+        "prior_request_id:range.1",
+        "cdp_response_received",
+        "cdp_connection_reused",
+        "unique_transport_connection",
+    )
+
+
+def test_ambiguous_cdp_connection_is_not_selected():
+    first = "conn-11111111111111111111111111111111"
+    second = "conn-22222222222222222222222222222222"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[
+            _flow(first, ["range.1"], 44001),
+            _flow(second, ["range.2"], 44002),
+        ],
+        requests=[
+            _request("range.1", cdp_connection_id=338, reused=False),
+            _request("range.2", cdp_connection_id=338, reused=False),
+            _request("range.3", cdp_connection_id=338),
+        ],
+    )
+
+    resolution = resolve_visit_requests(result, [])[-1]
+
+    assert resolution.flow is None
+    assert resolution.status == "ambiguous"
+    assert resolution.unmatched_reason == "ambiguous_cdp_connection"
+    assert {item.stable_connection_id for item in resolution.candidates} == {
+        first, second,
+    }
+
+
+def test_zero_id_or_missing_response_is_never_backfilled():
+    connection_id = "conn-11111111111111111111111111111111"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[_flow(connection_id, ["range.1"], 44001)],
+        requests=[
+            _request("range.1", cdp_connection_id=338, reused=False),
+            _request("zero", cdp_connection_id=0),
+            _request("no-response", cdp_connection_id=338, response_status=0),
+        ],
+    )
+
+    zero, no_response = resolve_visit_requests(result, [])[1:]
+
+    assert zero.flow is None
+    assert no_response.flow is None
+    assert zero.status == no_response.status == "unmatched"

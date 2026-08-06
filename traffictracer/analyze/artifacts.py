@@ -124,33 +124,55 @@ def layered_coverage(
                 "connection_unmatched",
             )] += 1
 
+    page_reasons = reasons.copy()
+    page_logical_records = [
+        record for record in connection_records
+        if record.get("post_flow") is not None
+        or bool(record.get("mihomo_connection_id"))
+        or record.get("terminal") is not None
+    ]
+    page_core = _core_coverage(page_logical_records, page_reasons)
     core_records = (
         core_flow_records
         if core_flow_records is not None
         else connection_records
     )
-    with_post = shared = 0
-    for record in core_records:
-        if record.get("post_flow") is not None:
-            with_post += 1
-        else:
-            reasons["missing_post_flow"] += 1
-        if bool(record.get("shared")):
-            shared += 1
-    total = len(core_records)
+    global_reasons: Counter[str] = Counter()
+    global_core = _core_coverage(core_records, global_reasons)
+    # Preserve the flattened v1 counters for legacy readers. New consumers
+    # must use the explicit page_attributed/capture_global scopes below.
+    reasons.update(global_reasons)
     coverage = {
         "browser_requests": browser,
         "transport_connections": transport,
-        "core_logical_flows": {
-            "total": total,
-            "with_post_flow": with_post,
-            "shared": shared,
-            "missing_post_flow": total - with_post,
+        "core_logical_flows": global_core,
+        "page_attributed": {
+            "browser_requests": browser,
+            "transport_connections": transport,
+            "logical_flows": page_core,
+            "unmatched_reasons": dict(sorted(page_reasons.items())),
+        },
+        "capture_global": {
+            "core_logical_flows": global_core,
+            "unmatched_reasons": dict(sorted(global_reasons.items())),
         },
         "unmatched_reasons": dict(sorted(reasons.items())),
     }
     _assert_coverage_conservation(coverage)
     return coverage
+
+
+def _core_coverage(records: list[dict], reasons: Counter[str]) -> dict:
+    with_post = sum(record.get("post_flow") is not None for record in records)
+    missing = len(records) - with_post
+    if missing:
+        reasons["missing_post_flow"] += missing
+    return {
+        "total": len(records),
+        "with_post_flow": with_post,
+        "shared": sum(bool(record.get("shared")) for record in records),
+        "missing_post_flow": missing,
+    }
 
 
 def _partition(statuses) -> dict:

@@ -80,10 +80,23 @@ ID、协议和 `empty/not_requested` 状态仍完整保存在 `mapping.json` 与
 
 `request-index-v2.json` 保留每个完整 URL/request ID，并使用 PCAP 证据解决
 “空 QUIC 尝试后回落 TCP”的 transport race；candidate connection 不会被删除。
+对于已经通过 NetLog 确认的连接，后续收到响应且明确复用同一个正数 CDP
+`connectionId` 的请求会以 `cdp_connection_reuse` 回填到该 canonical connection；
+只有映射唯一时才自动关联，零 ID、无响应或多连接歧义不会被猜测。最终回填结果
+同时写入 request/connection index、PCAP index 和资源目录的 `mapping.json`。
 新捕获还记录 CDP 的 disk cache、Service Worker 和 prefetch 标志，在 coverage
 中将无需网络 transport 的请求单列为 `non_network`。`connection-index-v2.json`
 提供 `egress.mode/selection_chain` 以及 `sharing` 的三种独立原因：请求复用、
 post-flow 共享和外层连接复用；旧 `shared` 布尔字段继续保留用于兼容。
+
+Coverage 同时提供 `page_attributed` 和 `capture_global`：前者只统计当前页面的
+浏览器请求、transport connection 与逻辑流，后者保留捕获窗口中所有 Mihomo
+核心流用于后台诊断。旧的扁平字段继续输出供旧 UI 读取，但不能把全局核心流
+当作页面关联率。连接终止错误还会输出稳定的 `error_class`，用于按域名聚合
+IPv4 超时、IPv6 不可达和其他拨号错误。
+无 Mihomo connection ID、无终止事件且无 post flow 的空 QUIC/UDP 候选只保留在
+`transport_connections` 层，不进入 `page_attributed.logical_flows` 分母；它仍保留
+完整候选和 PCAP empty 状态，因此不会通过压缩统计丢失连接证据。
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。
 

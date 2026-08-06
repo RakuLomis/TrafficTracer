@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -12,6 +13,9 @@ datas = [
     (str(repo_root / "contracts"), "contracts"),
     (str(repo_root / "complete" / "components.lock.yaml"), "complete"),
 ]
+build_info_path = os.environ.get("TT_BUILD_INFO_PATH")
+if build_info_path:
+    datas.append((build_info_path, "complete"))
 hiddenimports = [
     *collect_submodules("jsonschema"),
     *collect_submodules("websockets"),

@@ -14,7 +14,15 @@ if ! "$python_bin" -c 'import PyInstaller' >/dev/null 2>&1; then
 fi
 
 mkdir -p "$dist_dir" "$work_dir"
-"$python_bin" -m PyInstaller \
+traffictracer_commit="$(git -C "$repo_root" rev-parse HEAD)"
+build_info_path="${work_dir}/build-info.json"
+"$python_bin" "${repo_root}/scripts/write-build-info.py" \
+  --lock "${repo_root}/complete/components.lock.yaml" \
+  --output "$build_info_path" \
+  --traffictracer-commit "$traffictracer_commit"
+
+TT_BUILD_INFO_PATH="$build_info_path" \
+  "$python_bin" -m PyInstaller \
   --noconfirm \
   --clean \
   --distpath "$dist_dir" \
@@ -27,5 +35,6 @@ if [[ ! -x "$worker_path" ]]; then
   exit 3
 fi
 
-"$python_bin" "${repo_root}/scripts/smoke-worker.py" -- "$worker_path"
+"$python_bin" "${repo_root}/scripts/smoke-worker.py" \
+  --require-build-metadata -- "$worker_path"
 printf 'Worker artifact: %s\n' "$worker_path"

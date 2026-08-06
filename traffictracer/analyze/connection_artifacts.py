@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import ipaddress
 import json
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
 from traffictracer.models import CorrelatedFlowV2, FlowTuple, VisitCorrelation
 from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideResult
+from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
+from traffictracer.analyze.request_resolver import resolve_visit_requests
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_V2_VERSION, PCAP_INDEX_SCHEMA_VERSION, SESSION_SCHEMA_V2_VERSION
 
@@ -94,6 +96,7 @@ def persist_connection_artifacts(
         "analysis_generation_id": generation_id,
         "items": requests,
     })
+    reconcile_pcap_attribution(output, requests, pcap_results or [])
     return ConnectionArtifacts(connection_path, request_path, generation_id)
 
 
@@ -176,7 +179,10 @@ def _connection_record(
         "request_ids": sorted(set(flow.request_ids)),
     }
     if flow.terminal is not None:
-        record["terminal"] = asdict(flow.terminal)
+        terminal = asdict(flow.terminal)
+        if flow.terminal.status.endswith("error"):
+            terminal["error_class"] = _terminal_error_class(flow)
+        record["terminal"] = terminal
     if flow.netlog_source_id is not None:
         record["netlog_source_id"] = flow.netlog_source_id
     if flow.conn_id:
@@ -184,6 +190,26 @@ def _connection_record(
     if flow.outer_conn_id:
         record["outer_connection_id"] = flow.outer_conn_id
     return record
+
+
+def _terminal_error_class(flow: CorrelatedFlowV2) -> str:
+    assert flow.terminal is not None
+    message = flow.terminal.error.lower()
+    family = ""
+    if flow.pre_flow is not None and flow.pre_flow.dst_ip:
+        try:
+            family = "ipv6" if ipaddress.ip_address(flow.pre_flow.dst_ip).version == 6 else "ipv4"
+        except ValueError:
+            family = ""
+    if "timeout" in message or "timed out" in message:
+        return f"{family}_timeout" if family else "network_timeout"
+    if any(token in message for token in (
+        "network is unreachable", "no route to host", "unreachable",
+    )):
+        return f"{family}_unreachable" if family else "network_unreachable"
+    if flow.terminal.stage == "dial" or flow.terminal.status == "dial_error":
+        return "dial_error"
+    return "transport_error"
 
 
 def _annotate_outer_connection_reuse(records: list[dict]) -> None:
@@ -279,31 +305,12 @@ def _request_records(
     pcap_results: list[ConnectionPcapResult],
 ) -> list[dict]:
     output: list[dict] = []
-    pcap_by_connection = {item.connection_id: item for item in pcap_results}
     for result in results:
-        all_flows = [
-            flow for flow in result.flows if flow.stable_connection_id
-        ]
-        by_request: dict[str, list[CorrelatedFlowV2]] = {}
-        for flow in all_flows:
-            for request_id in flow.request_ids:
-                by_request.setdefault(request_id, []).append(flow)
-        for request in result.requests:
-            direct_candidates = by_request.get(request.request_id, [])
-            candidates = _rank_request_flows(
-                _with_transport_race_alternatives(
-                    direct_candidates,
-                    all_flows,
-                    request.url,
-                    pcap_by_connection,
-                ),
-                pcap_by_connection,
-            )
-            flow = candidates[0] if candidates else None
+        for resolution in resolve_visit_requests(result, pcap_results):
+            request = resolution.request
+            candidates = list(resolution.candidates)
+            flow = resolution.flow
             connection_id = flow.stable_connection_id if flow else None
-            race_resolved = bool(
-                flow is not None and flow not in direct_candidates
-            )
             network_observation, observation_evidence = (
                 _request_network_observation(request)
             )
@@ -325,33 +332,42 @@ def _request_records(
                 "network_observation": network_observation,
                 "attribution": (
                     {
-                        "status": "matched",
-                        "method": "netlog_socket",
-                        "confidence": 1.0,
-                        "evidence": [
-                            "netlog_request_id",
-                            "transport_request_ids",
-                            *(
-                                ["transport_race_resolved", "pcap_observed"]
-                                if race_resolved else []
-                            ),
-                        ],
+                        "status": resolution.status,
+                        "method": resolution.method,
+                        "confidence": 1.0 if connection_id else 0.0,
+                        "evidence": list(resolution.evidence),
+                        **({"unmatched_reason": resolution.unmatched_reason}
+                           if resolution.unmatched_reason else {}),
                     }
-                    if connection_id
+                    if connection_id or resolution.status == "ambiguous"
                     else {
                         "status": "unmatched",
-                        "method": "none",
+                        "method": resolution.method,
                         "confidence": 0.0,
                         "evidence": observation_evidence,
-                        "unmatched_reason": (
-                            "non_network_response"
-                            if network_observation not in {"network", "unknown"}
-                            else "no_transport_connection"
+                        "unmatched_reason": _request_unmatched_reason(
+                            request, network_observation, resolution.unmatched_reason,
                         ),
                     }
                 ),
             })
     return output
+
+
+def _request_unmatched_reason(
+    request,
+    network_observation: str,
+    resolver_reason: str | None,
+) -> str:
+    if resolver_reason:
+        return resolver_reason
+    if network_observation not in {"network", "unknown"}:
+        return "non_network_response"
+    if request.response_status > 0:
+        return "response_transport_unbound"
+    if request.response_status == 0:
+        return "no_response"
+    return "no_transport_connection"
 
 
 def _request_network_observation(
@@ -374,83 +390,6 @@ def _request_network_observation(
             "cdp_response_received",
         ]
     return "unknown", ["request_not_in_transport_index"]
-
-
-def _rank_request_flows(
-    flows: list[CorrelatedFlowV2],
-    pcap_by_connection: dict[str, ConnectionPcapResult] | None = None,
-) -> list[CorrelatedFlowV2]:
-    """Prefer the strongest complete pipeline; retain every alternative."""
-    pcap_by_connection = pcap_by_connection or {}
-    unique = {flow.stable_connection_id: flow for flow in flows}
-    return sorted(
-        unique.values(),
-        key=lambda flow: (
-            -int(_pcap_observed(pcap_by_connection.get(flow.stable_connection_id))),
-            -int(flow.match_status == "matched"),
-            -int(flow.match_method == "exact_pre_flow"),
-            -int(bool(flow.post_flow and flow.post_flow.complete)),
-            -int(bool(flow.pre_flow and flow.pre_flow.complete)),
-            -int(bool(flow.terminal and flow.terminal.status == "closed")),
-            -float(flow.match_confidence),
-            flow.stable_connection_id,
-        ),
-    )
-
-
-def _with_transport_race_alternatives(
-    direct: list[CorrelatedFlowV2],
-    all_flows: list[CorrelatedFlowV2],
-    request_url: str,
-    pcap_by_connection: dict[str, ConnectionPcapResult],
-) -> list[CorrelatedFlowV2]:
-    """Add only packet-backed winners for a packet-empty transport race."""
-    if not direct or not any(
-        _pcap_empty(pcap_by_connection.get(flow.stable_connection_id))
-        for flow in direct
-    ):
-        return list(direct)
-    resource_key = _transport_race_resource_key(request_url)
-    alternatives = [
-        flow
-        for flow in all_flows
-        if flow not in direct
-        and _transport_race_resource_key(flow.url) == resource_key
-        and flow.match_status == "matched"
-        and bool(flow.post_flow and flow.post_flow.complete)
-        and _pcap_observed(pcap_by_connection.get(flow.stable_connection_id))
-    ]
-    return [*direct, *alternatives]
-
-
-def _pcap_observed(result: ConnectionPcapResult | None) -> bool:
-    return bool(
-        result
-        and result.pre_proxy.status == "success"
-        and result.pre_proxy.packet_count > 0
-    )
-
-
-def _pcap_empty(result: ConnectionPcapResult | None) -> bool:
-    return bool(
-        result
-        and result.pre_proxy.status == "empty"
-        and result.pre_proxy.packet_count == 0
-    )
-
-
-def _transport_race_resource_key(url: str) -> str:
-    """Ignore transport retry counters without collapsing resource identity."""
-    parsed = urlsplit(url)
-    query = [
-        (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key not in {"rn", "alr"}
-    ]
-    return urlunsplit((
-        parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
-        urlencode(sorted(query)), "",
-    ))
 
 
 def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:

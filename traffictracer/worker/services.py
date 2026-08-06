@@ -31,6 +31,7 @@ from traffictracer.jobs.models import (
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import ProgressReporter, ProgressWindow
 from traffictracer.layout import group_directory_name
+from traffictracer.build_info import component_versions_dict
 from traffictracer.session.manifest import (
     Artifact,
     ComponentVersion,
@@ -40,7 +41,6 @@ from traffictracer.session.manifest import (
     SessionTarget,
 )
 from traffictracer.session.store import MANIFEST_NAME, SessionStore, SessionStoreError
-from traffictracer.version import COMPLETE_VERSION
 
 from .dispatcher import WorkerMethodError
 from .job_manager import JobManager
@@ -410,15 +410,17 @@ class WorkerServices:
     ):
         assert isinstance(spec, CaptureJobSpec)
         self._require_output_root(spec.output_root)
-        traffictracer_version = ComponentVersion(COMPLETE_VERSION, "unknown")
-        component_version = ComponentVersion("unknown", "unknown")
+        versions = component_versions_dict()
         manifest = self.store.create(
             job_id=spec.job_id,
             target=SessionTarget(spec.url, spec.domain, spec.target_source.to_dict()),
             component_versions=ComponentVersions(
-                traffictracer_version,
-                component_version,
-                component_version,
+                traffictracer=ComponentVersion(**versions["traffictracer"]),
+                mihomo=ComponentVersion(**versions["mihomo"]),
+                clash_verge_rev=ComponentVersion(
+                    **versions["clash_verge_rev"]
+                ),
+                worker_api=versions["worker_api"],
             ),
             page_type=spec.page_type,
             capture_group=spec.capture_group,

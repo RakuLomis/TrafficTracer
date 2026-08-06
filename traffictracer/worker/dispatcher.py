@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from threading import Lock
 from typing import Any
 
+from traffictracer.build_info import component_versions_dict
 from traffictracer.contracts import ValidationError, validate_worker_message
 from traffictracer.jobs.cancellation import CancelledError
 from traffictracer.version import (
@@ -169,6 +170,7 @@ class Dispatcher:
         return {
             "product": "TrafficTracer Complete Worker",
             "version": COMPLETE_VERSION,
+            "component_versions": component_versions_dict(),
             "api_version": WORKER_API_VERSION,
             "job_schema_version": JOB_SCHEMA_VERSION,
             "session_schema_version": SESSION_SCHEMA_VERSION,

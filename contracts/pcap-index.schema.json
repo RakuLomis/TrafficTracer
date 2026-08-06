@@ -81,6 +81,28 @@
         "missing_post_flow": { "type": "integer", "minimum": 0 }
       }
     },
+    "reasonCounts": {
+      "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "pageAttributedCoverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["browser_requests", "transport_connections", "logical_flows", "unmatched_reasons"],
+      "properties": {
+        "browser_requests": { "$ref": "#/$defs/partition" },
+        "transport_connections": { "$ref": "#/$defs/partition" },
+        "logical_flows": { "$ref": "#/$defs/coreCoverage" },
+        "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" }
+      }
+    },
+    "captureGlobalCoverage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["core_logical_flows", "unmatched_reasons"],
+      "properties": {
+        "core_logical_flows": { "$ref": "#/$defs/coreCoverage" },
+        "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" }
+      }
+    },
     "coverage": {
       "type": "object", "additionalProperties": false,
       "required": ["browser_requests", "transport_connections", "core_logical_flows", "unmatched_reasons"],
@@ -88,10 +110,9 @@
         "browser_requests": { "$ref": "#/$defs/partition" },
         "transport_connections": { "$ref": "#/$defs/partition" },
         "core_logical_flows": { "$ref": "#/$defs/coreCoverage" },
-        "unmatched_reasons": {
-          "type": "object", "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
-          "additionalProperties": { "type": "integer", "minimum": 0 }
-        }
+        "page_attributed": { "$ref": "#/$defs/pageAttributedCoverage" },
+        "capture_global": { "$ref": "#/$defs/captureGlobalCoverage" },
+        "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" }
       }
     }
   }

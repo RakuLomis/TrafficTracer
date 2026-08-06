@@ -172,6 +172,20 @@ def check_worker(path: Path, lock: dict) -> None:
     }
     if response is None or any(response.get(key) != value for key, value in expected.items()):
         raise RuntimeError(f"Worker hello does not match component lock: {response}")
+    versions = response.get("component_versions", {})
+    for name in ("mihomo", "clash_verge_rev"):
+        expected_commit = lock["components"][name]["commit"]
+        if versions.get(name, {}).get("commit") != expected_commit:
+            raise RuntimeError(f"Worker {name} metadata does not match component lock")
+    traffictracer_commit = versions.get("traffictracer", {}).get("commit", "")
+    if not (
+        isinstance(traffictracer_commit, str)
+        and len(traffictracer_commit) == 40
+        and all(char in "0123456789abcdef" for char in traffictracer_commit)
+    ):
+        raise RuntimeError("Worker TrafficTracer commit metadata is unavailable")
+    if versions.get("worker_api") != lock["protocols"]["worker_api"]:
+        raise RuntimeError("Worker build metadata API does not match component lock")
 
 
 def check_core(path: Path, smoke_script: Path, lock: dict) -> None:
