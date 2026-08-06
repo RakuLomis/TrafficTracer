@@ -112,7 +112,7 @@ make dev
 7. 点击“检测环境”，关闭所有阻断项。
 8. 点击“开始捕获”。所选目标组成一个 Capture group，并强制每项完成分析后才进入下一项。
 9. Capture group 卡片展示当前 N/total、阶段、页面 Session 和错误；可请求取消，failed/interrupted 状态可从准确目标继续。
-10. 在“会话”查看状态、警告和产物，或点击“重新分析”。
+10. 捕获运行时“会话”自动选中本次时间戳目录并只显示该 Capture group；空闲时默认不显示历史内容，可点击“选择文件夹”打开当前输出根目录下的历史时间戳目录，再查看状态、警告、产物或“重新分析”。
 11. 在“规范化流”输入代理前五元组，查询全部 Session。
 
 诊断覆盖 TT 核心能力、控制器、TUN 服务、两个接口、捕获工具/权限、浏览器和存储空间。捕获期间核心、配置、tracing、TUN、系统代理与服务控制会锁定，避免运行时状态漂移。
@@ -206,6 +206,8 @@ ls -l /run/clash-verge-service/service.sock
                     ├── pre.pcap
                     └── post.pcap
 ```
+
+“会话”始终以一个时间戳目录为浏览作用域：活动捕获自动选择当前 Capture group，任务结束后自动选择会清空；用户手动选择的目录会保留到切换输出根目录或点击“清除选择”。不能选择输出根目录本身、domain/page 子目录、隐藏运行目录、外部目录或软链接。旧版直属 `<timestamp>_<session-id>` 目录作为单 Session 作用域兼容。`.chrome-profiles` 中 Chrome 扩展的 `manifest.json` 不属于 TrafficTracer Session，不会参与损坏检测。
 
 - “取消任务”会触发协作式取消、终止受管子进程并恢复 Mihomo tracing；
 - 关闭 TrafficTracer 页面不会取消后台任务；

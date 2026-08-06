@@ -187,3 +187,87 @@ def test_cleanup_preview_keeps_latest_generation(tmp_path):
         f"results/generations/{older.name}/flow-index.json"
     ]
     assert (latest / "flow-index.json").read_bytes() == b"new"
+
+
+
+def test_scan_ignores_chrome_extension_manifests(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    extension = (
+        tmp_path
+        / ".chrome-profiles"
+        / "example.com"
+        / "main-page"
+        / "Default"
+        / "Extensions"
+        / "extension-id"
+        / "1.0.0"
+    )
+    extension.mkdir(parents=True)
+    (extension / "manifest.json").write_text(
+        json.dumps({"manifest_version": 3, "name": "Chrome extension"}),
+        encoding="utf-8",
+    )
+
+    result = store.scan()
+
+    assert [item.session_id for item in result.sessions] == [manifest.session_id]
+    assert result.corrupt == ()
+
+
+def test_scoped_scan_only_returns_selected_capture_group(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    first = store.create(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        target=SessionTarget("https://example.com/one", "example.com"),
+        component_versions=_versions(),
+        now=BASE_TIME,
+        page_type="main-page",
+        capture_group="20260731-080000-000",
+    )
+    second = store.create(
+        job_id="c8c76aef-bbf2-45d4-96d6-9a0c52c34f91",
+        target=SessionTarget("https://example.org/two", "example.org"),
+        component_versions=_versions(),
+        now=BASE_TIME + timedelta(seconds=1),
+        page_type="video-play1",
+        capture_group="20260731-080001-000",
+    )
+
+    scope = store.resolve_scope_path(tmp_path / "20260731-080000-000")
+    result = store.scan_scope(scope.scope_id)
+
+    assert scope.kind == "capture_group"
+    assert scope.created_at == "2026-07-31T08:00:00Z"
+    assert [item.session_id for item in result.sessions] == [first.session_id]
+    assert second.session_id not in {item.session_id for item in result.sessions}
+    assert store.scope_for_job(first.job_id) == scope
+
+
+def test_scope_rejects_root_reserved_nested_external_and_symlink(tmp_path):
+    store = SessionStore(tmp_path / "sessions")
+    root = store.output_root
+    (root / ".chrome-profiles").mkdir()
+    group = root / "20260731-080000-000"
+    (group / "example.com").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "20260731-080001-000").symlink_to(outside, target_is_directory=True)
+
+    for selected in (root, root / ".chrome-profiles", group / "example.com", outside):
+        with pytest.raises(UnsafeSessionPathError):
+            store.resolve_scope_path(selected)
+    with pytest.raises(UnsafeSessionPathError, match="symbolic link"):
+        store.resolve_scope_path(root / "20260731-080001-000")
+
+
+def test_missing_active_capture_group_can_be_resolved_but_not_scanned(tmp_path):
+    store = SessionStore(tmp_path)
+    scope = store.resolve_scope_id(
+        "20260731-080000-000", allow_missing_capture_group=True
+    )
+
+    assert scope.exists is False
+    assert scope.kind == "capture_group"
+    assert store.scan_scope(scope.scope_id).sessions == ()
+    assert store.scan_scope(scope.scope_id).corrupt == ()

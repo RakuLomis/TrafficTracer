@@ -342,3 +342,89 @@ def test_flow_query_prefers_latest_reanalysis_generation(tmp_path, monkeypatch):
     queried = services.flow_query({"session_id": manifest.session_id, **pre})
 
     assert [item["flow_id"] for item in queried["items"]] == ["new"]
+
+
+
+def test_session_scope_resolve_and_list_are_folder_scoped(tmp_path):
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    first = services.store.create(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        target=SessionTarget("https://example.com/one", "example.com"),
+        component_versions=ComponentVersions(
+            *(ComponentVersion("complete", "unknown") for _ in range(3))
+        ),
+        page_type="main-page",
+        capture_group="20260805-110256-685",
+    )
+    services.store.create(
+        job_id="c8c76aef-bbf2-45d4-96d6-9a0c52c34f91",
+        target=SessionTarget("https://example.org/two", "example.org"),
+        component_versions=ComponentVersions(
+            *(ComponentVersion("complete", "unknown") for _ in range(3))
+        ),
+        page_type="video-play1",
+        capture_group="20260805-110300-000",
+    )
+
+    by_path = services.session_scope_resolve(
+        {"path": str(services.store.output_root / "20260805-110256-685")}
+    )
+    by_job = services.session_scope_resolve({"job_id": first.job_id})
+    listed = services.session_scope_list({"scope_id": by_path["scope_id"]})
+
+    assert by_job == by_path
+    assert listed["scope"] == by_path
+    assert [item["session_id"] for item in listed["sessions"]] == [
+        first.session_id
+    ]
+    assert listed["corrupt"] == []
+
+
+def test_session_scope_resolve_rejects_root_and_returns_none_before_job_manifest(
+    tmp_path,
+):
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    with pytest.raises(WorkerMethodError) as raised:
+        services.session_scope_resolve({"path": str(services.store.output_root)})
+    assert raised.value.code == "INVALID_PARAMS"
+    assert services.session_scope_resolve(
+        {"job_id": "2f746e31-d62a-4e1c-a919-3f88ecde31c2"}
+    ) is None
+
+
+
+def test_session_scope_resolve_maps_batch_to_its_stable_capture_group(tmp_path):
+    from datetime import datetime, timezone
+
+    from traffictracer.jobs.batch_models import BatchJobSpec, BatchManifest
+
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    payload = json.loads(BATCH_FIXTURE.read_text(encoding="utf-8"))
+    payload["output_root"] = str(services.store.output_root)
+    manifest = BatchManifest.create(
+        BatchJobSpec.from_dict(payload),
+        now=datetime(2026, 8, 5, 11, 2, 56, 685000, tzinfo=timezone.utc),
+    )
+    services.batches.save(manifest)
+
+    scope = services.session_scope_resolve({"batch_id": manifest.batch_id})
+
+    assert scope["scope_id"] == "20260805-110256-685"
+    assert scope["kind"] == "capture_group"
+    assert scope["exists"] is False
+    assert services.session_scope_list({"scope_id": scope["scope_id"]})[
+        "sessions"
+    ] == []

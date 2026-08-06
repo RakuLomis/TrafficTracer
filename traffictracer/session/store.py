@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import shutil
 from typing import Callable
 from uuid import UUID, uuid4
@@ -18,6 +19,8 @@ from .manifest import ComponentVersions, SessionManifest, SessionTarget
 
 
 MANIFEST_NAME = "manifest.json"
+_RESERVED_ROOT_DIRECTORIES = frozenset({".batches", ".chrome-profiles"})
+_CAPTURE_GROUP_NAME = re.compile(r"^\d{8}-\d{6}-\d{3}$")
 
 
 class SessionStoreError(RuntimeError):
@@ -46,6 +49,25 @@ class CorruptSession:
 class SessionScanResult:
     sessions: tuple[SessionManifest, ...]
     corrupt: tuple[CorruptSession, ...]
+
+
+@dataclass(frozen=True)
+class SessionScope:
+    scope_id: str
+    directory: str
+    kind: str
+    created_at: str | None
+    exists: bool
+
+    def to_dict(self) -> dict[str, str | bool | None]:
+        return {
+            "scope_id": self.scope_id,
+            "display_name": self.scope_id,
+            "directory": self.directory,
+            "kind": self.kind,
+            "created_at": self.created_at,
+            "exists": self.exists,
+        }
 
 
 class SessionStore:
@@ -139,7 +161,7 @@ class SessionStore:
         canonical = _validate_session_id(session_id)
         matches: list[SessionManifest] = []
         matching_corrupt: list[Exception] = []
-        for manifest_path in self._root.rglob(MANIFEST_NAME):
+        for manifest_path in self._manifest_candidates():
             try:
                 manifest = self._load_managed_manifest(manifest_path.parent)
             except (OSError, ValueError, json.JSONDecodeError, SessionStoreError) as exc:
@@ -161,9 +183,89 @@ class SessionStore:
         return matches[0]
 
     def scan(self) -> SessionScanResult:
+        return self._scan_candidates(self._manifest_candidates())
+
+    def scan_scope(self, scope_id: str) -> SessionScanResult:
+        scope = self.resolve_scope_id(scope_id, allow_missing_capture_group=True)
+        if not scope.exists:
+            return SessionScanResult((), ())
+        return self._scan_candidates(self._manifest_candidates(Path(scope.directory)))
+
+    def resolve_scope_path(self, value: str | Path) -> SessionScope:
+        path = Path(value)
+        if not path.is_absolute():
+            raise UnsafeSessionPathError("Session scope path must be absolute")
+        if path.is_symlink():
+            raise UnsafeSessionPathError("Session scope must not be a symbolic link")
+        unresolved = path.resolve(strict=False)
+        if unresolved.parent != self._root:
+            raise UnsafeSessionPathError(
+                "Session scope must be a direct child of output_root"
+            )
+        return self.resolve_scope_id(path.name)
+
+    def resolve_scope_id(
+        self,
+        scope_id: str,
+        *,
+        allow_missing_capture_group: bool = False,
+    ) -> SessionScope:
+        if (
+            not isinstance(scope_id, str)
+            or not scope_id
+            or scope_id in {".", ".."}
+            or Path(scope_id).name != scope_id
+            or scope_id.startswith(".")
+            or scope_id in _RESERVED_ROOT_DIRECTORIES
+        ):
+            raise UnsafeSessionPathError("Invalid Session scope identifier")
+        candidate = self._root / scope_id
+        if candidate.is_symlink():
+            raise UnsafeSessionPathError("Session scope must not be a symbolic link")
+        resolved = candidate.resolve(strict=False)
+        if resolved.parent != self._root:
+            raise UnsafeSessionPathError("Session scope is outside output_root")
+        exists = candidate.exists()
+        if exists and not candidate.is_dir():
+            raise UnsafeSessionPathError("Session scope must be a directory")
+        direct_manifest = candidate / MANIFEST_NAME
+        if exists and direct_manifest.is_file():
+            kind = "legacy_session"
+        elif exists and _CAPTURE_GROUP_NAME.fullmatch(scope_id):
+            kind = "capture_group"
+        elif (
+            not exists
+            and allow_missing_capture_group
+            and _CAPTURE_GROUP_NAME.fullmatch(scope_id)
+        ):
+            kind = "capture_group"
+        else:
+            raise UnsafeSessionPathError(
+                "Selected directory is not a TrafficTracer timestamp folder"
+            )
+        return SessionScope(
+            scope_id=scope_id,
+            directory=str(resolved),
+            kind=kind,
+            created_at=_scope_created_at(scope_id),
+            exists=exists,
+        )
+
+    def scope_for_job(self, job_id: str) -> SessionScope | None:
+        for manifest_path in self._manifest_candidates():
+            try:
+                manifest = self._load_managed_manifest(manifest_path.parent)
+            except (OSError, ValueError, json.JSONDecodeError, SessionStoreError):
+                continue
+            if manifest.job_id == job_id:
+                relative = manifest_path.parent.relative_to(self._root)
+                return self.resolve_scope_id(relative.parts[0])
+        return None
+
+    def _scan_candidates(self, candidates) -> SessionScanResult:
         sessions: list[SessionManifest] = []
         corrupt: list[CorruptSession] = []
-        for manifest_path in self._root.rglob(MANIFEST_NAME):
+        for manifest_path in candidates:
             child = manifest_path.parent
             try:
                 sessions.append(self._load_managed_manifest(child))
@@ -172,6 +274,44 @@ class SessionStore:
         sessions.sort(key=lambda item: (item.created_at, item.session_id), reverse=True)
         corrupt.sort(key=lambda item: item.session_dir)
         return SessionScanResult(tuple(sessions), tuple(corrupt))
+
+    def _manifest_candidates(self, scope: Path | None = None):
+        roots = [scope] if scope is not None else self._session_roots()
+        for root in roots:
+            direct = root / MANIFEST_NAME
+            if direct.is_file():
+                yield direct
+                continue
+            if not root.is_dir():
+                continue
+            for domain in sorted(root.iterdir(), key=lambda item: item.name):
+                if (
+                    not domain.is_dir()
+                    or domain.is_symlink()
+                    or domain.name.startswith(".")
+                ):
+                    continue
+                for page in sorted(domain.iterdir(), key=lambda item: item.name):
+                    if (
+                        not page.is_dir()
+                        or page.is_symlink()
+                        or page.name.startswith(".")
+                    ):
+                        continue
+                    manifest_path = page / MANIFEST_NAME
+                    if manifest_path.is_file():
+                        yield manifest_path
+
+    def _session_roots(self):
+        for child in sorted(self._root.iterdir(), key=lambda item: item.name):
+            if (
+                child.name.startswith(".")
+                or child.name in _RESERVED_ROOT_DIRECTORIES
+                or child.is_symlink()
+                or not child.is_dir()
+            ):
+                continue
+            yield child
 
     def list_sessions(self) -> tuple[SessionManifest, ...]:
         return self.scan().sessions
@@ -308,6 +448,15 @@ class SessionStore:
         if resolved == self._root or not resolved.is_relative_to(self._root):
             raise UnsafeSessionPathError("Session directory is outside output_root")
         return resolved
+
+
+def _scope_created_at(scope_id: str) -> str | None:
+    if not _CAPTURE_GROUP_NAME.fullmatch(scope_id):
+        return None
+    value = datetime.strptime(scope_id, "%Y%m%d-%H%M%S-%f").replace(
+        tzinfo=timezone.utc
+    )
+    return value.isoformat().replace("+00:00", "Z")
 
 
 def _validate_session_id(value: str) -> str:

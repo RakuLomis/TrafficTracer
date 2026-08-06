@@ -30,6 +30,7 @@ from traffictracer.jobs.models import (
 )
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import ProgressReporter, ProgressWindow
+from traffictracer.layout import group_directory_name
 from traffictracer.session.manifest import (
     Artifact,
     ComponentVersion,
@@ -38,7 +39,7 @@ from traffictracer.session.manifest import (
     SessionManifest,
     SessionTarget,
 )
-from traffictracer.session.store import MANIFEST_NAME, SessionStore
+from traffictracer.session.store import MANIFEST_NAME, SessionStore, SessionStoreError
 from traffictracer.version import COMPLETE_VERSION
 
 from .dispatcher import WorkerMethodError
@@ -74,6 +75,8 @@ class WorkerServices:
             "environment.diagnose": self.diagnose,
             "config.targets.load": self.load_targets,
             "session.list": self.session_list,
+            "session.scope.resolve": self.session_scope_resolve,
+            "session.scope.list": self.session_scope_list,
             "session.get": self.session_get,
             "session.delete": self.session_delete,
             "session.cleanup.preview": self.session_cleanup_preview,
@@ -138,6 +141,61 @@ class WorkerServices:
             )
         scan = self.store.scan()
         return {
+            "sessions": [manifest.to_dict() for manifest in scan.sessions],
+            "corrupt": [
+                {"session_dir": item.session_dir, "message": item.message}
+                for item in scan.corrupt
+            ],
+        }
+
+    def session_scope_resolve(self, params: dict[str, Any]) -> dict[str, Any] | None:
+        selectors = {"path", "job_id", "batch_id"} & set(params)
+        if len(selectors) != 1 or set(params) != selectors:
+            raise WorkerMethodError(
+                "INVALID_PARAMS",
+                "session.scope.resolve requires exactly one of path, job_id or batch_id.",
+            )
+        selector = selectors.pop()
+        value = params.get(selector)
+        if not isinstance(value, str) or not value:
+            raise WorkerMethodError(
+                "INVALID_PARAMS", f"{selector} must be a non-empty string."
+            )
+        try:
+            if selector == "path":
+                scope = self.store.resolve_scope_path(value)
+            elif selector == "job_id":
+                scope = self.store.scope_for_job(value)
+                if scope is None:
+                    return None
+            else:
+                batch = self._batch_manifest(value)
+                scope = self.store.resolve_scope_id(
+                    group_directory_name(batch.created_at),
+                    allow_missing_capture_group=True,
+                )
+        except WorkerMethodError:
+            raise
+        except (OSError, TypeError, ValueError, SessionStoreError) as exc:
+            raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
+        return scope.to_dict()
+
+    def session_scope_list(self, params: dict[str, Any]) -> dict[str, Any]:
+        if set(params) != {"scope_id"} or not isinstance(
+            params.get("scope_id"), str
+        ):
+            raise WorkerMethodError(
+                "INVALID_PARAMS", "session.scope.list requires one string scope_id."
+            )
+        try:
+            scope = self.store.resolve_scope_id(
+                params["scope_id"], allow_missing_capture_group=True
+            )
+            scan = self.store.scan_scope(scope.scope_id)
+        except (OSError, TypeError, ValueError, SessionStoreError) as exc:
+            raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
+        return {
+            "scope": scope.to_dict(),
             "sessions": [manifest.to_dict() for manifest in scan.sessions],
             "corrupt": [
                 {"session_dir": item.session_dir, "message": item.message}

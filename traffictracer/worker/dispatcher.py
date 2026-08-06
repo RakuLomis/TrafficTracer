@@ -30,6 +30,8 @@ METHODS = (
     "job.status",
     "analysis.start",
     "session.list",
+    "session.scope.resolve",
+    "session.scope.list",
     "session.get",
     "session.delete",
     "session.cleanup.preview",

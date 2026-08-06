@@ -68,7 +68,9 @@ sites:
                     └── post.pcap
 ```
 
-连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。历史损坏 Session 会在列表中单独报告，不会阻塞新的 Capture group；恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
+连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
+
+“会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。
 
 开发入口：
 
