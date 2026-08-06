@@ -121,6 +121,9 @@ def test_collector_parses_response_received():
                 "connectionReused": True,
                 "remoteIPAddress": "1.2.3.4",
                 "remotePort": 443,
+                "fromDiskCache": True,
+                "fromServiceWorker": False,
+                "fromPrefetchCache": False,
             },
         }, session_id="S1")
 
@@ -138,6 +141,7 @@ def test_collector_parses_response_received():
         assert resp["remote_ip"] == "1.2.3.4"
         assert resp["remote_port"] == 443
         assert resp["connection_reused"] is True
+        assert resp["from_disk_cache"] is True
 
     asyncio.run(run())
 
@@ -164,6 +168,9 @@ def test_collector_structured_data_output():
             "remote_port": 443,
             "connection_reused": False,
             "status": 200,
+            "from_disk_cache": True,
+            "from_service_worker": False,
+            "from_prefetch_cache": False,
         }
 
         data = collector.get_structured_data()
@@ -174,6 +181,7 @@ def test_collector_structured_data_output():
         assert req["connection_id"] == 5
         assert req["remote_ip"] == "10.0.0.1"
         assert req["connection_reused"] is False
+        assert req["from_disk_cache"] is True
 
     asyncio.run(run())
 

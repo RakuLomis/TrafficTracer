@@ -164,6 +164,7 @@ def run_analysis(
             connection_results,
             output_dir=results_path,
             generation_id=generation_id,
+            pcap_results=pcap_results,
         )
         persist_pcap_index(
             session,

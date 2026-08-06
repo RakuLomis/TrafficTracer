@@ -39,6 +39,7 @@ def test_parse_basic_requests():
                 "remote_port": 443,
                 "connection_reused": False,
                 "response_status": 200,
+                "from_disk_cache": True,
                 "target_type": "page",
             },
             {
@@ -68,6 +69,8 @@ def test_parse_basic_requests():
     assert isinstance(requests[0], AttributedRequest)
     assert requests[0].url == "https://www.bilibili.com/"
     assert requests[0].resource_type == "Document"
+    assert requests[0].response_status == 200
+    assert requests[0].from_disk_cache is True
     assert requests[1].url == "https://cdn.unknown.net/video.m4s"
     assert requests[1].connection_id == 17
     assert requests[1].connection_reused is True

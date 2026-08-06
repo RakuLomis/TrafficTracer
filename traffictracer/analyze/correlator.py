@@ -171,6 +171,16 @@ def correlate_v2(
                 if mconn and mconn.proxy_dial
                 else ""
             ),
+            proxy=(
+                mconn.proxy_dial.proxy
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
+            proxy_type=(
+                mconn.proxy_dial.proxy_type
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
             stable_connection_id=stable_id,
             match_method=decision.method,
             match_candidates=[
@@ -346,6 +356,12 @@ def _correlate_cdp_udp(
             match_confidence=0.35,
             conn_id=rich.conn_key if rich else uc.conn_key,
             outer_conn_id=rich.proxy_dial.outer_conn_id if rich and rich.proxy_dial else "",
+            proxy=rich.proxy_dial.proxy if rich and rich.proxy_dial else "",
+            proxy_type=(
+                rich.proxy_dial.proxy_type
+                if rich and rich.proxy_dial
+                else ""
+            ),
             terminal=_terminal_from_close(rich.close if rich else None),
         ))
 
@@ -382,4 +398,3 @@ def _infer_relation(url: str, domain: str) -> str:
     if domain.lower() in host.lower():
         return "same_site"
     return "cross_site"
-

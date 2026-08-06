@@ -63,12 +63,27 @@ sites:
         └── analysis/
             └── pcap/
                 └── 0001__https_cdn.example_video.m4s/
-                    ├── mapping.json  # connection_id、primary_url、全部 URLs/request_ids
+                    ├── mapping.json  # canonical/alternative connections、全部 URLs/request_ids
                     ├── pre.pcap
-                    └── post.pcap
+                    ├── post.pcap
+                    └── alternative-01-udp-pre.pcap  # 仅在备选连接确有报文时存在
 ```
 
 连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
+
+同一网络资源的 transport 重试（例如 YouTube `videoplayback` 的 TCP 与
+QUIC 尝试）按完整 URL 规范化后合并到一个目录；只忽略明确的重试参数
+`rn`/`alr`，不会把其他 query 不同的资源错误合并。`pre.pcap`、`post.pcap`
+属于有包且关联证据最强的 canonical connection；真实有包的其他连接使用
+`alternative-XX-<protocol>-*.pcap`。空 QUIC 尝试不生成空文件，但其 connection
+ID、协议和 `empty/not_requested` 状态仍完整保存在 `mapping.json` 与索引中。
+
+`request-index-v2.json` 保留每个完整 URL/request ID，并使用 PCAP 证据解决
+“空 QUIC 尝试后回落 TCP”的 transport race；candidate connection 不会被删除。
+新捕获还记录 CDP 的 disk cache、Service Worker 和 prefetch 标志，在 coverage
+中将无需网络 transport 的请求单列为 `non_network`。`connection-index-v2.json`
+提供 `egress.mode/selection_chain` 以及 `sharing` 的三种独立原因：请求复用、
+post-flow 共享和外层连接复用；旧 `shared` 布尔字段继续保留用于兼容。
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。
 

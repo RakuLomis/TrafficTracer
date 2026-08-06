@@ -101,6 +101,13 @@ def test_layered_coverage_conserves_each_denominator_for_partial_trace():
     requests = [
         {"attribution": {"status": "matched"}},
         {
+            "network_observation": "disk_cache",
+            "attribution": {
+                "status": "unmatched",
+                "unmatched_reason": "non_network_response",
+            },
+        },
+        {
             "attribution": {
                 "status": "ambiguous",
                 "unmatched_reason": "multiple_candidates",
@@ -147,12 +154,15 @@ def test_layered_coverage_conserves_each_denominator_for_partial_trace():
     coverage = layered_coverage(requests, connections, core_flows)
     for name in ("browser_requests", "transport_connections"):
         partition = coverage[name]
-        assert (
+        accounted = (
             partition["matched"]
             + partition["ambiguous"]
             + partition["unmatched"]
-            == partition["total"]
         )
+        if name == "browser_requests":
+            accounted += partition["non_network"]
+        assert accounted == partition["total"]
+    assert coverage["browser_requests"]["non_network"] == 1
     assert coverage["core_logical_flows"] == {
         "total": 4,
         "with_post_flow": 2,
@@ -220,6 +230,7 @@ def test_summary_is_recomputable_from_v2_indexes(tmp_path):
 def test_empty_layered_coverage_has_three_zero_denominators():
     coverage = layered_coverage([], [])
     assert coverage["browser_requests"]["total"] == 0
+    assert coverage["browser_requests"]["non_network"] == 0
     assert coverage["transport_connections"]["total"] == 0
     assert coverage["core_logical_flows"] == {
         "total": 0,

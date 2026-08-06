@@ -67,7 +67,8 @@
         "total": { "type": "integer", "minimum": 0 },
         "matched": { "type": "integer", "minimum": 0 },
         "ambiguous": { "type": "integer", "minimum": 0 },
-        "unmatched": { "type": "integer", "minimum": 0 }
+        "unmatched": { "type": "integer", "minimum": 0 },
+        "non_network": { "type": "integer", "minimum": 0 }
       }
     },
     "coreCoverage": {

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import subprocess
 from uuid import uuid4
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from traffictracer.layout import safe_url_slug
 from traffictracer.session.atomic import write_json_atomic
@@ -159,10 +160,8 @@ def split_flows_v2(
             unique.setdefault(flow.stable_connection_id, []).append(flow)
 
     request_urls = {request.request_id: request.url for request in result.requests}
-    outputs: list[ConnectionPcapResult] = []
-    for ordinal, (connection_id, connection_flows) in enumerate(
-        sorted(unique.items()), start=1
-    ):
+    entries: list[dict] = []
+    for connection_id, connection_flows in sorted(unique.items()):
         flow = max(
             connection_flows,
             key=lambda item: (
@@ -181,51 +180,165 @@ def split_flows_v2(
             if flow.post_flow and flow.post_flow.complete
             else _build_filter_from_addr(flow.post_proxy_src, flow.post_proxy_dst)
         )
-        if split_mode == SPLIT_NONE:
-            pre = PcapSideResult("not_requested", pre_filter)
-            post = PcapSideResult("not_requested", post_filter)
-        else:
-            request_ids = sorted({
-                request_id
-                for connection_flow in connection_flows
-                for request_id in connection_flow.request_ids
-            })
-            urls = sorted({
-                request_urls[item]
-                for item in request_ids
-                if item in request_urls
-            })
-            primary_url = urls[0] if urls else (result.visit_url or f"https://{result.domain}/")
-            connection_dir = Path(output_base) / (
-                f"{ordinal:04d}__{safe_url_slug(primary_url)}"
-            )
-            connection_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            write_json_atomic(connection_dir / "mapping.json", {
-                "connection_id": connection_id,
-                "primary_url": primary_url,
-                "urls": urls,
-                "request_ids": request_ids,
-            })
+        request_ids = sorted({
+            request_id
+            for connection_flow in connection_flows
+            for request_id in connection_flow.request_ids
+        })
+        urls = sorted({
+            request_urls[item]
+            for item in request_ids
+            if item in request_urls
+        })
+        primary_url = urls[0] if urls else (
+            flow.url or result.visit_url or f"https://{result.domain}/"
+        )
+        entries.append({
+            "connection_id": connection_id,
+            "flow": flow,
+            "protocol": protocol,
+            "pre_filter": pre_filter,
+            "post_filter": post_filter,
+            "request_ids": request_ids,
+            "urls": urls,
+            "primary_url": primary_url,
+        })
+
+    if split_mode == SPLIT_NONE:
+        return [ConnectionPcapResult(
+            connection_id=entry["connection_id"],
+            protocol=entry["protocol"],
+            request_ids=tuple(entry["request_ids"]),
+            pre_proxy=PcapSideResult(
+                "not_requested", entry["pre_filter"],
+            ),
+            post_proxy=PcapSideResult(
+                "not_requested", entry["post_filter"],
+            ),
+        ) for entry in entries]
+
+    groups: dict[str, list[dict]] = {}
+    for entry in entries:
+        groups.setdefault(
+            _resource_key(entry["primary_url"]), [],
+        ).append(entry)
+
+    outputs: list[ConnectionPcapResult] = []
+    for ordinal, resource_entries in enumerate(groups.values(), start=1):
+        primary_url = resource_entries[0]["primary_url"]
+        resource_dir = Path(output_base) / (
+            f"{ordinal:04d}__{safe_url_slug(primary_url)}"
+        )
+        resource_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        extracted: list[tuple[dict, ConnectionPcapResult]] = []
+        for candidate_ordinal, entry in enumerate(resource_entries, start=1):
+            stem = f".candidate-{candidate_ordinal:02d}"
+            connection_id = entry["connection_id"]
             pre = _extract_side(
-                tun_pcap, pre_filter, connection_dir / "pre.pcap",
+                tun_pcap, entry["pre_filter"],
+                resource_dir / f"{stem}-pre.pcap",
                 f"pcap-{connection_id[5:]}-pre",
             )
             post = _extract_side(
-                phys_pcap, post_filter, connection_dir / "post.pcap",
+                phys_pcap, entry["post_filter"],
+                resource_dir / f"{stem}-post.pcap",
                 f"pcap-{connection_id[5:]}-post",
             )
-        outputs.append(ConnectionPcapResult(
-            connection_id=connection_id,
-            protocol=protocol,
-            request_ids=tuple(sorted({
+            extracted.append((entry, ConnectionPcapResult(
+                connection_id=connection_id,
+                protocol=entry["protocol"],
+                request_ids=tuple(entry["request_ids"]),
+                pre_proxy=pre,
+                post_proxy=post,
+            )))
+
+        ranked = sorted(extracted, key=_resource_candidate_rank)
+        canonical_id = ranked[0][1].connection_id
+        finalized: dict[str, ConnectionPcapResult] = {}
+        alternatives = 0
+        for entry, item in extracted:
+            canonical = item.connection_id == canonical_id
+            if canonical:
+                prefix = ""
+            else:
+                alternatives += 1
+                prefix = f"alternative-{alternatives:02d}-{item.protocol}-"
+            finalized[item.connection_id] = replace(
+                item,
+                pre_proxy=_rename_side(
+                    item.pre_proxy,
+                    resource_dir / f"{prefix}pre.pcap",
+                ),
+                post_proxy=_rename_side(
+                    item.post_proxy,
+                    resource_dir / f"{prefix}post.pcap",
+                ),
+            )
+        ordered = [finalized[entry["connection_id"]] for entry in resource_entries]
+        outputs.extend(ordered)
+        write_json_atomic(resource_dir / "mapping.json", {
+            "connection_id": canonical_id,
+            "canonical_connection_id": canonical_id,
+            "primary_url": primary_url,
+            "urls": sorted({
+                url for entry in resource_entries for url in entry["urls"]
+            }),
+            "request_ids": sorted({
                 request_id
-                for connection_flow in connection_flows
-                for request_id in connection_flow.request_ids
-            })),
-            pre_proxy=pre,
-            post_proxy=post,
-        ))
+                for entry in resource_entries
+                for request_id in entry["request_ids"]
+            }),
+            "connections": [
+                {
+                    "connection_id": item.connection_id,
+                    "protocol": item.protocol,
+                    "role": (
+                        "canonical"
+                        if item.connection_id == canonical_id
+                        else "alternative"
+                    ),
+                    "pre_status": item.pre_proxy.status,
+                    "post_status": item.post_proxy.status,
+                }
+                for item in ordered
+            ],
+        })
     return outputs
+
+
+def _resource_candidate_rank(
+    pair: tuple[dict, ConnectionPcapResult],
+) -> tuple:
+    entry, item = pair
+    flow = entry["flow"]
+    return (
+        -int(item.pre_proxy.status == "success" and item.pre_proxy.packet_count > 0),
+        -int(item.post_proxy.status == "success" and item.post_proxy.packet_count > 0),
+        -int(flow.match_status == "matched"),
+        -int(bool(flow.post_flow and flow.post_flow.complete)),
+        item.connection_id,
+    )
+
+
+def _rename_side(side: PcapSideResult, destination: Path) -> PcapSideResult:
+    if not side.path:
+        return side
+    source = Path(side.path)
+    os.replace(source, destination)
+    return replace(side, path=str(destination))
+
+
+def _resource_key(url: str) -> str:
+    parsed = urlsplit(url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"rn", "alr"}
+    ]
+    return urlunsplit((
+        parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
+        urlencode(sorted(query)), "",
+    ))
 
 
 def _extract_side(

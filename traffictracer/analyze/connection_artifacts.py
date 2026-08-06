@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+import json
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
@@ -33,23 +35,41 @@ def persist_connection_artifacts(
     *,
     output_dir: str | Path | None = None,
     generation_id: str | None = None,
+    pcap_results: list[ConnectionPcapResult] | None = None,
 ) -> ConnectionArtifacts:
     generation_id = generation_id or str(
         uuid5(NAMESPACE_URL, f"{Path(session_dir).resolve().as_uri()}#analysis-v2")
     )
+    proxy_selections = _load_proxy_selections(Path(session_dir))
     connections = _merge_connection_records([
-        _connection_record(flow, session_id, generation_id)
+        _connection_record(
+            flow, session_id, generation_id, proxy_selections,
+        )
         for result in results
         for flow in result.flows
         if flow.stable_connection_id
     ])
-    requests = _request_records(results, session_id, generation_id)
+    _annotate_outer_connection_reuse(connections)
+    requests = _request_records(
+        results, session_id, generation_id, pcap_results or [],
+    )
     urls_by_connection: dict[str, set[str]] = {}
+    request_ids_by_connection: dict[str, set[str]] = {}
     for request in requests:
         connection_id = request.get("connection_id")
         if connection_id:
             urls_by_connection.setdefault(connection_id, set()).add(request["url"])
+            request_ids_by_connection.setdefault(connection_id, set()).add(
+                request["request_id"]
+            )
     for connection in connections:
+        connection["request_ids"] = sorted(
+            set(connection["request_ids"])
+            | request_ids_by_connection.get(connection["connection_id"], set())
+        )
+        if len(connection["request_ids"]) > 1:
+            connection["sharing"]["request_multiplexed"] = True
+            connection["shared"] = True
         urls = sorted(urls_by_connection.get(connection["connection_id"], set()))
         connection["urls"] = urls
         connection["primary_url"] = urls[0] if urls else None
@@ -85,11 +105,27 @@ def _merge_connection_records(records: list[dict]) -> list[dict]:
             merged[record["connection_id"]] = record
             continue
         existing["request_ids"] = sorted(set(existing["request_ids"]) | set(record["request_ids"]))
-        existing["shared"] = bool(existing["shared"] or record["shared"] or len(existing["request_ids"]) > 1)
+        existing["sharing"]["request_multiplexed"] = bool(
+            len(existing["request_ids"]) > 1
+        )
+        existing["sharing"]["post_flow_shared"] = bool(
+            existing["sharing"]["post_flow_shared"]
+            or record["sharing"]["post_flow_shared"]
+        )
+        existing["shared"] = bool(
+            existing["sharing"]["request_multiplexed"]
+            or existing["sharing"]["post_flow_shared"]
+            or existing["sharing"]["outer_connection_reused"]
+        )
     return list(merged.values())
 
 
-def _connection_record(flow: CorrelatedFlowV2, session_id: str, generation_id: str) -> dict:
+def _connection_record(
+    flow: CorrelatedFlowV2,
+    session_id: str,
+    generation_id: str,
+    proxy_selections: dict[str, dict],
+) -> dict:
     candidates = [
         {
             "connection_id": item["connection_id"],
@@ -121,7 +157,21 @@ def _connection_record(flow: CorrelatedFlowV2, session_id: str, generation_id: s
         "protocol": _network(flow.protocol),
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
         "post_flow": _flow_payload(flow.post_flow, "post_proxy") if flow.post_flow else None,
-        "shared": bool(flow.connection_reused or (flow.post_flow and flow.post_flow.shared)),
+        "sharing": {
+            "request_multiplexed": bool(
+                flow.connection_reused or len(set(flow.request_ids)) > 1
+            ),
+            "post_flow_shared": bool(
+                flow.post_flow and flow.post_flow.shared
+            ),
+            "outer_connection_reused": False,
+        },
+        "shared": bool(
+            flow.connection_reused
+            or len(set(flow.request_ids)) > 1
+            or (flow.post_flow and flow.post_flow.shared)
+        ),
+        "egress": _resolve_egress(flow, proxy_selections),
         "match": match,
         "request_ids": sorted(set(flow.request_ids)),
     }
@@ -136,18 +186,129 @@ def _connection_record(flow: CorrelatedFlowV2, session_id: str, generation_id: s
     return record
 
 
-def _request_records(results: list[VisitCorrelation], session_id: str, generation_id: str) -> list[dict]:
+def _annotate_outer_connection_reuse(records: list[dict]) -> None:
+    counts: dict[str, int] = {}
+    for record in records:
+        outer = record.get("outer_connection_id")
+        if outer:
+            counts[outer] = counts.get(outer, 0) + 1
+    for record in records:
+        outer = record.get("outer_connection_id")
+        reused = bool(outer and counts.get(outer, 0) > 1)
+        record["sharing"]["outer_connection_reused"] = reused
+        record["shared"] = bool(
+            record["sharing"]["request_multiplexed"]
+            or record["sharing"]["post_flow_shared"]
+            or reused
+        )
+
+
+def _load_proxy_selections(session: Path) -> dict[str, dict]:
+    paths = [session / "raw" / "proxy-info.json"]
+    paths.extend(sorted((session / "logs").glob("proxy_info_*.json")))
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, list):
+            return {
+                item["group"]: item
+                for item in payload
+                if isinstance(item, dict) and item.get("group")
+            }
+    return {}
+
+
+def _resolve_egress(
+    flow: CorrelatedFlowV2,
+    selections: dict[str, dict],
+) -> dict:
+    policy = flow.proxy
+    chain: list[str] = []
+    selected_type = flow.proxy_type or ""
+    current = policy
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        chain.append(current)
+        selection = selections.get(current)
+        if not selection:
+            break
+        selected_type = str(selection.get("type", "")) or selected_type
+        node = str(selection.get("node", ""))
+        if not node or node == current:
+            break
+        current = node
+    if current and (not chain or chain[-1] != current):
+        chain.append(current)
+
+    terminal = chain[-1] if chain else ""
+    lowered_type = selected_type.lower()
+    if terminal.upper() == "DIRECT" or lowered_type == "direct":
+        mode = "direct"
+    elif terminal and (
+        flow.post_flow is not None
+        or lowered_type not in {"", "selector", "fallback", "urltest"}
+    ):
+        mode = "proxy"
+    else:
+        mode = "unknown"
+    return {
+        "mode": mode,
+        "policy": policy or None,
+        "selection_chain": chain,
+        "selected_node": terminal or None,
+        "selected_type": selected_type or None,
+        "evidence": (
+            "mihomo_trace_and_session_proxy_snapshot"
+            if policy and policy in selections
+            else "mihomo_trace"
+            if policy
+            else "unavailable"
+        ),
+    }
+
+
+def _request_records(
+    results: list[VisitCorrelation],
+    session_id: str,
+    generation_id: str,
+    pcap_results: list[ConnectionPcapResult],
+) -> list[dict]:
     output: list[dict] = []
+    pcap_by_connection = {item.connection_id: item for item in pcap_results}
     for result in results:
-        by_request = {
-            request_id: flow
-            for flow in result.flows
-            for request_id in flow.request_ids
-            if flow.stable_connection_id
-        }
+        all_flows = [
+            flow for flow in result.flows if flow.stable_connection_id
+        ]
+        by_request: dict[str, list[CorrelatedFlowV2]] = {}
+        for flow in all_flows:
+            for request_id in flow.request_ids:
+                by_request.setdefault(request_id, []).append(flow)
         for request in result.requests:
-            flow = by_request.get(request.request_id)
+            direct_candidates = by_request.get(request.request_id, [])
+            candidates = _rank_request_flows(
+                _with_transport_race_alternatives(
+                    direct_candidates,
+                    all_flows,
+                    request.url,
+                    pcap_by_connection,
+                ),
+                pcap_by_connection,
+            )
+            flow = candidates[0] if candidates else None
             connection_id = flow.stable_connection_id if flow else None
+            race_resolved = bool(
+                flow is not None and flow not in direct_candidates
+            )
+            network_observation, observation_evidence = (
+                _request_network_observation(request)
+            )
+            if connection_id:
+                network_observation = "network"
             output.append({
                 "schema_version": FLOW_SCHEMA_V2_VERSION,
                 "record_type": "request",
@@ -158,14 +319,138 @@ def _request_records(results: list[VisitCorrelation], session_id: str, generatio
                 "resource_type": request.resource_type,
                 "relation": _relation(request.url, result.domain),
                 "connection_id": connection_id,
-                "candidate_connection_ids": [connection_id] if connection_id else [],
+                "candidate_connection_ids": [
+                    item.stable_connection_id for item in candidates
+                ],
+                "network_observation": network_observation,
                 "attribution": (
-                    {"status": "matched", "method": "netlog_socket", "confidence": 1.0, "evidence": ["netlog_request_id", "transport_request_ids"]}
+                    {
+                        "status": "matched",
+                        "method": "netlog_socket",
+                        "confidence": 1.0,
+                        "evidence": [
+                            "netlog_request_id",
+                            "transport_request_ids",
+                            *(
+                                ["transport_race_resolved", "pcap_observed"]
+                                if race_resolved else []
+                            ),
+                        ],
+                    }
                     if connection_id
-                    else {"status": "unmatched", "method": "none", "confidence": 0.0, "evidence": ["request_not_in_transport_index"], "unmatched_reason": "no_transport_connection"}
+                    else {
+                        "status": "unmatched",
+                        "method": "none",
+                        "confidence": 0.0,
+                        "evidence": observation_evidence,
+                        "unmatched_reason": (
+                            "non_network_response"
+                            if network_observation not in {"network", "unknown"}
+                            else "no_transport_connection"
+                        ),
+                    }
                 ),
             })
     return output
+
+
+def _request_network_observation(
+    request,
+) -> tuple[str, list[str]]:
+    """Classify whether Chrome expected a packet-bearing transport."""
+    if request.from_service_worker:
+        return "service_worker", ["cdp_from_service_worker"]
+    if request.from_prefetch_cache:
+        return "prefetch_cache", ["cdp_from_prefetch_cache"]
+    if request.from_disk_cache:
+        return "disk_cache", ["cdp_from_disk_cache"]
+    if request.remote_ip or (
+        request.connection_id is not None and request.connection_id > 0
+    ):
+        return "network", ["request_not_in_transport_index"]
+    if request.connection_id == 0 and request.response_status > 0:
+        return "browser_internal", [
+            "cdp_connection_id_zero",
+            "cdp_response_received",
+        ]
+    return "unknown", ["request_not_in_transport_index"]
+
+
+def _rank_request_flows(
+    flows: list[CorrelatedFlowV2],
+    pcap_by_connection: dict[str, ConnectionPcapResult] | None = None,
+) -> list[CorrelatedFlowV2]:
+    """Prefer the strongest complete pipeline; retain every alternative."""
+    pcap_by_connection = pcap_by_connection or {}
+    unique = {flow.stable_connection_id: flow for flow in flows}
+    return sorted(
+        unique.values(),
+        key=lambda flow: (
+            -int(_pcap_observed(pcap_by_connection.get(flow.stable_connection_id))),
+            -int(flow.match_status == "matched"),
+            -int(flow.match_method == "exact_pre_flow"),
+            -int(bool(flow.post_flow and flow.post_flow.complete)),
+            -int(bool(flow.pre_flow and flow.pre_flow.complete)),
+            -int(bool(flow.terminal and flow.terminal.status == "closed")),
+            -float(flow.match_confidence),
+            flow.stable_connection_id,
+        ),
+    )
+
+
+def _with_transport_race_alternatives(
+    direct: list[CorrelatedFlowV2],
+    all_flows: list[CorrelatedFlowV2],
+    request_url: str,
+    pcap_by_connection: dict[str, ConnectionPcapResult],
+) -> list[CorrelatedFlowV2]:
+    """Add only packet-backed winners for a packet-empty transport race."""
+    if not direct or not any(
+        _pcap_empty(pcap_by_connection.get(flow.stable_connection_id))
+        for flow in direct
+    ):
+        return list(direct)
+    resource_key = _transport_race_resource_key(request_url)
+    alternatives = [
+        flow
+        for flow in all_flows
+        if flow not in direct
+        and _transport_race_resource_key(flow.url) == resource_key
+        and flow.match_status == "matched"
+        and bool(flow.post_flow and flow.post_flow.complete)
+        and _pcap_observed(pcap_by_connection.get(flow.stable_connection_id))
+    ]
+    return [*direct, *alternatives]
+
+
+def _pcap_observed(result: ConnectionPcapResult | None) -> bool:
+    return bool(
+        result
+        and result.pre_proxy.status == "success"
+        and result.pre_proxy.packet_count > 0
+    )
+
+
+def _pcap_empty(result: ConnectionPcapResult | None) -> bool:
+    return bool(
+        result
+        and result.pre_proxy.status == "empty"
+        and result.pre_proxy.packet_count == 0
+    )
+
+
+def _transport_race_resource_key(url: str) -> str:
+    """Ignore transport retry counters without collapsing resource identity."""
+    parsed = urlsplit(url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"rn", "alr"}
+    ]
+    return urlunsplit((
+        parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
+        urlencode(sorted(query)), "",
+    ))
 
 
 def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:

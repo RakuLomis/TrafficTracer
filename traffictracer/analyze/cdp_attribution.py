@@ -41,6 +41,10 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
             remote_ip=raw.get("remote_ip", ""),
             remote_port=raw.get("remote_port", 0),
             connection_reused=raw.get("connection_reused", False),
+            response_status=raw.get("response_status", 0),
+            from_disk_cache=raw.get("from_disk_cache", False),
+            from_service_worker=raw.get("from_service_worker", False),
+            from_prefetch_cache=raw.get("from_prefetch_cache", False),
         ))
 
     logger.info("Parsed %d attributed requests from CDP data", len(result))

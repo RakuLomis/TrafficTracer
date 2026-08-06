@@ -204,7 +204,8 @@ ls -l /run/clash-verge-service/service.sock
                 └── <ordinal>__<readable-request-url>/
                     ├── mapping.json
                     ├── pre.pcap
-                    └── post.pcap
+                    ├── post.pcap
+                    └── alternative-01-udp-pre.pcap  # 仅有包的备选 transport
 ```
 
 “会话”始终以一个时间戳目录为浏览作用域：活动捕获自动选择当前 Capture group，任务结束后自动选择会清空；用户手动选择的目录会保留到切换输出根目录或点击“清除选择”。不能选择输出根目录本身、domain/page 子目录、隐藏运行目录、外部目录或软链接。旧版直属 `<timestamp>_<session-id>` 目录作为单 Session 作用域兼容。`.chrome-profiles` 中 Chrome 扩展的 `manifest.json` 不属于 TrafficTracer Session，不会参与损坏检测。
@@ -231,7 +232,22 @@ ls -l /run/clash-verge-service/service.sock
 - `post_flow.shared=true`：多个逻辑流共享外层连接，不是一对一 NAT；
 - `post_flow=null`：没有观测到完整拨号结果，不会用 `pre_flow` 伪造。
 
-启用拆分时，`analysis/pcap` 为每个稳定连接生成一组双侧 PCAP；HTTP/2、QUIC 等复用连接可对应多个请求 URL，完整集合记录在同目录 `mapping.json` 和 connection/request index 中。
+连接详情中的 `sharing` 会进一步区分请求复用、post-flow 共享和外层连接复用；
+`egress` 根据 Mihomo trace 的策略组与本 Session 的 `proxy-info.json` 快照展示
+`direct/proxy/unknown`、完整选择链和最终节点。该快照是可审计证据，但如果捕获
+期间外部程序改变了组选择，它不等同于逐事件路由历史。
+
+启用拆分时，`analysis/pcap` 按规范网络资源生成目录。完整 URL 仍保留在
+request index；资源分组只忽略 transport retry 参数 `rn`/`alr`。同一资源的
+canonical connection 使用 `pre.pcap/post.pcap`，有报文的其他候选使用
+`alternative-XX-<protocol>-*.pcap`；空 QUIC 尝试不生成空 PCAP，但仍在
+`mapping.json` 中记录为 alternative 及其状态。HTTP/2 复用的全部 URL/request ID
+也保留在 mapping 和 connection/request index 中。
+
+浏览器 coverage 中 `non_network` 表示 CDP 明确报告 disk cache、Service Worker、
+prefetch，或收到响应但 `connectionId=0` 的浏览器内部响应。这些请求没有可捕获的
+独立五元组，不计为抓包缺失；它们仍保留 URL、request ID 与分类证据。旧 Session
+没有这些 CDP 标志时保持兼容，不会凭空伪造缓存来源。
 
 ## 8. Linux 打包
 

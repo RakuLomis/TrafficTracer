@@ -188,6 +188,43 @@ def test_trace_multiple_requests_same_connection():
     assert "4.1" in all_rids
     assert "4.2" in all_rids
 
+
+def test_query_occurrences_are_not_broadcast_to_every_transport():
+    """Repeated paths retain one-to-one request occurrences across transports."""
+    first = "https://media.example/videoplayback?rn=1"
+    second = "https://media.example/videoplayback?rn=2"
+    events = [
+        {"time": "1000", "type": 0, "phase": 0,
+         "source": {"id": 100, "type": 1},
+         "params": {"url": first, "source_dependency": {"id": 200, "type": 5}}},
+        {"time": "1010", "type": 0, "phase": 0,
+         "source": {"id": 101, "type": 1},
+         "params": {"url": second, "source_dependency": {"id": 201, "type": 5}}},
+        {"time": "1020", "type": 50, "phase": 2,
+         "source": {"id": 300, "type": 10},
+         "params": {"local_address": "198.18.0.1:60362",
+                     "remote_address": "198.18.0.56:443",
+                     "source_dependency": {"id": 200, "type": 5}}},
+        {"time": "1030", "type": 50, "phase": 2,
+         "source": {"id": 301, "type": 10},
+         "params": {"local_address": "198.18.0.1:60366",
+                     "remote_address": "198.18.0.56:443",
+                     "source_dependency": {"id": 201, "type": 5}}},
+    ]
+    path = _make_netlog(events)
+    requests = [
+        AttributedRequest("media.1", "T", "F", first, "Media", 100.0),
+        AttributedRequest("media.2", "T", "F", second, "Media", 101.0),
+    ]
+    try:
+        connections = trace_transport(requests, path)
+    finally:
+        os.unlink(path)
+
+    assert len(connections) == 2
+    by_port = {item.src_port: item.request_ids for item in connections}
+    assert by_port == {60362: ["media.1"], 60366: ["media.2"]}
+
 def test_dns_only_dependency_is_not_a_browser_transport():
     events = [
         {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},

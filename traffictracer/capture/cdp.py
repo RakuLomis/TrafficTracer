@@ -180,6 +180,9 @@ class CDPCollector:
             "remote_port": resp.get("remotePort", 0),
             "connection_reused": resp.get("connectionReused", False),
             "status": resp.get("status", 0),
+            "from_disk_cache": resp.get("fromDiskCache", False),
+            "from_service_worker": resp.get("fromServiceWorker", False),
+            "from_prefetch_cache": resp.get("fromPrefetchCache", False),
         }
 
     def _on_websocket_created(self, params: dict, session_id: str) -> None:
@@ -330,6 +333,13 @@ class CDPCollector:
             entry["remote_port"] = resp.get("remote_port", 0)
             entry["connection_reused"] = resp.get("connection_reused", False)
             entry["response_status"] = resp.get("status", 0)
+            entry["from_disk_cache"] = resp.get("from_disk_cache", False)
+            entry["from_service_worker"] = resp.get(
+                "from_service_worker", False,
+            )
+            entry["from_prefetch_cache"] = resp.get(
+                "from_prefetch_cache", False,
+            )
             target_info = self._targets.get(req.get("target_id", ""), {})
             entry["target_type"] = target_info.get("type", "unknown")
             merged_requests.append(entry)

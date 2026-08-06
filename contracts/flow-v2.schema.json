@@ -51,6 +51,27 @@
         "duration_ms": { "type": "integer", "minimum": 0 }
       }
     },
+    "sharing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_multiplexed", "post_flow_shared", "outer_connection_reused"],
+      "properties": {
+        "request_multiplexed": { "type": "boolean" },
+        "post_flow_shared": { "type": "boolean" },
+        "outer_connection_reused": { "type": "boolean" }
+      }
+    },
+    "egress": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "policy", "selection_chain", "selected_node", "selected_type", "evidence"],
+      "properties": {
+        "mode": { "enum": ["direct", "proxy", "unknown"] },
+        "policy": { "type": ["string", "null"] },
+        "selection_chain": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "selected_node": { "type": ["string", "null"] },
+        "selected_type": { "type": ["string", "null"] },
+        "evidence": { "enum": ["mihomo_trace_and_session_proxy_snapshot", "mihomo_trace", "unavailable"] }
+      }
+    },
     "match": {
       "type": "object", "additionalProperties": false,
       "required": ["status", "method", "confidence", "candidates", "evidence"],
@@ -76,7 +97,7 @@
         "method": { "enum": ["netlog_socket", "endpoint_time", "host_time", "none"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "unmatched_reason": { "enum": ["no_transport_connection", "multiple_candidates", "insufficient_time", "missing_request_metadata"] }
+        "unmatched_reason": { "enum": ["no_transport_connection", "non_network_response", "multiple_candidates", "insufficient_time", "missing_request_metadata"] }
       },
       "allOf": [
         { "if": { "properties": { "status": { "enum": ["ambiguous", "unmatched"] } }, "required": ["status"] }, "then": { "required": ["unmatched_reason"] } }
@@ -96,6 +117,7 @@
         "relation": { "enum": ["same_site", "cross_site", "unknown"] },
         "connection_id": { "oneOf": [{ "$ref": "#/$defs/connectionId" }, { "type": "null" }] },
         "candidate_connection_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectionId" } },
+        "network_observation": { "enum": ["network", "disk_cache", "service_worker", "prefetch_cache", "browser_internal", "unknown"] },
         "attribution": { "$ref": "#/$defs/requestAttribution" }
       },
       "allOf": [
@@ -130,6 +152,8 @@
         "terminal": { "$ref": "#/$defs/terminal" },
         "mihomo_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "shared": { "type": "boolean" },
+        "sharing": { "$ref": "#/$defs/sharing" },
+        "egress": { "$ref": "#/$defs/egress" },
         "match": { "$ref": "#/$defs/match" },
         "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
         "primary_url": { "type": ["string", "null"], "pattern": "^https?://" },

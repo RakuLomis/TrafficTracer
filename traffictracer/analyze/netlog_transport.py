@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urlparse
 
 from ..models import AttributedRequest, TransportConnection
 from ..utils import logger
@@ -39,74 +39,72 @@ def trace_transport(
     entries = process_events(events, constants)
     children_index = _build_children_index(entries)
 
-    request_urls: dict[str, list[str]] = {}
-    for req in requests:
-        normalized = _normalize_url(req.url)
-        request_urls.setdefault(normalized, []).append(req.request_id)
-
-    netlog_url_index: dict[str, list[int]] = {}
+    observations: list[dict] = []
     for sid, entry in entries.items():
         if entry.source_type != SRC_URL_REQUEST:
             continue
         url = _extract_url_from_entry(entry)
-        if url:
-            normalized = _normalize_url(url)
-            netlog_url_index.setdefault(normalized, []).append(sid)
+        if not url:
+            continue
+        chain = build_connection_chain(sid, entries, children_index)
+        ft = chain.five_tuple
+        sibling_source_id = None
+        if not _complete_five_tuple(ft):
+            sibling_source_id = _fill_from_siblings(sid, entries, children_index, ft)
 
+        # A connection record represents a real pre-proxy flow. Requests
+        # without a complete transport remain explicit unmatched request
+        # records instead of becoming invalid partial connection records.
+        if not _complete_five_tuple(ft):
+            continue
+        observations.append({
+            "sid": sid,
+            "url": url,
+            "chain": chain,
+            "five_tuple": ft,
+            "transport_source_id": _transport_source_id(
+                chain, sibling_source_id or sid,
+            ),
+            "sort_key": _entry_sort_key(entry, sid),
+        })
+
+    request_bindings = _bind_request_occurrences(requests, observations)
+    requests_by_id = {request.request_id: request for request in requests}
     connections_by_source: dict[int, TransportConnection] = {}
-    seen_source_ids: set[int] = set()
-
-    for normalized_url, source_ids in netlog_url_index.items():
-        if normalized_url not in request_urls:
+    for observation in observations:
+        matched_request_ids = request_bindings.get(observation["sid"], [])
+        if not matched_request_ids:
+            continue
+        first_observed = min(
+            (requests_by_id[item].timestamp for item in matched_request_ids),
+            default=None,
+        )
+        transport_source_id = observation["transport_source_id"]
+        existing = connections_by_source.get(transport_source_id)
+        if existing is not None:
+            existing.request_ids = list(dict.fromkeys([
+                *existing.request_ids, *matched_request_ids,
+            ]))
+            if first_observed is not None:
+                existing.first_observed = (
+                    min(existing.first_observed, first_observed)
+                    if existing.first_observed is not None
+                    else first_observed
+                )
             continue
 
-        matched_request_ids = request_urls[normalized_url]
-
-        for sid in source_ids:
-            if sid in seen_source_ids:
-                continue
-            seen_source_ids.add(sid)
-
-            chain = build_connection_chain(sid, entries, children_index)
-            ft = chain.five_tuple
-
-            sibling_source_id = None
-            if not _complete_five_tuple(ft):
-                sibling_source_id = _fill_from_siblings(sid, entries, children_index, ft)
-
-            # A connection record represents a real pre-proxy flow. Requests
-            # without a complete transport remain explicit unmatched request
-            # records instead of becoming invalid partial connection records.
-            if not _complete_five_tuple(ft):
-                continue
-
-            transport_source_id = _transport_source_id(chain, sibling_source_id or sid)
-            first_observed = min(
-                (req.timestamp for req in requests if req.request_id in matched_request_ids),
-                default=None,
-            )
-            existing = connections_by_source.get(transport_source_id)
-            if existing is not None:
-                existing.request_ids = list(dict.fromkeys([*existing.request_ids, *matched_request_ids]))
-                if first_observed is not None:
-                    existing.first_observed = (
-                        min(existing.first_observed, first_observed)
-                        if existing.first_observed is not None
-                        else first_observed
-                    )
-                continue
-
-            connections_by_source[transport_source_id] = TransportConnection(
-                netlog_source_id=transport_source_id,
-                url=_denormalize_url(normalized_url),
-                src_ip=ft.src_ip or "",
-                src_port=ft.src_port or 0,
-                dst_ip=ft.dst_ip or "",
-                dst_port=ft.dst_port or 0,
-                protocol=ft.protocol or "",
-                request_ids=list(matched_request_ids),
-                first_observed=first_observed,
-            )
+        ft = observation["five_tuple"]
+        connections_by_source[transport_source_id] = TransportConnection(
+            netlog_source_id=transport_source_id,
+            url=observation["url"],
+            src_ip=ft.src_ip or "",
+            src_port=ft.src_port or 0,
+            dst_ip=ft.dst_ip or "",
+            dst_port=ft.dst_port or 0,
+            protocol=ft.protocol or "",
+            request_ids=list(matched_request_ids),
+            first_observed=first_observed,
+        )
 
     connections = _merge_alias_connections(list(connections_by_source.values()))
     logger.info("Traced %d transport connections for %d CDP requests",
@@ -180,6 +178,82 @@ def _extract_url_from_entry(entry) -> str:
     if entry.description and entry.description.startswith("http"):
         return entry.description
     return ""
+
+
+def _bind_request_occurrences(
+    requests: list[AttributedRequest],
+    observations: list[dict],
+) -> dict[int, list[str]]:
+    """Bind URL_REQUEST occurrences without broadcasting path aliases."""
+    bindings: dict[int, list[str]] = {}
+    assigned_requests: set[str] = set()
+    assigned_sources: set[int] = set()
+
+    _bind_occurrence_groups(
+        requests, observations, _exact_url,
+        bindings, assigned_requests, assigned_sources,
+    )
+    _bind_occurrence_groups(
+        requests, observations, _normalize_url,
+        bindings, assigned_requests, assigned_sources,
+    )
+    return bindings
+
+
+def _bind_occurrence_groups(
+    requests: list[AttributedRequest],
+    observations: list[dict],
+    key_fn,
+    bindings: dict[int, list[str]],
+    assigned_requests: set[str],
+    assigned_sources: set[int],
+) -> None:
+    request_groups: dict[str, list[AttributedRequest]] = {}
+    for request in requests:
+        if request.request_id in assigned_requests:
+            continue
+        request_groups.setdefault(key_fn(request.url), []).append(request)
+    source_groups: dict[str, list[dict]] = {}
+    for observation in observations:
+        if observation["sid"] in assigned_sources:
+            continue
+        source_groups.setdefault(key_fn(observation["url"]), []).append(observation)
+
+    for key in sorted(set(request_groups).intersection(source_groups)):
+        request_group = sorted(
+            request_groups[key], key=lambda item: (item.timestamp, item.request_id),
+        )
+        source_group = sorted(
+            source_groups[key], key=lambda item: item["sort_key"],
+        )
+        if len(source_group) == 1:
+            pairs = [(source_group[0], request_group)]
+        else:
+            pairs = [
+                (source, [request])
+                for source, request in zip(source_group, request_group)
+            ]
+        for source, matched in pairs:
+            if not matched:
+                continue
+            source_id = source["sid"]
+            bindings[source_id] = [item.request_id for item in matched]
+            assigned_sources.add(source_id)
+            assigned_requests.update(item.request_id for item in matched)
+
+
+def _exact_url(url: str) -> str:
+    return urldefrag(url).url
+
+
+def _entry_sort_key(entry, source_id: int) -> tuple[float, int]:
+    times: list[float] = []
+    for event in entry.entries:
+        try:
+            times.append(float(event.get("time")))
+        except (TypeError, ValueError):
+            continue
+    return (min(times) if times else float("inf"), source_id)
 
 
 def _normalize_url(url: str) -> str:

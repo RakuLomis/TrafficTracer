@@ -99,10 +99,7 @@ def layered_coverage(
     core_flow_records: list[dict] | None = None,
 ) -> dict:
     """Recompute conservative layer-specific coverage from persisted indexes."""
-    browser = _partition(
-        record.get("attribution", {}).get("status", "unmatched")
-        for record in request_records
-    )
+    browser = _request_partition(request_records)
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
         for record in connection_records
@@ -110,7 +107,11 @@ def layered_coverage(
     reasons: Counter[str] = Counter()
     for record in request_records:
         attribution = record.get("attribution", {})
-        if attribution.get("status") != "matched":
+        if (
+            attribution.get("status") != "matched"
+            and record.get("network_observation")
+            in {None, "network", "unknown"}
+        ):
             reasons[_normalized_reason(
                 attribution.get("unmatched_reason"),
                 "request_unmatched",
@@ -163,12 +164,32 @@ def _partition(statuses) -> dict:
     return {"total": sum(counts.values()), **dict(counts)}
 
 
+def _request_partition(records: list[dict]) -> dict:
+    non_network = {
+        "disk_cache", "service_worker", "prefetch_cache", "browser_internal",
+    }
+    counts = Counter({
+        "matched": 0, "ambiguous": 0, "unmatched": 0, "non_network": 0,
+    })
+    for record in records:
+        if record.get("network_observation") in non_network:
+            counts["non_network"] += 1
+            continue
+        status = record.get("attribution", {}).get("status", "unmatched")
+        counts[
+            status if status in {"matched", "ambiguous", "unmatched"}
+            else "unmatched"
+        ] += 1
+    return {"total": sum(counts.values()), **dict(counts)}
+
+
 def _assert_coverage_conservation(coverage: dict) -> None:
     for name in ("browser_requests", "transport_connections"):
         partition = coverage[name]
-        accounted = sum(
-            partition[key] for key in ("matched", "ambiguous", "unmatched")
-        )
+        keys = ["matched", "ambiguous", "unmatched"]
+        if name == "browser_requests":
+            keys.append("non_network")
+        accounted = sum(partition[key] for key in keys)
         if accounted != partition["total"]:
             raise ValueError(f"{name} coverage does not conserve its total")
     core = coverage["core_logical_flows"]

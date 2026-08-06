@@ -50,6 +50,10 @@ class AttributedRequest:
     remote_ip: str = ""
     remote_port: int = 0
     connection_reused: bool = False
+    response_status: int = 0
+    from_disk_cache: bool = False
+    from_service_worker: bool = False
+    from_prefetch_cache: bool = False
 
 
 @dataclass
@@ -101,6 +105,8 @@ class CorrelatedFlowV2:
     match_evidence: list[str] = field(default_factory=list)
     terminal: FlowTerminal | None = None
     netlog_source_id: int | None = None
+    proxy: str = ""
+    proxy_type: str = ""
 
 
 @dataclass

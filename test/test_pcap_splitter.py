@@ -139,16 +139,18 @@ def test_unique_connections_split_once_for_many_requests(tmp_path, monkeypatch):
     assert set(outputs[0].request_ids) == {
         f"request-{index}" for index in range(8)
     }
-    flow_dir = tmp_path / "0001__https_example.com"
+    flow_dir = tmp_path / "0001__https_example.com_a"
     assert {path.name for path in tmp_path.iterdir()} == {flow_dir.name}
     assert (flow_dir / "pre.pcap").is_file()
     assert (flow_dir / "post.pcap").is_file()
     mapping = json.loads((flow_dir / "mapping.json").read_text(encoding="utf-8"))
     assert mapping["connection_id"] == first
-    assert mapping["primary_url"] == "https://example.com/"
+    assert mapping["primary_url"] == "https://example.com/a"
 
 
-def test_repeated_and_long_urls_do_not_create_url_directories(tmp_path, monkeypatch):
+def test_repeated_and_long_urls_create_one_bounded_resource_directory(
+    tmp_path, monkeypatch,
+):
     connection_id = "conn-" + "3" * 32
     long_url = "https://example.com/" + "segment/" * 1000
     flows = [
@@ -163,9 +165,50 @@ def test_repeated_and_long_urls_do_not_create_url_directories(tmp_path, monkeypa
         _result(flows), "tun.pcap", "phys.pcap", str(tmp_path)
     )
     names = [path.name for path in tmp_path.iterdir()]
-    assert names == ["0001__https_example.com"]
+    assert len(names) == 1
+    assert names[0].startswith("0001__https_example.com_segment")
     assert len(names[0].encode()) <= 255
     assert outputs[0].request_ids == ("one", "two")
+
+
+def test_transport_retries_share_one_url_resource_directory(tmp_path, monkeypatch):
+    tcp_id = "conn-" + "9" * 32
+    quic_id = "conn-" + "a" * 32
+    tcp = _flow(
+        tcp_id, "media.1",
+        url="https://media.example/videoplayback?id=v&rn=1&alr=yes",
+    )
+    quic = _flow(
+        quic_id, "media.2",
+        url="https://media.example/videoplayback?id=v&rn=2&alr=yes",
+    )
+    quic.protocol = "QUIC"
+    quic.post_flow = None
+    quic.match_status = "ambiguous"
+    calls = []
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run",
+        _successful_tshark(calls),
+    )
+    result = _result([tcp, quic])
+    result.visit_url = ""
+
+    outputs = split_flows_v2(
+        result, "tun.pcap", "phys.pcap", str(tmp_path),
+    )
+
+    directories = list(tmp_path.iterdir())
+    assert len(directories) == 1
+    mapping = json.loads(
+        (directories[0] / "mapping.json").read_text(encoding="utf-8")
+    )
+    assert mapping["canonical_connection_id"] == tcp_id
+    assert [item["role"] for item in mapping["connections"]] == [
+        "canonical", "alternative",
+    ]
+    assert (directories[0] / "pre.pcap").is_file()
+    assert (directories[0] / "alternative-01-udp-pre.pcap").is_file()
+    assert len(outputs) == 2
 
 
 def test_none_mode_never_invokes_tshark(tmp_path, monkeypatch):
