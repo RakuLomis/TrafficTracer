@@ -238,3 +238,78 @@ def test_empty_layered_coverage_has_three_zero_denominators():
         "shared": 0,
         "missing_post_flow": 0,
     }
+
+
+def test_flow_index_backfills_requests_urls_and_generation_from_v2(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    pre = _flow("tcp", "198.18.0.1", 41000, "198.18.0.12", 443, "logical")
+    post = _flow("tcp", "192.0.2.10", 51000, "203.0.113.8", 24191, "physical")
+    (raw / "mihomo-trace.jsonl").write_text(
+        "\n".join([
+            json.dumps({
+                "type": "tcp_connect",
+                "conn_id": "mihomo-1",
+                "pre_flow": pre,
+            }),
+            json.dumps({
+                "type": "tcp_proxy_dial",
+                "conn_id": "mihomo-1",
+                "outer_conn_id": "outer-1",
+                "post_flow": post,
+            }),
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    results = tmp_path / "results"
+    results.mkdir()
+    generation = "78fdab68-4e5d-4b67-9910-33da00a2632a"
+    connection_id = "conn-11111111111111111111111111111111"
+    url_one = "https://www.youtube.com/"
+    url_two = "https://www.youtube.com/app.js"
+    (results / "request-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [
+            {
+                "request_id": "1.1",
+                "url": url_one,
+                "connection_id": connection_id,
+                "network_observation": "network",
+                "attribution": {"status": "matched"},
+            },
+            {
+                "request_id": "1.2",
+                "url": url_two,
+                "connection_id": connection_id,
+                "network_observation": "network",
+                "attribution": {"status": "matched"},
+            },
+        ],
+    }), encoding="utf-8")
+    (results / "connection-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [{
+            "connection_id": connection_id,
+            "mihomo_connection_id": "mihomo-1",
+            "request_ids": ["1.1", "1.2"],
+            "urls": [url_one, url_two],
+            "primary_url": url_one,
+            "post_flow": {"complete": True},
+            "shared": True,
+            "match": {"status": "matched", "method": "exact_pre_flow"},
+        }],
+    }), encoding="utf-8")
+
+    artifacts = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    index = json.loads(artifacts.flow_index.read_text(encoding="utf-8"))
+    summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
+    flow = index["items"][0]
+
+    assert index["analysis_generation_id"] == generation
+    assert flow["conn_id"] == "mihomo-1"
+    assert flow["request_ids"] == ["1.1", "1.2"]
+    assert flow["connection_ids"] == [connection_id]
+    assert flow["primary_url"] == url_one
+    assert flow["url"] == url_one
+    assert flow["urls"] == [url_one, url_two]
+    assert summary["consistency"]["status"] == "passed"

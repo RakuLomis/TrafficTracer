@@ -18,6 +18,7 @@ from traffictracer.session.store import MANIFEST_NAME, SessionStore
 
 from .pipeline import run_analysis
 from .artifacts import persist_analysis_artifacts
+from .consistency import AnalysisConsistencyError
 
 
 class AnalysisJob:
@@ -90,9 +91,14 @@ class AnalysisJob:
             raise
         except Exception as exc:
             stage = self.progress.stage.value if self.progress.stage is not None else None
+            error_code = (
+                "ANALYSIS_CONSISTENCY_FAILED"
+                if isinstance(exc, AnalysisConsistencyError)
+                else "ANALYSIS_FAILED"
+            )
             self._finish_manifest(
                 JobState.FAILED,
-                SessionError("ANALYSIS_FAILED", str(exc), stage),
+                SessionError(error_code, str(exc), stage),
             )
             self.progress.finish(JobState.FAILED, "analysis failed")
             raise

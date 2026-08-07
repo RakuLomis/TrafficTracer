@@ -6,11 +6,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.analyze.netlog import FiveTupleData, DomainConnections
 from traffictracer.analyze.mihomo_log import (
-    MihomoConnection, TcpConnect, TcpProxyDial, TcpClose,
+    MihomoConnection, TcpConnect, TcpProxyDial, TcpClose, UdpConnect, UdpConnection,
 )
 from traffictracer.analyze.correlator import correlate, CorrelationResult, CorrelatedFlow
-from traffictracer.models import FlowTuple, TransportConnection, VisitCorrelation, CorrelatedFlowV2
-from traffictracer.analyze.correlator import correlate_v2
+from traffictracer.models import AttributedRequest, FlowTuple, TransportConnection, VisitCorrelation, CorrelatedFlowV2
+from traffictracer.analyze.correlator import correlate_v2, correlate_cdp_direct
 
 
 def test_correlate_matching():
@@ -272,3 +272,42 @@ def test_correlate_v2_prefers_normalized_key():
     assert flow.post_proxy_src == "192.0.2.10:55000"
     assert flow.post_proxy_dst == "203.0.113.8:8443"
     assert flow.outer_conn_id == "outer"
+
+
+def test_cached_request_never_enters_udp_host_fallback():
+    pre = FlowTuple(
+        "udp", "198.18.0.1", 33213, "198.18.0.18", 443,
+        key="udp|198.18.0.1:33213|198.18.0.18:443",
+        complete=True,
+        source="metadata_snapshot",
+        scope="pre_proxy",
+    )
+    udp = UdpConnection(
+        "udp-flow",
+        UdpConnect(
+            "", "udp-flow", pre.src, pre.dst, "www.gstatic.com",
+            pre_flow=pre,
+        ),
+        None,
+        None,
+    )
+    cached = AttributedRequest(
+        "cache.1",
+        "target",
+        "frame",
+        "https://www.gstatic.com/youtube/img/favicon.png",
+        "Other",
+        100.0,
+        connection_id=0,
+        response_status=200,
+        from_disk_cache=True,
+    )
+
+    flows = correlate_cdp_direct(
+        [cached],
+        {},
+        "youtube.com",
+        udp_conns={"udp-flow": udp},
+    )
+
+    assert flows == []

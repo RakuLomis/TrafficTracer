@@ -215,3 +215,27 @@ def test_cancelled_v1_reanalysis_preserves_manifest_and_legacy_results(
 
     assert manifest_path.read_bytes() == manifest_before
     assert legacy.read_bytes() == b"legacy-flow-index"
+
+
+def test_analysis_consistency_failure_uses_dedicated_manifest_code(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+    from traffictracer.analyze.consistency import AnalysisConsistencyError
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "run_analysis",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AnalysisConsistencyError("cross-index mismatch")
+        ),
+    )
+
+    with pytest.raises(AnalysisConsistencyError, match="cross-index mismatch"):
+        _job(tmp_path, session_dir, []).run()
+
+    failed = store.get(manifest.session_id)
+    assert failed.state is JobState.FAILED
+    assert failed.error is not None
+    assert failed.error.code == "ANALYSIS_CONSISTENCY_FAILED"

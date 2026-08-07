@@ -14,6 +14,7 @@ from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideRe
 from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
 from traffictracer.analyze.request_resolver import resolve_visit_requests
+from traffictracer.analyze.request_observation import request_network_observation
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_V2_VERSION, PCAP_INDEX_SCHEMA_VERSION, SESSION_SCHEMA_V2_VERSION
 
@@ -66,19 +67,23 @@ def persist_connection_artifacts(
             )
     for connection in connections:
         connection["request_ids"] = sorted(
-            set(connection["request_ids"])
-            | request_ids_by_connection.get(connection["connection_id"], set())
+            request_ids_by_connection.get(connection["connection_id"], set())
         )
-        if len(connection["request_ids"]) > 1:
-            connection["sharing"]["request_multiplexed"] = True
-            connection["shared"] = True
+        connection["sharing"]["request_multiplexed"] = bool(
+            len(connection["request_ids"]) > 1
+        )
+        connection["shared"] = bool(
+            connection["sharing"]["request_multiplexed"]
+            or connection["sharing"]["post_flow_shared"]
+            or connection["sharing"]["outer_connection_reused"]
+        )
         urls = sorted(urls_by_connection.get(connection["connection_id"], set()))
         connection["urls"] = urls
         connection["primary_url"] = urls[0] if urls else None
     for record in [*connections, *requests]:
         validate_flow_v2(record)
     connections.sort(key=lambda item: item["connection_id"])
-    requests.sort(key=lambda item: item["request_id"])
+    requests.sort(key=lambda item: (item["request_id"], item["url"]))
 
     output = Path(output_dir) if output_dir is not None else Path(session_dir) / "results"
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -316,7 +321,7 @@ def _request_records(
             flow = resolution.flow
             connection_id = flow.stable_connection_id if flow else None
             network_observation, observation_evidence = (
-                _request_network_observation(request)
+                request_network_observation(request)
             )
             if connection_id:
                 network_observation = "network"
@@ -372,28 +377,6 @@ def _request_unmatched_reason(
     if request.response_status == 0:
         return "no_response"
     return "no_transport_connection"
-
-
-def _request_network_observation(
-    request,
-) -> tuple[str, list[str]]:
-    """Classify whether Chrome expected a packet-bearing transport."""
-    if request.from_service_worker:
-        return "service_worker", ["cdp_from_service_worker"]
-    if request.from_prefetch_cache:
-        return "prefetch_cache", ["cdp_from_prefetch_cache"]
-    if request.from_disk_cache:
-        return "disk_cache", ["cdp_from_disk_cache"]
-    if request.remote_ip or (
-        request.connection_id is not None and request.connection_id > 0
-    ):
-        return "network", ["request_not_in_transport_index"]
-    if request.connection_id == 0 and request.response_status > 0:
-        return "browser_internal", [
-            "cdp_connection_id_zero",
-            "cdp_response_received",
-        ]
-    return "unknown", ["request_not_in_transport_index"]
 
 
 def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:

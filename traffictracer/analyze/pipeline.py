@@ -32,6 +32,7 @@ from .connection_artifacts import (
     persist_connection_artifacts,
     persist_pcap_index,
 )
+from .legacy_projection import build_legacy_projection, merge_legacy_projection
 
 
 def _fix_netlog(path: str) -> str:
@@ -108,13 +109,6 @@ def run_analysis(
                 )
                 if result_v2 is not None:
                     connection_results.append(result_v2)
-                    existing = all_correlations.get(domain)
-                    if existing is None:
-                        all_correlations[domain] = _result_v2_to_dict(result_v2)
-                    else:
-                        existing["flows"].extend(
-                            _result_v2_to_dict(result_v2)["flows"]
-                        )
                     advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
                     pcap_results.extend(
                         _try_split_v2(
@@ -149,11 +143,6 @@ def run_analysis(
                     _try_split_v1(result_v1, run_dir)
                 token.checkpoint()
 
-    advance(JobStage.ANALYZE_WRITE, 0.95, "correlation.json")
-    corr_path = str(results_dir / "correlation.json")
-    if not overwrite and Path(corr_path).exists():
-        raise FileExistsError(f"Analysis result already exists: {corr_path}")
-    write_json_atomic(corr_path, all_correlations)
     if connection_results:
         generation_id = analysis_generation_id or str(
             uuid5(NAMESPACE_URL, f"{session.resolve().as_uri()}#analysis-v2")
@@ -174,6 +163,24 @@ def run_analysis(
             pcap_results,
             output_dir=results_path,
         )
+        request_records = json.loads(
+            generated.request_index.read_text(encoding="utf-8")
+        ).get("items", [])
+        connection_records = json.loads(
+            generated.connection_index.read_text(encoding="utf-8")
+        ).get("items", [])
+        merge_legacy_projection(
+            all_correlations,
+            build_legacy_projection(
+                connection_results, request_records, connection_records,
+            ),
+        )
+
+    advance(JobStage.ANALYZE_WRITE, 0.95, "correlation.json")
+    corr_path = str(results_dir / "correlation.json")
+    if not overwrite and Path(corr_path).exists():
+        raise FileExistsError(f"Analysis result already exists: {corr_path}")
+    write_json_atomic(corr_path, all_correlations)
     token.checkpoint()
 
     logger.info("Correlation results written to %s", corr_path)

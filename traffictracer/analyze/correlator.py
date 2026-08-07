@@ -7,6 +7,7 @@ from typing import NamedTuple
 from .netlog import FiveTupleData, DomainConnections, _parse_addr
 from .connection_index import rank_connection_candidates, stable_connection_id
 from .mihomo_log import MihomoConnection, UdpConnect, UdpClose, UdpConnection
+from .request_observation import request_can_have_transport
 from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTerminal, FlowTuple
 
 
@@ -232,6 +233,8 @@ def correlate_cdp_direct(
     for req in requests:
         if req.request_id in covered_request_ids:
             continue
+        if not request_can_have_transport(req):
+            continue
         if not req.remote_ip or not req.remote_port:
             continue
         key = f"{req.remote_ip}:{req.remote_port}"
@@ -319,6 +322,8 @@ def _correlate_cdp_udp(
     host_requests: dict[str, list[AttributedRequest]] = {}
     for req in requests:
         if req.request_id in covered_request_ids:
+            continue
+        if not request_can_have_transport(req):
             continue
         host = urlparse(req.url).netloc.split(":")[0]
         if not host:

@@ -13,6 +13,7 @@ from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_VERSION
 
 from .flow_index import FlowIndex, FlowMapping
+from .consistency import validate_analysis_consistency
 
 
 FLOW_INDEX_NAME = "flow-index.json"
@@ -39,6 +40,19 @@ def persist_analysis_artifacts(
         mapping.outer_conn_id for mapping in mappings if mapping.outer_conn_id
     )
     items = _core_flow_items(mappings, session_id, pre_counts, outer_counts)
+    results = Path(output_dir) if output_dir is not None else session / "results"
+    request_records, connection_records, generation_id = _v2_records(results)
+    _enrich_core_flow_items(items, connection_records)
+    for item in items:
+        validate_flow(item)
+    consistency = validate_analysis_consistency(
+        request_records,
+        connection_records,
+        items,
+        pcap_payload=_read_index(results / "pcap-index-v1.json"),
+        legacy_payload=_read_index(results / "correlation.json"),
+        generation_id=generation_id,
+    )
 
     error_count = sum(bool(mapping.error) for mapping in mappings)
     warnings = _warnings(items, pre_counts, error_count)
@@ -65,9 +79,8 @@ def persist_analysis_artifacts(
         "duplicate_pre_flow_keys": sum(count > 1 for count in pre_counts.values()),
         "error_flows": error_count,
         "warnings": warnings,
+        "consistency": consistency,
     }
-    results = Path(output_dir) if output_dir is not None else session / "results"
-    request_records, connection_records, generation_id = _v2_records(results)
     summary_payload["coverage"] = layered_coverage(
         request_records,
         connection_records,
@@ -83,6 +96,7 @@ def persist_analysis_artifacts(
         "v2_indexes" if generation_id else "core_only"
     )
     if generation_id:
+        index_payload["analysis_generation_id"] = generation_id
         summary_payload["analysis_generation_id"] = generation_id
 
     results.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -241,6 +255,43 @@ def _v2_records(results: Path) -> tuple[list[dict], list[dict], str]:
         list(connection_payload.get("items", [])),
         request_generation,
     )
+
+
+def _enrich_core_flow_items(
+    items: list[dict],
+    connection_records: list[dict],
+) -> None:
+    """Attach canonical browser attribution through Mihomo connection IDs."""
+    by_mihomo: dict[str, dict[str, set[str]]] = {}
+    for connection in connection_records:
+        mihomo_id = connection.get("mihomo_connection_id")
+        if not mihomo_id or connection.get("match", {}).get("status") != "matched":
+            continue
+        attribution = by_mihomo.setdefault(mihomo_id, {
+            "request_ids": set(),
+            "connection_ids": set(),
+            "urls": set(),
+            "primary_urls": set(),
+        })
+        attribution["request_ids"].update(connection.get("request_ids", []))
+        attribution["connection_ids"].add(connection["connection_id"])
+        attribution["urls"].update(connection.get("urls", []))
+        if connection.get("primary_url"):
+            attribution["primary_urls"].add(connection["primary_url"])
+
+    for item in items:
+        attribution = by_mihomo.get(item.get("conn_id", ""))
+        if not attribution:
+            continue
+        item["request_ids"] = sorted(attribution["request_ids"])
+        item["connection_ids"] = sorted(attribution["connection_ids"])
+        item["urls"] = sorted(attribution["urls"])
+        primary_urls = sorted(attribution["primary_urls"] & attribution["urls"])
+        if not primary_urls and item["urls"]:
+            primary_urls = [item["urls"][0]]
+        if primary_urls:
+            item["primary_url"] = primary_urls[0]
+            item["url"] = primary_urls[0]
 
 
 def _read_index(path: Path) -> dict:

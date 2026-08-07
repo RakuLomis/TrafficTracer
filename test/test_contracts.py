@@ -138,3 +138,18 @@ def test_unknown_contract_has_a_deterministic_error():
     )
     with pytest.raises(UnknownContractError, match="unknown contract 'missing'"):
         validate_contract("missing", {})
+
+
+def test_flow_contract_preserves_complete_browser_attribution():
+    payload = _fixture("flow-valid.json")
+    payload["primary_url"] = "https://www.youtube.com/"
+    payload["url"] = payload["primary_url"]
+    payload["urls"] = [
+        payload["primary_url"],
+        "https://www.youtube.com/app.js",
+    ]
+    payload["connection_ids"] = [
+        "conn-11111111111111111111111111111111",
+    ]
+
+    assert validate_flow(payload) is payload

@@ -97,6 +97,16 @@ IPv4 超时、IPv6 不可达和其他拨号错误。
 无 Mihomo connection ID、无终止事件且无 post flow 的空 QUIC/UDP 候选只保留在
 `transport_connections` 层，不进入 `page_attributed.logical_flows` 分母；它仍保留
 完整候选和 PCAP empty 状态，因此不会通过压缩统计丢失连接证据。
+分析产物以同一代的 `request-index-v2.json`、`connection-index-v2.json` 和
+`pcap-index-v1.json` 为权威事实源。`correlation.json` 仅由 V2 索引生成兼容投影，
+不会再把 disk cache、Service Worker、prefetch cache 或浏览器内部响应写成
+`host_fallback` flow。`flow-index.json` 继续保留捕获窗口内全部 Mihomo 核心流，
+并通过 `mihomo_connection_id` 确定性回填页面相关的 `request_ids`、
+`connection_ids`、`primary_url` 与完整 `urls`；没有页面归属的后台流保持空关联。
+`summary.json.consistency` 在 Session 完成前校验 request → connection → core flow
+→ PCAP 以及 legacy 投影的跨索引引用和 generation，一旦冲突就以
+`ANALYSIS_CONSISTENCY_FAILED` 结束分析，而不会把该代产物登记为成功结果。
+
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。
 
@@ -804,7 +814,11 @@ result contains:
 For repeated runs of one domain, flow arrays are appended to the same domain
 entry. Per-run flow pcaps remain under their own run directories. Requests or
 transport connections without a Mihomo match are not emitted as correlated
-flows.
+flows. For CDP-first analysis this file is a legacy compatibility projection of
+the canonical v2 request and connection indexes, not an independent attribution
+source. Consumers must use `summary.json.consistency` and the v2 indexes for
+coverage. `flow-index.json` remains capture-global and carries browser
+attribution only where its Mihomo connection ID has an exact v2 mapping.
 
 ## Configuration Reference
 
