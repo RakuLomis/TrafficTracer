@@ -141,6 +141,56 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     }
 
 
+def test_pcap_index_validates_published_path_while_writing_to_staging(tmp_path):
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[],
+        cdp_request_count=1,
+        netlog_connection_count=0,
+        requests=[AttributedRequest(
+            "cache.1", "target", "frame", "https://example.com/app.js",
+            "Script", 100.0, connection_id=0, response_status=200,
+            from_disk_cache=True,
+        )],
+    )
+    staging = tmp_path / ".analysis-staging-test"
+    published = tmp_path / "analysis"
+    artifacts = persist_connection_artifacts(
+        tmp_path,
+        SESSION_ID,
+        [result],
+        output_dir=staging,
+    )
+    pcap_path = staging / "pcap" / CONNECTION_ID / "post.pcap"
+    pcap_path.parent.mkdir(parents=True)
+    pcap_path.write_bytes(b"pcap-data")
+
+    index_path = persist_pcap_index(
+        tmp_path,
+        SESSION_ID,
+        artifacts.generation_id,
+        "unique_connections",
+        [ConnectionPcapResult(
+            connection_id=CONNECTION_ID,
+            protocol="tcp",
+            request_ids=(),
+            pre_proxy=PcapSideResult("empty", "tcp.stream eq 1"),
+            post_proxy=PcapSideResult(
+                "success",
+                "tcp.stream eq 2",
+                packet_count=1,
+                byte_count=64,
+                artifact_id="pcap-conn-111-post",
+                path=str(pcap_path),
+            ),
+        )],
+        output_dir=staging,
+        published_output_dir=published,
+    )
+
+    payload = json.loads(index_path.read_text(encoding="utf-8"))
+
 def test_cached_request_is_not_counted_as_missing_transport(tmp_path):
     result = VisitCorrelation(
         visit_url="https://example.com/",

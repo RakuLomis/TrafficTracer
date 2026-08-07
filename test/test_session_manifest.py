@@ -127,3 +127,25 @@ def test_manifest_updates_cannot_move_time_backward():
     manifest = _manifest().transition(JobState.PREPARING, now=BASE_TIME + timedelta(seconds=2))
     with pytest.raises(ValueError, match="cannot move backward"):
         manifest.with_warning("late arrival", now=BASE_TIME + timedelta(seconds=1))
+
+
+@pytest.mark.parametrize(
+    ("path", "role"),
+    [
+        ("raw/capture-context.json", "capture_context"),
+        ("raw/mihomo-trace.jsonl", "mihomo_trace"),
+        ("raw/netlog.json", "netlog"),
+        ("raw/cdp.json", "cdp_events"),
+    ],
+)
+def test_normalized_capture_artifact_names_have_stable_roles(path, role):
+    artifact = Artifact(
+        name=Path(path).name,
+        kind="raw",
+        phase="capture",
+        path=path,
+        media_type="application/json",
+        size_bytes=1,
+    )
+
+    assert artifact.to_dict()["role"] == role

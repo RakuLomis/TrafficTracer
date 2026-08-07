@@ -65,6 +65,7 @@ def run_analysis(
     pcap_split_mode: str | None = None,
     overwrite: bool = True,
     output_dir: str | Path | None = None,
+    published_output_dir: str | Path | None = None,
     analysis_generation_id: str | None = None,
 ) -> str:
     setup_logging()
@@ -77,6 +78,10 @@ def run_analysis(
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
 
     results_path = _safe_results_path(session, output_dir)
+    published_results_path = _safe_results_path(
+        session,
+        published_output_dir if published_output_dir is not None else results_path,
+    )
     results_dir = ensure_dir(str(results_path))
 
     all_correlations: dict[str, dict] = {}
@@ -162,6 +167,7 @@ def run_analysis(
             split_mode,
             pcap_results,
             output_dir=results_path,
+            published_output_dir=published_results_path,
         )
         request_records = json.loads(
             generated.request_index.read_text(encoding="utf-8")

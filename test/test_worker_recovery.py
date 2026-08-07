@@ -110,6 +110,48 @@ def test_corrupt_journal_is_reported_without_blocking_session_scan(tmp_path):
     assert store.get(manifest.session_id).state is JobState.CAPTURING
 
 
+
+def test_startup_recovery_removes_atomic_analysis_workdirs_for_terminal_session(
+    tmp_path,
+):
+    store, manifest = _capturing_store(tmp_path)
+    completed = manifest.transition(JobState.COMPLETED)
+    store.save(completed)
+    session = Path(manifest.session_dir)
+    analysis = session / "analysis"
+    analysis.mkdir()
+    (analysis / "summary.json").write_text("published", encoding="utf-8")
+    backup = session / ".analysis-backup-11111111-1111-4111-8111-111111111111"
+    staging = session / ".analysis-staging-22222222-2222-4222-8222-222222222222"
+    backup.mkdir()
+    staging.mkdir()
+
+    report = WorkerRecovery(store, restore_tracing=lambda state: None).run()
+
+    assert report.status == "ok"
+    assert (analysis / "summary.json").read_text(encoding="utf-8") == "published"
+    assert not backup.exists()
+    assert not staging.exists()
+    assert store.get(manifest.session_id).state is JobState.COMPLETED
+
+
+def test_startup_recovery_restores_backup_when_publish_was_interrupted(tmp_path):
+    store, manifest = _capturing_store(tmp_path)
+    completed = manifest.transition(JobState.COMPLETED)
+    store.save(completed)
+    session = Path(manifest.session_dir)
+    backup = session / ".analysis-backup-33333333-3333-4333-8333-333333333333"
+    backup.mkdir()
+    (backup / "summary.json").write_text("previous", encoding="utf-8")
+
+    report = WorkerRecovery(store, restore_tracing=lambda state: None).run()
+
+    assert report.status == "ok"
+    assert not backup.exists()
+    assert (session / "analysis" / "summary.json").read_text(
+        encoding="utf-8"
+    ) == "previous"
+
 def test_unexpected_recovery_scan_failure_returns_degraded_report(
     tmp_path, monkeypatch
 ):

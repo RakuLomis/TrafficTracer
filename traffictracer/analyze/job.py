@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,7 @@ from traffictracer.jobs.models import (
 from traffictracer.jobs.progress import ProgressReporter
 from traffictracer.session.manifest import Artifact, SessionError, SessionManifest
 from traffictracer.session.store import MANIFEST_NAME, SessionStore
+from traffictracer.utils import logger
 
 from .pipeline import run_analysis
 from .artifacts import persist_analysis_artifacts
@@ -47,6 +49,8 @@ class AnalysisJob:
         )
         self._published_results_dir = self._results_dir
         self._staging_results_dir: Path | None = None
+        self._backup_results_dir: Path | None = None
+        self._published_this_run = False
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
@@ -61,6 +65,7 @@ class AnalysisJob:
                 pcap_split_mode=self.spec.options.pcap_split_mode,
                 overwrite=self.spec.options.overwrite,
                 output_dir=self._results_dir,
+                published_output_dir=self._published_results_dir,
                 analysis_generation_id=self._analysis_generation_id,
             )
             artifact_names = [
@@ -97,7 +102,12 @@ class AnalysisJob:
                                 candidate,
                             )
                         )
-            self._record_artifacts(artifact_paths)
+            updated_manifest = self._record_artifacts(artifact_paths)
+            self._finish_manifest(
+                JobState.COMPLETED,
+                manifest=updated_manifest,
+            )
+            self._commit_staged_results()
         except CancelledError:
             self._discard_staged_results()
             self._finish_manifest(JobState.CANCELLED)
@@ -118,7 +128,6 @@ class AnalysisJob:
             self.progress.finish(JobState.FAILED, "analysis failed")
             raise
 
-        self._finish_manifest(JobState.COMPLETED)
         self.progress.finish(JobState.COMPLETED, "analysis complete")
         artifacts = tuple(
             _relative_artifact(self.spec.session_dir, str(path))
@@ -151,7 +160,6 @@ class AnalysisJob:
                 / self._analysis_generation_id
             )
             return
-        initial_state = manifest.state
         if manifest.state is JobState.CAPTURING:
             manifest = manifest.transition(JobState.ANALYZING)
             store.save(manifest)
@@ -163,10 +171,7 @@ class AnalysisJob:
             )
         self._store = store
         self._manifest = manifest
-        if (
-            self._published_results_dir == Path(self.spec.session_dir) / "analysis"
-            and initial_state in {JobState.CAPTURING, JobState.ANALYZING}
-        ):
+        if self._published_results_dir == Path(self.spec.session_dir) / "analysis":
             self._prepare_staged_results()
 
     def _prepare_staged_results(self) -> None:
@@ -180,62 +185,74 @@ class AnalysisJob:
         if staging is None:
             return
         destination = self._published_results_dir
+        backup: Path | None = None
         if destination.exists():
             try:
                 # Session initialization may reserve an empty analysis/
-                # directory before the Job starts. Only that empty placeholder
-                # may be replaced; published or partial content is preserved.
+                # directory before the Job starts.
                 destination.rmdir()
-            except OSError as exc:
-                raise FileExistsError(
-                    f"Analysis destination already exists: {destination}"
-                ) from exc
-        self._rewrite_staged_pcap_paths(staging, destination)
-        os.replace(staging, destination)
+            except OSError:
+                if not self.spec.options.overwrite:
+                    raise FileExistsError(
+                        f"Analysis destination already exists: {destination}"
+                    )
+                backup = destination.with_name(f".analysis-backup-{uuid4()}")
+                os.replace(destination, backup)
+        try:
+            os.replace(staging, destination)
+        except Exception:
+            if backup is not None and not destination.exists():
+                os.replace(backup, destination)
+            raise
+        self._backup_results_dir = backup
+        self._published_this_run = True
         self._results_dir = destination
         self._staging_results_dir = None
 
-    def _rewrite_staged_pcap_paths(
-        self,
-        staging: Path,
-        destination: Path,
-    ) -> None:
-        index_path = staging / "pcap-index-v1.json"
-        if not index_path.is_file():
-            return
-        payload = json.loads(index_path.read_text(encoding="utf-8"))
-        session = Path(self.spec.session_dir)
-        changed = False
-        for connection in payload.get("connections", []):
-            for side_name in ("pre_proxy", "post_proxy"):
-                side = connection.get(side_name, {})
-                value = side.get("path")
-                if not isinstance(value, str) or not value:
-                    continue
-                source = session / value
-                try:
-                    relative = source.relative_to(staging)
-                except ValueError:
-                    continue
-                side["path"] = str(
-                    (destination / relative).relative_to(session)
+    def _commit_staged_results(self) -> None:
+        backup = self._backup_results_dir
+        if backup is not None:
+            try:
+                shutil.rmtree(backup)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to remove analysis backup %s: %s", backup, exc
                 )
-                changed = True
-        if changed:
-            from traffictracer.session.atomic import write_json_atomic
-            write_json_atomic(index_path, payload)
+        self._backup_results_dir = None
+        self._published_this_run = False
 
     def _discard_staged_results(self) -> None:
+        destination = self._published_results_dir
+        backup = self._backup_results_dir
+        if self._published_this_run:
+            try:
+                if destination.exists():
+                    shutil.rmtree(destination)
+                if backup is not None and backup.exists():
+                    os.replace(backup, destination)
+            except OSError as exc:
+                logger.warning(
+                    "Failed to roll back analysis publication %s: %s",
+                    destination,
+                    exc,
+                )
+            self._published_this_run = False
+            self._backup_results_dir = None
+
         staging = self._staging_results_dir
-        if staging is None:
-            return
-        session = Path(self.spec.session_dir).resolve()
-        resolved = staging.resolve(strict=False)
-        if (
-            resolved.parent == session
-            and resolved.name.startswith(".analysis-staging-")
-        ):
-            shutil.rmtree(resolved, ignore_errors=True)
+        if staging is not None:
+            session = Path(self.spec.session_dir).resolve()
+            resolved = staging.resolve(strict=False)
+            if (
+                resolved.parent == session
+                and resolved.name.startswith(".analysis-staging-")
+            ):
+                try:
+                    shutil.rmtree(resolved)
+                except OSError as exc:
+                    logger.warning(
+                        "Failed to remove analysis staging %s: %s", resolved, exc
+                    )
         self._staging_results_dir = None
         self._results_dir = self._published_results_dir
 
@@ -243,23 +260,38 @@ class AnalysisJob:
         self,
         state: JobState,
         error: SessionError | None = None,
+        *,
+        manifest: SessionManifest | None = None,
     ) -> None:
         if self._store is None or self._manifest is None:
             return
         if self._manifest.state.terminal:
+            if state is JobState.COMPLETED and manifest is not None:
+                self._store.save(manifest)
+                self._manifest = manifest
             return
-        self._manifest = self._manifest.transition(state, error=error)
-        self._store.save(self._manifest)
+        source = manifest if manifest is not None else self._manifest
+        updated = source.transition(state, error=error)
+        self._store.save(updated)
+        self._manifest = updated
 
-    def _record_artifacts(self, paths: list[Path]) -> None:
+    def _record_artifacts(self, paths: list[Path]) -> SessionManifest | None:
         if self._store is None or self._manifest is None:
-            return
-        existing = {artifact.path for artifact in self._manifest.artifacts}
+            return None
+        updated = replace(
+            self._manifest,
+            artifacts=tuple(
+                artifact
+                for artifact in self._manifest.artifacts
+                if artifact.phase != "analysis"
+            ),
+        )
+        existing = {artifact.path for artifact in updated.artifacts}
         for path in paths:
             relative = _relative_artifact(self.spec.session_dir, str(path))
             if relative in existing:
                 continue
-            self._manifest = self._manifest.with_artifact(
+            updated = updated.with_artifact(
                 Artifact(
                     name=path.name,
                     kind="derived",
@@ -275,14 +307,18 @@ class AnalysisJob:
                 )
             )
             existing.add(relative)
-        self._store.save(self._manifest)
+        return updated
 
 
 def _relative_artifact(session_dir: str, artifact_path: str) -> str:
     try:
-        return str(Path(artifact_path).relative_to(Path(session_dir)))
-    except ValueError:
-        return artifact_path
+        return str(
+            Path(artifact_path).resolve().relative_to(Path(session_dir).resolve())
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"artifact is outside Session directory: {artifact_path}"
+        ) from exc
 
 
 def _pcap_artifact_paths(session: Path, index_path: Path) -> list[Path]:

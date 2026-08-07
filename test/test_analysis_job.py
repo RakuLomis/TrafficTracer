@@ -259,7 +259,10 @@ def test_normalized_analysis_is_atomically_published_after_validation(
         pcap = output / "pcap" / "0001__https_example.com" / "pre.pcap"
         pcap.parent.mkdir(parents=True)
         pcap.write_bytes(b"pcap")
-        relative_pcap = pcap.relative_to(session_dir)
+        published = Path(kwargs["published_output_dir"])
+        relative_pcap = (
+            published / pcap.relative_to(output)
+        ).relative_to(session_dir)
         (output / "pcap-index-v1.json").write_text(json.dumps({
             "connections": [{
                 "connection_id": "conn-" + "1" * 32,
@@ -333,3 +336,94 @@ def test_normalized_analysis_failure_discards_unpublished_staging(
     assert failed.state is JobState.FAILED
     assert failed.error is not None
     assert failed.error.code == "ANALYSIS_CONSISTENCY_FAILED"
+
+
+def test_normalized_reanalysis_replaces_atomically_and_preserves_last_success(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    (session_dir / "raw").mkdir()
+    content = {"value": "first"}
+
+    def write_analysis(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        correlation = output / "correlation.json"
+        correlation.write_text(content["value"], encoding="utf-8")
+        return str(correlation)
+
+    def write_summary(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        flow_index = output / "flow-index.json"
+        summary = output / "summary.json"
+        flow_index.write_text("{}\n", encoding="utf-8")
+        summary.write_text("{}\n", encoding="utf-8")
+        return SimpleNamespace(flow_index=flow_index, summary=summary)
+
+    monkeypatch.setattr(module, "run_analysis", write_analysis)
+    monkeypatch.setattr(module, "persist_analysis_artifacts", write_summary)
+
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    analysis = session_dir / "analysis"
+    assert (analysis / "correlation.json").read_text(encoding="utf-8") == "first"
+
+    content["value"] = "second"
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    assert (analysis / "correlation.json").read_text(encoding="utf-8") == "second"
+    assert not list(session_dir.glob(".analysis-backup-*"))
+
+    def fail_after_partial_write(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        (output / "correlation.json").write_text("partial", encoding="utf-8")
+        raise RuntimeError("reanalysis failed")
+
+    monkeypatch.setattr(module, "run_analysis", fail_after_partial_write)
+    with pytest.raises(RuntimeError, match="reanalysis failed"):
+        _job(tmp_path, session_dir, [], overwrite=True).run()
+
+    assert (analysis / "correlation.json").read_text(encoding="utf-8") == "second"
+    assert not list(session_dir.glob(".analysis-staging-*"))
+    assert store.get(manifest.session_id).state is JobState.COMPLETED
+
+
+def test_manifest_completion_failure_rolls_back_published_analysis(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    (session_dir / "raw").mkdir()
+
+    def write_analysis(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        correlation = output / "correlation.json"
+        correlation.write_text("validated", encoding="utf-8")
+        return str(correlation)
+
+    original_save = SessionStore.save
+
+    def fail_completed(self, candidate):
+        if candidate.state is JobState.COMPLETED:
+            raise OSError("manifest fsync failed")
+        return original_save(self, candidate)
+
+    monkeypatch.setattr(module, "run_analysis", write_analysis)
+    monkeypatch.setattr(SessionStore, "save", fail_completed)
+
+    with pytest.raises(OSError, match="manifest fsync failed"):
+        _job(
+            tmp_path,
+            session_dir,
+            [],
+            overwrite=True,
+            write_flow_index=False,
+        ).run()
+
+    assert not (session_dir / "analysis").exists()
+    failed = store.get(manifest.session_id)
+    assert failed.state is JobState.FAILED
+    assert all(artifact.phase != "analysis" for artifact in failed.artifacts)

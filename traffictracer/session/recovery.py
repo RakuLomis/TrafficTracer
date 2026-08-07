@@ -7,8 +7,10 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 from typing import Callable, Iterable, Mapping
+from uuid import UUID
 
 from traffictracer.jobs.models import JobState
 from traffictracer.jobs.process_registry import ProcessRecord
@@ -209,6 +211,9 @@ class RecoveryManager:
         scan = self._store.scan()
         errors.extend(f"{item.session_dir}: {item.message}" for item in scan.corrupt)
         for manifest in scan.sessions:
+            errors.extend(
+                _recover_analysis_workspace(Path(manifest.session_dir))
+            )
             if manifest.state.terminal:
                 continue
             journal_path = self._store.artifact_path(
@@ -275,6 +280,67 @@ class RecoveryManager:
             errors=tuple(errors),
         )
 
+
+def _recover_analysis_workspace(session: Path) -> tuple[str, ...]:
+    """Restore or remove only UUID-named atomic analysis work directories."""
+    errors: list[str] = []
+    staging: list[Path] = []
+    backups: list[Path] = []
+    try:
+        entries = tuple(session.iterdir())
+    except OSError as exc:
+        return (f"{session}: inspect analysis workspace: {exc}",)
+
+    for entry in entries:
+        if _atomic_workspace_path(entry, ".analysis-staging-"):
+            staging.append(entry)
+        elif _atomic_workspace_path(entry, ".analysis-backup-"):
+            backups.append(entry)
+
+    analysis = session / "analysis"
+    if analysis.is_symlink():
+        return (f"{session}: analysis directory must not be a symbolic link",)
+
+    backups.sort(key=lambda path: path.name)
+    staging.sort(key=lambda path: path.name)
+    if len(backups) > 1:
+        errors.append(
+            f"{session}: multiple analysis backups require manual recovery"
+        )
+        return tuple(errors)
+
+    if backups:
+        backup = backups[0]
+        try:
+            if analysis.exists():
+                shutil.rmtree(backup)
+            else:
+                os.replace(backup, analysis)
+        except OSError as exc:
+            errors.append(f"{session}: recover analysis backup: {exc}")
+            return tuple(errors)
+
+    for path in staging:
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:
+            errors.append(f"{session}: remove analysis staging {path.name}: {exc}")
+    return tuple(errors)
+
+
+def _atomic_workspace_path(path: Path, prefix: str) -> bool:
+    if not path.name.startswith(prefix):
+        return False
+    suffix = path.name.removeprefix(prefix)
+    try:
+        valid_uuid = str(UUID(suffix)) == suffix
+    except (ValueError, AttributeError):
+        return False
+    if not valid_uuid:
+        return False
+    if path.is_symlink() or not path.is_dir():
+        return False
+    return True
 
 def linux_process_fingerprint(pid: int) -> ProcessFingerprint | None:
     if pid <= 0:

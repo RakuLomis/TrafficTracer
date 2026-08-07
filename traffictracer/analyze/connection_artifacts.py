@@ -409,11 +409,17 @@ def persist_pcap_index(
     pcap_results: list[ConnectionPcapResult],
     *,
     output_dir: str | Path | None = None,
+    published_output_dir: str | Path | None = None,
 ) -> Path:
     """Persist the authoritative connection-to-PCAP map and coverage counters."""
     session = Path(session_dir)
     merged = _merge_pcap_results(pcap_results)
     output = Path(output_dir) if output_dir is not None else session / "results"
+    published_output = (
+        Path(published_output_dir)
+        if published_output_dir is not None
+        else output
+    )
     payload = {
         "schema_version": PCAP_INDEX_SCHEMA_VERSION,
         "session_schema_version": SESSION_SCHEMA_V2_VERSION,
@@ -424,7 +430,10 @@ def persist_pcap_index(
             "tun_artifact_id": "capture-tun-pcap",
             "physical_artifact_id": "capture-physical-pcap",
         },
-        "connections": [_pcap_record(item, session) for item in merged],
+        "connections": [
+            _pcap_record(item, session, output, published_output)
+            for item in merged
+        ],
         "coverage": layered_coverage(
             _index_items(output / REQUEST_INDEX_V2_NAME),
             _index_items(output / CONNECTION_INDEX_V2_NAME),
@@ -465,26 +474,47 @@ def _prefer_pcap(
     return right if order[right.status] > order[left.status] else left
 
 
-def _pcap_record(item: ConnectionPcapResult, session: Path) -> dict:
+def _pcap_record(
+    item: ConnectionPcapResult,
+    session: Path,
+    physical_output: Path,
+    published_output: Path,
+) -> dict:
     return {
         "connection_id": item.connection_id,
         "protocol": item.protocol,
         "request_ids": list(item.request_ids),
-        "pre_proxy": _relative_side(item.pre_proxy, session),
-        "post_proxy": _relative_side(item.post_proxy, session),
+        "pre_proxy": _relative_side(
+            item.pre_proxy, session, physical_output, published_output
+        ),
+        "post_proxy": _relative_side(
+            item.post_proxy, session, physical_output, published_output
+        ),
     }
 
 
-def _relative_side(side: PcapSideResult, session: Path) -> dict:
+def _relative_side(
+    side: PcapSideResult,
+    session: Path,
+    physical_output: Path,
+    published_output: Path,
+) -> dict:
     payload = side.to_dict()
     if side.path is not None:
         try:
-            payload["path"] = str(
-                Path(side.path).resolve().relative_to(session.resolve())
+            relative = Path(side.path).resolve().relative_to(
+                physical_output.resolve()
             )
         except ValueError as exc:
             raise ValueError(
-                f"derived PCAP is outside session directory: {side.path}"
+                f"derived PCAP is outside analysis output directory: {side.path}"
+            ) from exc
+        published = (published_output.resolve() / relative).resolve(strict=False)
+        try:
+            payload["path"] = str(published.relative_to(session.resolve()))
+        except ValueError as exc:
+            raise ValueError(
+                f"published PCAP path is outside session directory: {published}"
             ) from exc
     return payload
 
