@@ -29,12 +29,14 @@ def reconcile_pcap_attribution(
         urls_by_connection.setdefault(connection_id, set()).add(request["url"])
 
     for index, result in enumerate(pcap_results):
+        # The request index is authoritative after transport-race resolution.
+        # Replace preliminary attribution even when the final set is empty so
+        # a request moved to another connection cannot remain in PCAP metadata.
         request_ids = request_ids_by_connection.get(result.connection_id, set())
-        if request_ids:
-            pcap_results[index] = replace(
-                result,
-                request_ids=tuple(sorted(set(result.request_ids) | request_ids)),
-            )
+        pcap_results[index] = replace(
+            result,
+            request_ids=tuple(sorted(request_ids)),
+        )
 
     pcap_root = Path(output_dir) / "pcap"
     if not pcap_root.is_dir():
@@ -52,8 +54,10 @@ def reconcile_pcap_attribution(
         canonical_id = mapping.get("canonical_connection_id")
         if canonical_id:
             connection_ids.add(canonical_id)
-        final_request_ids = set(mapping.get("request_ids", []))
-        final_urls = set(mapping.get("urls", []))
+        # Rebuild group metadata from finalized request attribution. Starting
+        # with the preliminary mapping would preserve stale request IDs/URLs.
+        final_request_ids: set[str] = set()
+        final_urls: set[str] = set()
         for connection_id in connection_ids:
             final_request_ids.update(
                 request_ids_by_connection.get(connection_id, set())
@@ -61,4 +65,10 @@ def reconcile_pcap_attribution(
             final_urls.update(urls_by_connection.get(connection_id, set()))
         mapping["request_ids"] = sorted(final_request_ids)
         mapping["urls"] = sorted(final_urls)
+        current_primary = mapping.get("primary_url")
+        mapping["primary_url"] = (
+            current_primary
+            if current_primary in final_urls
+            else min(final_urls) if final_urls else None
+        )
         write_json_atomic(mapping_path, mapping)

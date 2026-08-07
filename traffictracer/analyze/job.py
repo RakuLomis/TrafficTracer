@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
@@ -43,6 +45,8 @@ class AnalysisJob:
         self._results_dir = (
             session / "analysis" if (session / "raw").is_dir() else session / "results"
         )
+        self._published_results_dir = self._results_dir
+        self._staging_results_dir: Path | None = None
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
@@ -59,7 +63,9 @@ class AnalysisJob:
                 output_dir=self._results_dir,
                 analysis_generation_id=self._analysis_generation_id,
             )
-            artifact_paths = [Path(correlation_path)]
+            artifact_names = [
+                Path(correlation_path).relative_to(self._results_dir)
+            ]
             if self.spec.options.write_flow_index:
                 self.cancellation.checkpoint()
                 generated = persist_analysis_artifacts(
@@ -67,8 +73,15 @@ class AnalysisJob:
                     self._session_id,
                     output_dir=self._results_dir,
                 )
-                artifact_paths.extend([generated.flow_index, generated.summary])
+                artifact_names.extend([
+                    generated.flow_index.relative_to(self._results_dir),
+                    generated.summary.relative_to(self._results_dir),
+                ])
                 self.cancellation.checkpoint()
+            self._publish_staged_results()
+            artifact_paths = [
+                self._results_dir / name for name in artifact_names
+            ]
             for name in (
                 "connection-index-v2.json",
                 "request-index-v2.json",
@@ -86,10 +99,12 @@ class AnalysisJob:
                         )
             self._record_artifacts(artifact_paths)
         except CancelledError:
+            self._discard_staged_results()
             self._finish_manifest(JobState.CANCELLED)
             self.progress.finish(JobState.CANCELLED, self.cancellation.reason)
             raise
         except Exception as exc:
+            self._discard_staged_results()
             stage = self.progress.stage.value if self.progress.stage is not None else None
             error_code = (
                 "ANALYSIS_CONSISTENCY_FAILED"
@@ -136,6 +151,7 @@ class AnalysisJob:
                 / self._analysis_generation_id
             )
             return
+        initial_state = manifest.state
         if manifest.state is JobState.CAPTURING:
             manifest = manifest.transition(JobState.ANALYZING)
             store.save(manifest)
@@ -147,6 +163,81 @@ class AnalysisJob:
             )
         self._store = store
         self._manifest = manifest
+        if (
+            self._published_results_dir == Path(self.spec.session_dir) / "analysis"
+            and initial_state in {JobState.CAPTURING, JobState.ANALYZING}
+        ):
+            self._prepare_staged_results()
+
+    def _prepare_staged_results(self) -> None:
+        session = Path(self.spec.session_dir)
+        staging = session / f".analysis-staging-{uuid4()}"
+        self._staging_results_dir = staging
+        self._results_dir = staging
+
+    def _publish_staged_results(self) -> None:
+        staging = self._staging_results_dir
+        if staging is None:
+            return
+        destination = self._published_results_dir
+        if destination.exists():
+            try:
+                # Session initialization may reserve an empty analysis/
+                # directory before the Job starts. Only that empty placeholder
+                # may be replaced; published or partial content is preserved.
+                destination.rmdir()
+            except OSError as exc:
+                raise FileExistsError(
+                    f"Analysis destination already exists: {destination}"
+                ) from exc
+        self._rewrite_staged_pcap_paths(staging, destination)
+        os.replace(staging, destination)
+        self._results_dir = destination
+        self._staging_results_dir = None
+
+    def _rewrite_staged_pcap_paths(
+        self,
+        staging: Path,
+        destination: Path,
+    ) -> None:
+        index_path = staging / "pcap-index-v1.json"
+        if not index_path.is_file():
+            return
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+        session = Path(self.spec.session_dir)
+        changed = False
+        for connection in payload.get("connections", []):
+            for side_name in ("pre_proxy", "post_proxy"):
+                side = connection.get(side_name, {})
+                value = side.get("path")
+                if not isinstance(value, str) or not value:
+                    continue
+                source = session / value
+                try:
+                    relative = source.relative_to(staging)
+                except ValueError:
+                    continue
+                side["path"] = str(
+                    (destination / relative).relative_to(session)
+                )
+                changed = True
+        if changed:
+            from traffictracer.session.atomic import write_json_atomic
+            write_json_atomic(index_path, payload)
+
+    def _discard_staged_results(self) -> None:
+        staging = self._staging_results_dir
+        if staging is None:
+            return
+        session = Path(self.spec.session_dir).resolve()
+        resolved = staging.resolve(strict=False)
+        if (
+            resolved.parent == session
+            and resolved.name.startswith(".analysis-staging-")
+        ):
+            shutil.rmtree(resolved, ignore_errors=True)
+        self._staging_results_dir = None
+        self._results_dir = self._published_results_dir
 
     def _finish_manifest(
         self,

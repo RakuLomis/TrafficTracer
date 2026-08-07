@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -235,6 +236,99 @@ def test_analysis_consistency_failure_uses_dedicated_manifest_code(
     with pytest.raises(AnalysisConsistencyError, match="cross-index mismatch"):
         _job(tmp_path, session_dir, []).run()
 
+    failed = store.get(manifest.session_id)
+    assert failed.state is JobState.FAILED
+    assert failed.error is not None
+    assert failed.error.code == "ANALYSIS_CONSISTENCY_FAILED"
+
+
+def test_normalized_analysis_is_atomically_published_after_validation(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    (session_dir / "raw").mkdir()
+    (session_dir / "analysis").mkdir()
+
+    def write_analysis(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        correlation = output / "correlation.json"
+        correlation.write_text("{}\n", encoding="utf-8")
+        pcap = output / "pcap" / "0001__https_example.com" / "pre.pcap"
+        pcap.parent.mkdir(parents=True)
+        pcap.write_bytes(b"pcap")
+        relative_pcap = pcap.relative_to(session_dir)
+        (output / "pcap-index-v1.json").write_text(json.dumps({
+            "connections": [{
+                "connection_id": "conn-" + "1" * 32,
+                "pre_proxy": {
+                    "status": "success",
+                    "path": str(relative_pcap),
+                },
+                "post_proxy": {"status": "empty"},
+            }],
+        }), encoding="utf-8")
+        return str(correlation)
+
+    def write_summary(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        flow_index = output / "flow-index.json"
+        summary = output / "summary.json"
+        flow_index.write_text("{}\n", encoding="utf-8")
+        summary.write_text("{}\n", encoding="utf-8")
+        return SimpleNamespace(flow_index=flow_index, summary=summary)
+
+    monkeypatch.setattr(module, "run_analysis", write_analysis)
+    monkeypatch.setattr(module, "persist_analysis_artifacts", write_summary)
+
+    result = _job(tmp_path, session_dir, []).run()
+
+    analysis = session_dir / "analysis"
+    assert result.state is JobState.COMPLETED
+    assert analysis.is_dir()
+    assert not list(session_dir.glob(".analysis-staging-*"))
+    pcap_index = json.loads(
+        (analysis / "pcap-index-v1.json").read_text(encoding="utf-8")
+    )
+    assert pcap_index["connections"][0]["pre_proxy"]["path"] == (
+        "analysis/pcap/0001__https_example.com/pre.pcap"
+    )
+    assert (analysis / "pcap/0001__https_example.com/pre.pcap").is_file()
+    completed = store.get(manifest.session_id)
+    assert all(
+        not artifact.path.startswith(".analysis-staging-")
+        for artifact in completed.artifacts
+    )
+
+
+def test_normalized_analysis_failure_discards_unpublished_staging(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+    from traffictracer.analyze.consistency import AnalysisConsistencyError
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    raw = session_dir / "raw"
+    raw.mkdir()
+    preserved = raw / "netlog.json"
+    preserved.write_text("original", encoding="utf-8")
+
+    def fail_after_partial_write(*args, **kwargs):
+        output = Path(kwargs["output_dir"])
+        output.mkdir(parents=True)
+        (output / "partial.json").write_text("partial", encoding="utf-8")
+        raise AnalysisConsistencyError("cross-index mismatch")
+
+    monkeypatch.setattr(module, "run_analysis", fail_after_partial_write)
+
+    with pytest.raises(AnalysisConsistencyError, match="cross-index mismatch"):
+        _job(tmp_path, session_dir, []).run()
+
+    assert not (session_dir / "analysis").exists()
+    assert not list(session_dir.glob(".analysis-staging-*"))
+    assert preserved.read_text(encoding="utf-8") == "original"
     failed = store.get(manifest.session_id)
     assert failed.state is JobState.FAILED
     assert failed.error is not None

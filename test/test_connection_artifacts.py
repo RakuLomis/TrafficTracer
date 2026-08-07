@@ -383,3 +383,10 @@ def test_empty_quic_retry_selects_packet_backed_tcp_resource(tmp_path):
     )
     assert canonical["request_ids"] == ["media.1", "media.2"]
     assert canonical["sharing"]["request_multiplexed"] is True
+    pcap_by_connection = {
+        item.connection_id: item for item in pcap_results
+    }
+    assert pcap_by_connection[tcp.stable_connection_id].request_ids == (
+        "media.1", "media.2",
+    )
+    assert pcap_by_connection[quic.stable_connection_id].request_ids == ()
