@@ -84,6 +84,7 @@ done
 (
   cd "$ui_dir"
   printf 'Preparing UI resources with TT_PREBUILD_FORCE=%s.\n' "$prebuild_force"
+  TT_PREBUILD_OFFLINE="$((1 - prebuild_force))" \
   MIHOMO_TRAFFIC_TRACER_BIN="$core_artifact" \
     TRAFFICTRACER_WORKER_BIN="$worker_artifact" \
     "$pnpm_bin" "${prebuild_args[@]}"

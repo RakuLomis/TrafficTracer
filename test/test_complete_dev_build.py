@@ -55,7 +55,7 @@ chmod 0755 "$TT_WORKER_DIST_DIR/traffictracer-worker-{TARGET}"
         fake_pnpm,
         """#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >>"$TT_TEST_INVOCATIONS"
+printf '%s offline=%s\n' "$*" "${TT_PREBUILD_OFFLINE:-unset}" >>"$TT_TEST_INVOCATIONS"
 case "$1" in
   prebuild)
     target="${!#}"
@@ -130,7 +130,7 @@ def test_prepare_dev_overwrites_stale_sidecars(fake_build) -> None:
     ).read_text() == "fresh-worker"
     invocations = fake_build["invocations"].read_text().splitlines()
     assert invocations[0].startswith("lock-check ")
-    assert invocations[1:] == [f"prebuild --force {TARGET}"]
+    assert invocations[1:] == [f"prebuild --force {TARGET} offline=0"]
     assert not fake_build["dev_marker"].exists()
     assert f"Injected sidecars are current for {TARGET}." in result.stdout
     assert "Artifact hashes:" in result.stdout
@@ -149,7 +149,7 @@ def test_prepare_dev_can_reuse_existing_upstream_resources(fake_build) -> None:
 
     invocations = fake_build["invocations"].read_text().splitlines()
     assert invocations[0].startswith("lock-check ")
-    assert invocations[1:] == [f"prebuild {TARGET}"]
+    assert invocations[1:] == [f"prebuild {TARGET} offline=1"]
     assert "Preparing UI resources with TT_PREBUILD_FORCE=0." in result.stdout
 
 
@@ -176,5 +176,8 @@ def test_dev_starts_only_after_sidecars_are_verified(fake_build) -> None:
 
     invocations = fake_build["invocations"].read_text().splitlines()
     assert invocations[0].startswith("lock-check ")
-    assert invocations[1:] == [f"prebuild --force {TARGET}", "dev"]
+    assert invocations[1:] == [
+        f"prebuild --force {TARGET} offline=0",
+        "dev offline=unset",
+    ]
     assert fake_build["dev_marker"].is_file()
