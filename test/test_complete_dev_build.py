@@ -58,7 +58,7 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$TT_TEST_INVOCATIONS"
 case "$1" in
   prebuild)
-    target="$3"
+    target="${!#}"
     mkdir -p src-tauri/sidecar
     cp "$MIHOMO_TRAFFIC_TRACER_BIN" "src-tauri/sidecar/verge-mihomo-tt-$target"
     cp "$TRAFFICTRACER_WORKER_BIN" "src-tauri/sidecar/traffictracer-worker-$target"
@@ -134,6 +134,35 @@ def test_prepare_dev_overwrites_stale_sidecars(fake_build) -> None:
     assert not fake_build["dev_marker"].exists()
     assert f"Injected sidecars are current for {TARGET}." in result.stdout
     assert "Artifact hashes:" in result.stdout
+
+
+def test_prepare_dev_can_reuse_existing_upstream_resources(fake_build) -> None:
+    env = {**fake_build["env"], "TT_PREBUILD_FORCE": "0"}
+
+    result = subprocess.run(
+        ["bash", str(BUILD_UI), "--prepare-only"],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    invocations = fake_build["invocations"].read_text().splitlines()
+    assert invocations[0].startswith("lock-check ")
+    assert invocations[1:] == [f"prebuild {TARGET}"]
+    assert "Preparing UI resources with TT_PREBUILD_FORCE=0." in result.stdout
+
+
+def test_prepare_dev_rejects_invalid_prebuild_force(fake_build) -> None:
+    env = {**fake_build["env"], "TT_PREBUILD_FORCE": "sometimes"}
+    result = subprocess.run(
+        ["bash", str(BUILD_UI), "--prepare-only"],
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 2
+    assert "TT_PREBUILD_FORCE must be 0 or 1" in result.stderr
 
 
 def test_dev_starts_only_after_sidecars_are_verified(fake_build) -> None:

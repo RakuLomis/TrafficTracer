@@ -292,6 +292,20 @@ TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/target-config-v2" make package-linux
 sha256sum -c dist/packages/target-config-v2/SHA256SUMS
 ```
 
+默认 `TT_PREBUILD_FORCE=1`，每次打包都会刷新 Clash Verge 的上游 Mihomo、规则数据和
+service 资源。只有官方下载端点暂时不可用、并且 `src-tauri/sidecar` 与 resources 已由
+最近一次成功且经过校验的构建准备完成时，才可显式复用这些资源：
+
+```bash
+TT_PREBUILD_FORCE=0 \
+TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/offline-retry" \
+make package-linux
+```
+
+该模式仍会重新构建 TrafficTracer 核心与 Worker，并执行组件锁、sidecar 一致性和包布局
+验证；它不会下载缺失资源，因此缺少任何上游文件时会失败。正式发布恢复网络后仍应使用
+默认强制刷新模式。
+
 这里的 `$PWD` 必须是 TrafficTracer `Complete` 仓库根目录；如果命令在 `~` 中执行，它会错误地指向 `$HOME/dist/...`。
 
 流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 7 个可执行文件，最后才原子发布：

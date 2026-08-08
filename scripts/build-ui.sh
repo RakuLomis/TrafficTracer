@@ -14,6 +14,7 @@ core_build_script="${TT_BUILD_CORE_SCRIPT:-${repo_root}/scripts/build-core.sh}"
 worker_build_script="${TT_BUILD_WORKER_SCRIPT:-${repo_root}/scripts/build-worker.sh}"
 component_lock_check="${TT_COMPONENT_LOCK_CHECK:-${repo_root}/scripts/check-component-lock.py}"
 pnpm_bin="${TT_PNPM_BIN:-pnpm}"
+prebuild_force="${TT_PREBUILD_FORCE:-1}"
 mode="dev"
 
 case "${1:-}" in
@@ -55,6 +56,19 @@ if ! command -v "$pnpm_bin" >/dev/null 2>&1; then
   exit 2
 fi
 
+case "$prebuild_force" in
+  1)
+    prebuild_args=(prebuild --force "$target")
+    ;;
+  0)
+    prebuild_args=(prebuild "$target")
+    ;;
+  *)
+    echo "error: TT_PREBUILD_FORCE must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
+
 "$core_build_script" "$core_artifact"
 TT_WORKER_DIST_DIR="$worker_dist_dir" "$worker_build_script"
 
@@ -69,9 +83,10 @@ done
 
 (
   cd "$ui_dir"
+  printf 'Preparing UI resources with TT_PREBUILD_FORCE=%s.\n' "$prebuild_force"
   MIHOMO_TRAFFIC_TRACER_BIN="$core_artifact" \
     TRAFFICTRACER_WORKER_BIN="$worker_artifact" \
-    "$pnpm_bin" prebuild --force "$target"
+    "$pnpm_bin" "${prebuild_args[@]}"
 )
 
 core_sidecar="$ui_dir/src-tauri/sidecar/verge-mihomo-tt-$target"
