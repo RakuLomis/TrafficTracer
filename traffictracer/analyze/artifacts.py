@@ -45,19 +45,22 @@ def persist_analysis_artifacts(
     _enrich_core_flow_items(items, connection_records)
     for item in items:
         validate_flow(item)
+    pcap_payload = _read_index(results / "pcap-index-v1.json")
     consistency = validate_analysis_consistency(
         request_records,
         connection_records,
         items,
-        pcap_payload=_read_index(results / "pcap-index-v1.json"),
+        pcap_payload=pcap_payload,
         legacy_payload=_read_index(results / "correlation.json"),
         generation_id=generation_id,
     )
 
     error_count = sum(bool(mapping.error) for mapping in mappings)
     warnings = _warnings(items, pre_counts, error_count)
+    warnings.extend(_quality_warnings(request_records, connection_records, pcap_payload))
     match_counts = Counter(item["match"]["status"] for item in items)
     protocol_counts = Counter(item["protocol"] for item in items)
+    quality = analysis_quality(request_records, connection_records, pcap_payload)
     index_payload = {
         "schema_version": FLOW_SCHEMA_VERSION,
         "session_id": session_id,
@@ -80,6 +83,8 @@ def persist_analysis_artifacts(
         "error_flows": error_count,
         "warnings": warnings,
         "consistency": consistency,
+        "quality_state": _quality_state(consistency, warnings),
+        "quality": quality,
     }
     summary_payload["coverage"] = layered_coverage(
         request_records,
@@ -475,3 +480,154 @@ def _warnings(
             "message": "Some logical flows ended with a tracing error.",
         })
     return warnings
+
+
+def analysis_quality(
+    request_records: list[dict],
+    connection_records: list[dict],
+    pcap_payload: dict,
+) -> dict:
+    """Return conservative, denominator-preserving analysis quality metrics."""
+    browser = _request_partition(request_records)
+    eligible_requests = browser["total"] - browser["non_network"]
+    transport = _partition(
+        record.get("match", {}).get("status", "unmatched")
+        for record in connection_records
+    )
+
+    established = sum(record.get("post_flow") is not None for record in connection_records)
+    failed_before_socket = sum(
+        record.get("post_flow") is None and _is_dial_failure(record.get("terminal"))
+        for record in connection_records
+    )
+    unavailable = len(connection_records) - established - failed_before_socket
+
+    split_mode = pcap_payload.get("split_mode", "none")
+    pcap_connections = list(pcap_payload.get("connections", []))
+    pre_success = sum(
+        item.get("pre_proxy", {}).get("status") == "success"
+        for item in pcap_connections
+    )
+    post_success = sum(
+        item.get("post_proxy", {}).get("status") == "success"
+        for item in pcap_connections
+    )
+    complete_pairs = sum(
+        item.get("pre_proxy", {}).get("status") == "success"
+        and item.get("post_proxy", {}).get("status") == "success"
+        for item in pcap_connections
+    )
+    return {
+        "request_attribution": {
+            "eligible": eligible_requests,
+            "matched": browser["matched"],
+            "ambiguous": browser["ambiguous"],
+            "unmatched": browser["unmatched"],
+        },
+        "transport_correlation": transport,
+        "egress_establishment": {
+            "total": len(connection_records),
+            "established": established,
+            "failed_before_socket": failed_before_socket,
+            "unavailable": unavailable,
+        },
+        "pcap_extraction": {
+            "requested": split_mode == "unique_connections",
+            "total": len(pcap_connections),
+            "pre_success": pre_success,
+            "post_success": post_success,
+            "complete_pairs": complete_pairs,
+        },
+    }
+
+
+def _quality_warnings(
+    request_records: list[dict],
+    connection_records: list[dict],
+    pcap_payload: dict,
+) -> list[dict]:
+    warnings: list[dict] = []
+    request_partition = _request_partition(request_records)
+    if request_partition["unmatched"]:
+        warnings.append(_warning(
+            "REQUEST_ATTRIBUTION_UNMATCHED",
+            request_partition["unmatched"],
+            "Some network requests could not be attributed to a browser transport.",
+        ))
+    if request_partition["ambiguous"]:
+        warnings.append(_warning(
+            "REQUEST_ATTRIBUTION_AMBIGUOUS",
+            request_partition["ambiguous"],
+            "Some network requests have multiple possible browser transports.",
+        ))
+    transport = _partition(
+        record.get("match", {}).get("status", "unmatched")
+        for record in connection_records
+    )
+    if transport["unmatched"]:
+        warnings.append(_warning(
+            "TRANSPORT_UNMATCHED", transport["unmatched"],
+            "Some browser transports could not be matched to Mihomo flows.",
+        ))
+    if transport["ambiguous"]:
+        warnings.append(_warning(
+            "TRANSPORT_AMBIGUOUS", transport["ambiguous"],
+            "Some browser transports match multiple Mihomo flows.",
+        ))
+    dial_failures = sum(
+        record.get("post_flow") is None
+        and _is_dial_failure(record.get("terminal"))
+        for record in connection_records
+    )
+    if dial_failures:
+        warnings.append(_warning(
+            "EGRESS_DIAL_FAILED", dial_failures,
+            "Some logical flows failed before an egress socket was established.",
+        ))
+    if pcap_payload.get("split_mode") == "unique_connections":
+        pcap_connections = pcap_payload.get("connections", [])
+        pre_missing = sum(
+            item.get("pre_proxy", {}).get("status") != "success"
+            for item in pcap_connections
+        )
+        post_missing = sum(
+            item.get("post_proxy", {}).get("status") != "success"
+            for item in pcap_connections
+        )
+        if pre_missing:
+            warnings.append(_warning(
+                "PCAP_PRE_EMPTY", pre_missing,
+                "Some pre-proxy PCAP extracts are empty or failed.",
+            ))
+        if post_missing:
+            warnings.append(_warning(
+                "PCAP_POST_UNAVAILABLE", post_missing,
+                "Some post-proxy PCAP extracts are empty or unavailable.",
+            ))
+    return warnings
+
+
+def _is_dial_failure(terminal: object) -> bool:
+    if not isinstance(terminal, dict):
+        return False
+    return terminal.get("stage") == "dial" or terminal.get("status") == "dial_error"
+
+
+def _warning(code: str, count: int, message: str) -> dict:
+    return {"code": code, "count": count, "message": message}
+
+
+def _quality_state(consistency: dict, warnings: list[dict]) -> str:
+    if consistency.get("status") != "passed":
+        return "failed"
+    degradation_codes = {
+        "POST_FLOW_UNAVAILABLE", "FLOW_ERRORS",
+        "REQUEST_ATTRIBUTION_UNMATCHED", "REQUEST_ATTRIBUTION_AMBIGUOUS",
+        "TRANSPORT_UNMATCHED", "TRANSPORT_AMBIGUOUS", "EGRESS_DIAL_FAILED",
+        "PCAP_PRE_EMPTY", "PCAP_POST_UNAVAILABLE",
+    }
+    return (
+        "degraded"
+        if any(item.get("code") in degradation_codes for item in warnings)
+        else "passed"
+    )

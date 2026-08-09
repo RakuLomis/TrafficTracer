@@ -311,3 +311,42 @@ def test_cached_request_never_enters_udp_host_fallback():
     )
 
     assert flows == []
+
+
+def test_reused_cdp_tcp_fallback_is_not_reported_as_quic():
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", 44000, "198.18.0.8", 443,
+        key="tcp|198.18.0.1:44000|198.18.0.8:443",
+        complete=True,
+        source="metadata_snapshot",
+        scope="pre_proxy",
+    )
+    request = AttributedRequest(
+        "reused.1",
+        "target",
+        "frame",
+        "https://www.youtube.com/app.js",
+        "Script",
+        100.0,
+        remote_ip="198.18.0.8",
+        remote_port=443,
+        connection_reused=True,
+    )
+    connection = MihomoConnection(
+        "tcp-flow",
+        TcpConnect(
+            "", "tcp-flow", pre.src, pre.dst, "www.youtube.com",
+            pre_flow=pre,
+        ),
+        None,
+        None,
+    )
+
+    flows = correlate_cdp_direct(
+        [request], {"tcp-flow": connection}, "youtube.com",
+    )
+
+    assert len(flows) == 1
+    assert flows[0].protocol == "tcp"
+    assert flows[0].application_protocol == "unknown"
+    assert flows[0].attempted_protocols == []

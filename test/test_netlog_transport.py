@@ -244,6 +244,31 @@ def test_dns_only_dependency_is_not_a_browser_transport():
         os.unlink(path)
 
 
+def test_dns_socket_leaf_is_not_a_browser_transport():
+    """A resolver branch ending in a generic SOCKET must remain DNS-only."""
+    events = [
+        {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},
+         "params": {"url": "https://resolver-socket.example/", "source_dependency": {"id": 200, "type": 4}}},
+        {"time": "1010", "type": 1, "phase": 2, "source": {"id": 200, "type": 4},
+         "params": {"source_dependency": {"id": 300, "type": 25}}},
+        {"time": "1020", "type": 1, "phase": 2, "source": {"id": 300, "type": 25},
+         "params": {"source_dependency": {"id": 400, "type": 3}}},
+        {"time": "1030", "type": 4, "phase": 2, "source": {"id": 400, "type": 3},
+         "params": {"local_address": "127.0.0.1:43000", "remote_address": "127.0.0.53:53"}},
+    ]
+    path = _make_netlog(events)
+    requests = [
+        AttributedRequest(
+            "dns.socket.1", "T", "F", "https://resolver-socket.example/",
+            "Document", 1.0,
+        )
+    ]
+    try:
+        assert trace_transport(requests, path) == []
+    finally:
+        os.unlink(path)
+
+
 def test_successful_socket_branch_wins_over_failed_dns_branch():
     events = [
         {"time": "1000", "type": 0, "phase": 0, "source": {"id": 100, "type": 1},

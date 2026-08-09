@@ -35,5 +35,5 @@ def test_build_info_generator_uses_locked_component_commits(tmp_path):
         "dcf2215aa223f655c5df3d82b515ab98acc5a4bb"
     )
     assert payload["clash_verge_rev"]["commit"] == (
-        "8779112876cacf607a8f4e621389291296eeb79e"
+        "e6a8d23a59ff8a09205b840d7d39c3ea9dc51492"
     )

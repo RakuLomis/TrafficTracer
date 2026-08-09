@@ -107,6 +107,19 @@ IPv4 超时、IPv6 不可达和其他拨号错误。
 → PCAP 以及 legacy 投影的跨索引引用和 generation，一旦冲突就以
 `ANALYSIS_CONSISTENCY_FAILED` 结束分析，而不会把该代产物登记为成功结果。
 
+`connection-index-v2.json.protocol` 只表示真实传输层 `tcp/udp`；
+`application_protocol` 使用 `h2/h3/unknown`，失败但保留证据的 QUIC 尝试写入
+`attempted_protocols`。因此 TCP 回退不会再因为曾尝试 QUIC 或 CDP
+`connectionReused` 而被标成 QUIC。HTTP(S) URL 依赖图中的 53 端口 resolver
+socket 只作为 DNS 证据，不会生成业务 transport connection；无法找到真实 socket
+的请求会保守地留在 request index 中并标为 unmatched。
+
+`summary.json.quality_state` 独立于 Job state，值为 `passed/degraded/failed`；
+`quality` 分别给出 request attribution、transport correlation、egress establishment
+和 PCAP extraction 的守恒计数。`warnings` 会明确报告请求/transport 未关联或歧义、
+拨号失败以及 pre/post PCAP 缺失。Job 可以正常 `completed`，但其分析质量仍可能是
+`degraded`，UI 和自动化消费者不得将两者视为同一状态。
+
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。
 

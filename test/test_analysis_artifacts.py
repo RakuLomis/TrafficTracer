@@ -95,6 +95,8 @@ def test_flow_index_and_summary_keep_duplicates_shared_and_null_post(tmp_path):
     ]
     assert summary["coverage_source"] == "core_only"
     assert summary["coverage"] == layered_coverage([], [], index["items"])
+    assert summary["quality_state"] == "degraded"
+    assert summary["quality"]["pcap_extraction"]["requested"] is False
 
 
 def test_layered_coverage_conserves_each_denominator_for_partial_trace():
@@ -225,6 +227,60 @@ def test_summary_is_recomputable_from_v2_indexes(tmp_path):
     assert summary["coverage_source"] == "v2_indexes"
     assert summary["analysis_generation_id"] == generation
     assert summary["match_method_counts"] == {"exact_pre_flow": 1}
+    assert summary["quality_state"] == "degraded"
+    assert summary["quality"]["request_attribution"]["eligible"] == 2
+
+
+def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
+    (tmp_path / "logs").mkdir()
+    results = tmp_path / "results"
+    results.mkdir()
+    generation = "78fdab68-4e5d-4b67-9910-33da00a2632a"
+    (results / "request-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [{
+            "network_observation": "network",
+            "attribution": {"status": "unmatched"},
+        }],
+    }), encoding="utf-8")
+    (results / "connection-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [{
+            "connection_id": "conn-11111111111111111111111111111111",
+            "match": {"status": "unmatched", "method": "none"},
+            "post_flow": None,
+            "terminal": {"status": "dial_error", "stage": "dial"},
+            "shared": False,
+        }],
+    }), encoding="utf-8")
+    (results / "pcap-index-v1.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "split_mode": "unique_connections",
+        "connections": [{
+            "connection_id": "conn-11111111111111111111111111111111",
+            "pre_proxy": {"status": "empty"},
+            "post_proxy": {"status": "not_requested"},
+        }],
+    }), encoding="utf-8")
+
+    summary = json.loads(
+        persist_analysis_artifacts(tmp_path, SESSION_ID).summary.read_text(
+            encoding="utf-8",
+        )
+    )
+    codes = [warning["code"] for warning in summary["warnings"]]
+    assert codes == [
+        "REQUEST_ATTRIBUTION_UNMATCHED",
+        "TRANSPORT_UNMATCHED",
+        "EGRESS_DIAL_FAILED",
+        "PCAP_PRE_EMPTY",
+        "PCAP_POST_UNAVAILABLE",
+    ]
+    assert summary["quality_state"] == "degraded"
+    assert summary["quality"]["egress_establishment"] == {
+        "total": 1, "established": 0, "failed_before_socket": 1,
+        "unavailable": 0,
+    }
 
 
 def test_empty_layered_coverage_has_three_zero_denominators():

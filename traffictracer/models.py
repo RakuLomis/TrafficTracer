@@ -69,6 +69,7 @@ class TransportConnection:
     first_observed: float | None = None
     network: str = ""
     attempted_protocols: list[str] = field(default_factory=list)
+    application_protocol: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -109,6 +110,8 @@ class CorrelatedFlowV2:
     netlog_source_id: int | None = None
     proxy: str = ""
     proxy_type: str = ""
+    application_protocol: str = "unknown"
+    attempted_protocols: list[str] = field(default_factory=list)
 
 
 @dataclass

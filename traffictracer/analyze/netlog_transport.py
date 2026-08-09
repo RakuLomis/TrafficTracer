@@ -57,6 +57,14 @@ def trace_transport(
         # records instead of becoming invalid partial connection records.
         if not _complete_five_tuple(ft):
             continue
+        if not _is_http_transport(url, ft):
+            logger.debug(
+                "Ignoring resolver endpoint selected as transport for %s: %s:%s",
+                url,
+                ft.dst_ip,
+                ft.dst_port,
+            )
+            continue
         observations.append({
             "sid": sid,
             "url": url,
@@ -106,6 +114,7 @@ def trace_transport(
             first_observed=first_observed,
             network=ft.network or "",
             attempted_protocols=list(ft.attempted_protocols),
+            application_protocol=_application_protocol(observation["chain"], ft),
         )
 
     connections = _merge_alias_connections(list(connections_by_source.values()))
@@ -315,3 +324,23 @@ def _transport_tuple(connection: TransportConnection) -> tuple:
 
 def _complete_five_tuple(ft) -> bool:
     return bool(ft.src_ip and ft.src_port and ft.dst_ip and ft.dst_port)
+
+
+def _is_http_transport(url: str, ft) -> bool:
+    """Reject resolver sockets that dependency traversal found below a URL."""
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in {"http", "https"}:
+        return True
+    # A URL_REQUEST can retain its DNS branch after the actual HTTP stream is
+    # detached or reused. Generic resolver SOCKET entries look complete, but
+    # port 53 is DNS evidence rather than the request's business transport.
+    return int(ft.dst_port or 0) != 53
+
+
+def _application_protocol(chain, ft) -> str:
+    network = (ft.network or "").lower()
+    if network == "udp" and chain.quic_session is not None:
+        return "h3"
+    if network == "tcp" and chain.h2_session is not None:
+        return "h2"
+    return "unknown"

@@ -49,6 +49,7 @@ def _transport() -> TransportConnection:
         request_ids=["media.1"],
         network="udp",
         attempted_protocols=["QUIC"],
+        application_protocol="unknown",
     )
 
 
@@ -142,3 +143,5 @@ def test_correlator_uses_reconciled_mihomo_tcp_and_post_proxy_tuple():
     assert flow.post_flow is not None
     assert flow.post_flow.src == "192.168.5.101:35506"
     assert flow.post_flow.dst == "61.220.99.42:24191"
+    assert flow.application_protocol == "unknown"
+    assert flow.attempted_protocols == ["QUIC"]

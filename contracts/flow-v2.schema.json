@@ -146,6 +146,8 @@
         "analysis_generation_id": { "$ref": "#/$defs/uuid" },
         "connection_id": { "$ref": "#/$defs/connectionId" },
         "protocol": { "enum": ["tcp", "udp"] },
+        "application_protocol": { "enum": ["unknown", "h2", "h3"] },
+        "attempted_protocols": { "type": "array", "uniqueItems": true, "items": { "enum": ["QUIC"] } },
         "pre_flow": { "$ref": "#/$defs/flowTuple" },
         "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
         "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },

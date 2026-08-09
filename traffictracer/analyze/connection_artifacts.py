@@ -167,6 +167,8 @@ def _connection_record(
             if flow.pre_flow and flow.pre_flow.network in {"tcp", "udp"}
             else _network(flow.protocol)
         ),
+        "application_protocol": flow.application_protocol,
+        "attempted_protocols": sorted(set(flow.attempted_protocols)),
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
         "post_flow": _flow_payload(flow.post_flow, "post_proxy") if flow.post_flow else None,
         "sharing": {
