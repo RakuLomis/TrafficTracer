@@ -1,5 +1,6 @@
 """Subprocess protocol smoke tests for the Complete Worker executable."""
 
+from io import BytesIO
 import json
 from pathlib import Path
 import selectors
@@ -10,6 +11,8 @@ from uuid import UUID
 from traffictracer.contracts import validate_worker_message
 from traffictracer.session.manifest import ComponentVersion, ComponentVersions, SessionTarget
 from traffictracer.session.store import SessionStore
+from traffictracer.worker.protocol import JsonlWriter
+from traffictracer_worker import _write_response
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,3 +186,27 @@ def test_worker_dispatches_request_while_stdin_remains_open(tmp_path):
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=10)
+
+
+def test_oversized_response_returns_error_without_poisoning_writer():
+    stream = BytesIO()
+    writer = JsonlWriter(stream, max_message_bytes=512)
+    _write_response(writer, {
+        "api_version": 2,
+        "type": "response",
+        "id": "large",
+        "result": {"padding": "x" * 2048},
+    })
+    writer.write({
+        "api_version": 2,
+        "type": "response",
+        "id": "after",
+        "result": {"ok": True},
+    })
+
+    messages = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert messages[0]["id"] == "large"
+    assert messages[0]["error"]["code"] == "RESPONSE_TOO_LARGE"
+    assert messages[0]["error"]["data"]["actual_bytes"] > 512
+    assert messages[1]["id"] == "after"
+    assert messages[1]["result"] == {"ok": True}

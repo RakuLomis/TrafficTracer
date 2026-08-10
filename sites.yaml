@@ -15,24 +15,131 @@ global:
     base_dir: /data/datasets/ttTest
 
 sites:
+  # Existing baseline sites.
   - domain: bilibili.com
-    url: "https://www.bilibili.com"
+    url: "https://www.bilibili.com/"
     wait: 15
-    traffic_type: video-mainpage
-  - domain: bilibili.com 
+    traffic_type: all
+    page_type: bilibili-main-page
+
+  - domain: bilibili.com
     url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
     wait: 15
-    traffic_type: video-play
-  - domain: bilibili.com 
+    traffic_type: all
+    page_type: bilibili-video-play-1
+
+  - domain: bilibili.com
     url: "https://www.bilibili.com/video/BV1HEf2YWEvs/"
     wait: 15
-    traffic_type: video-play 
+    traffic_type: all
+    page_type: bilibili-video-play-2
 
-  # - domain: youtube.com
-  #   url: "https://www.youtube.com/" 
-  #   wait: 15
-  #   traffic_type: video-mainpage
-  # - domain: youtube.com
-  #   url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
-  #   wait: 15
-  #   traffic_type: video-play 
+  - domain: youtube.com
+    url: "https://www.youtube.com/"
+    wait: 15
+    traffic_type: all
+    page_type: youtube-main-page
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
+    wait: 15
+    traffic_type: all
+    page_type: youtube-video-play-1
+
+  - domain: google.com
+    url: "https://www.google.com/"
+    wait: 15
+    traffic_type: all
+    page_type: google-search-main-page
+
+  # Generalization set: static, portal, SPA, community, and e-commerce pages.
+  - domain: example.com
+    url: "https://example.com/"
+    wait: 8
+    traffic_type: all
+    page_type: example-static-baseline
+
+  - domain: baidu.com
+    url: "https://www.baidu.com/"
+    wait: 12
+    traffic_type: all
+    page_type: baidu-search-main-page
+
+  - domain: baidu.com
+    url: "https://map.baidu.com/"
+    wait: 15
+    traffic_type: all
+    page_type: baidu-map-spa-main-page
+
+  - domain: gov.cn
+    url: "https://www.gov.cn/"
+    wait: 12
+    traffic_type: all
+    page_type: gov-government-portal
+
+  - domain: 12306.cn
+    url: "https://www.12306.cn/index/"
+    wait: 15
+    traffic_type: all
+    page_type: 12306-service-portal
+
+  - domain: gitee.com
+    url: "https://gitee.com/"
+    wait: 15
+    traffic_type: all
+    page_type: gitee-developer-main-page
+
+  - domain: douban.com
+    url: "https://www.douban.com/"
+    wait: 15
+    traffic_type: all
+    page_type: douban-community-main-page
+
+  - domain: douban.com
+    url: "https://movie.douban.com/"
+    wait: 15
+    traffic_type: all
+    page_type: douban-movie-main-page
+
+  - domain: jd.com
+    url: "https://www.jd.com/"
+    wait: 15
+    traffic_type: all
+    page_type: jd-ecommerce-main-page
+
+  - domain: mi.com
+    url: "https://www.mi.com/"
+    wait: 15
+    traffic_type: all
+    page_type: mi-brand-spa-main-page
+
+  - domain: taobao.com
+    url: "https://www.taobao.com/"
+    wait: 15
+    traffic_type: all
+    page_type: taobao-ecommerce-main-page
+
+  - domain: csdn.net
+    url: "https://www.csdn.net/"
+    wait: 15
+    traffic_type: all
+    page_type: csdn-content-main-page
+
+  # Video stress set.
+  - domain: qq.com
+    url: "https://v.qq.com/"
+    wait: 20
+    traffic_type: all
+    page_type: qq-video-main-page
+
+  - domain: iqiyi.com
+    url: "https://www.iqiyi.com/"
+    wait: 20
+    traffic_type: all
+    page_type: iqiyi-video-main-page
+
+  - domain: youku.com
+    url: "https://www.youku.com/"
+    wait: 20
+    traffic_type: all
+    page_type: youku-video-main-page

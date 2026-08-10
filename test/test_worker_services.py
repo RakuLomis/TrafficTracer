@@ -129,10 +129,14 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
     assert services.jobs.wait(started["job_id"], timeout=3)
     status = services.jobs.status({"job_id": started["job_id"]})
     assert status["state"] == "completed"
-    sessions = services.session_list({})["sessions"]
-    assert len(sessions) == 1
-    manifest = sessions[0]
-    assert manifest["state"] == "completed"
+    page = services.session_list({})
+    assert page["total"] == 1
+    assert page["has_more"] is False
+    summary = page["sessions"][0]
+    assert summary["state"] == "completed"
+    assert summary["artifact_count"] == 4
+    assert "artifacts" not in summary
+    manifest = services.session_get({"session_id": summary["session_id"]})
     assert [item["path"] for item in manifest["artifacts"]] == [
         "logs/capture.json",
         "analysis/correlation.json",
@@ -428,3 +432,59 @@ def test_session_scope_resolve_maps_batch_to_its_stable_capture_group(tmp_path):
     assert services.session_scope_list({"scope_id": scope["scope_id"]})[
         "sessions"
     ] == []
+
+
+def test_session_list_is_summary_paginated_and_bounded(tmp_path):
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    versions = ComponentVersions(
+        *(ComponentVersion("complete", "unknown") for _ in range(3))
+    )
+    created = [
+        services.store.create(
+            job_id=f"00000000-0000-4000-8000-{index:012d}",
+            target=SessionTarget(
+                f"https://example{index}.test/",
+                f"example{index}.test",
+            ),
+            component_versions=versions,
+        )
+        for index in range(25)
+    ]
+
+    first = services.session_list({"offset": 0, "limit": 8})
+    second = services.session_list({"offset": 8, "limit": 8})
+    last = services.session_list({"offset": 24, "limit": 8})
+
+    assert first["total"] == 25
+    assert first["offset"] == 0
+    assert first["limit"] == 8
+    assert first["has_more"] is True
+    assert len(first["sessions"]) == 8
+    assert len(second["sessions"]) == 8
+    assert len(last["sessions"]) == 1
+    assert last["has_more"] is False
+    assert set(first["sessions"][0]) >= {
+        "session_id",
+        "job_id",
+        "state",
+        "target",
+        "artifact_count",
+        "warning_count",
+        "quality_state",
+        "capture_global_quality_state",
+    }
+    assert "artifacts" not in first["sessions"][0]
+    assert {
+        item["session_id"]
+        for page in (first, second, last)
+        for item in page["sessions"]
+    }.issubset({item.session_id for item in created})
+
+    with pytest.raises(WorkerMethodError):
+        services.session_list({"offset": -1})
+    with pytest.raises(WorkerMethodError):
+        services.session_list({"limit": 101})

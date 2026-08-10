@@ -9,6 +9,7 @@ from traffictracer.contracts import ValidationError, validate_worker_message
 from traffictracer.worker.protocol import (
     JsonlDecoder,
     JsonlWriter,
+    MessageTooLargeError,
     ProtocolFailure,
     read_jsonl,
 )
@@ -107,5 +108,6 @@ def test_writer_rejects_invalid_or_oversized_protocol_output():
         "id": "one",
         "result": {"padding": "x" * 200},
     }
-    with pytest.raises(ValueError, match="exceeds"):
+    with pytest.raises(MessageTooLargeError, match="exceeds") as raised:
         writer.write(response)
+    assert raised.value.actual_bytes > raised.value.max_bytes

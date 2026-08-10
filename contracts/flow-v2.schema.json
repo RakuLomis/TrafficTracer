@@ -121,10 +121,10 @@
       "required": ["status", "method", "confidence", "evidence"],
       "properties": {
         "status": { "enum": ["matched", "ambiguous", "unmatched"] },
-        "method": { "enum": ["netlog_socket", "cdp_connection_reuse", "endpoint_time", "host_time", "none"] },
+        "method": { "enum": ["netlog_socket", "cdp_response_endpoint", "cdp_connection_reuse", "endpoint_time", "host_time", "none"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "unmatched_reason": { "enum": ["no_transport_connection", "no_response", "request_cancelled", "request_failed", "response_endpoint_missing", "response_transport_unbound", "non_network_response", "multiple_candidates", "ambiguous_cdp_connection", "insufficient_time", "missing_request_metadata"] }
+        "unmatched_reason": { "enum": ["no_transport_connection", "no_response", "request_cancelled", "request_failed", "response_endpoint_missing", "response_transport_unbound", "non_network_response", "multiple_candidates", "ambiguous_cdp_connection", "ambiguous_response_endpoint", "insufficient_time", "missing_request_metadata"] }
       },
       "allOf": [
         { "if": { "properties": { "status": { "enum": ["ambiguous", "unmatched"] } }, "required": ["status"] }, "then": { "required": ["unmatched_reason"] } }
@@ -144,7 +144,7 @@
         "relation": { "enum": ["same_site", "cross_site", "unknown"] },
         "connection_id": { "oneOf": [{ "$ref": "#/$defs/connectionId" }, { "type": "null" }] },
         "candidate_connection_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectionId" } },
-        "network_observation": { "enum": ["network", "disk_cache", "service_worker", "prefetch_cache", "browser_internal", "unknown"] },
+        "network_observation": { "enum": ["network", "disk_cache", "service_worker", "prefetch_cache", "browser_internal", "local_endpoint", "failed_before_socket", "not_dispatched", "unknown"] },
         "timing": { "$ref": "#/$defs/timing" },
         "failure": { "$ref": "#/$defs/requestFailure" },
         "attribution": { "$ref": "#/$defs/requestAttribution" }

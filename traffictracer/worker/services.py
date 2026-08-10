@@ -135,18 +135,9 @@ class WorkerServices:
         return diagnose_environment(spec).to_dict()
 
     def session_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        if params:
-            raise WorkerMethodError(
-                "INVALID_PARAMS", "session.list does not accept parameters."
-            )
+        offset, limit = _pagination(params)
         scan = self.store.scan()
-        return {
-            "sessions": [manifest.to_dict() for manifest in scan.sessions],
-            "corrupt": [
-                {"session_dir": item.session_dir, "message": item.message}
-                for item in scan.corrupt
-            ],
-        }
+        return _session_page(scan, offset=offset, limit=limit)
 
     def session_scope_resolve(self, params: dict[str, Any]) -> dict[str, Any] | None:
         selectors = {"path", "job_id", "batch_id"} & set(params)
@@ -181,12 +172,11 @@ class WorkerServices:
         return scope.to_dict()
 
     def session_scope_list(self, params: dict[str, Any]) -> dict[str, Any]:
-        if set(params) != {"scope_id"} or not isinstance(
-            params.get("scope_id"), str
-        ):
+        if not isinstance(params.get("scope_id"), str):
             raise WorkerMethodError(
-                "INVALID_PARAMS", "session.scope.list requires one string scope_id."
+                "INVALID_PARAMS", "session.scope.list requires a string scope_id."
             )
+        offset, limit = _pagination(params, required={"scope_id"})
         try:
             scope = self.store.resolve_scope_id(
                 params["scope_id"], allow_missing_capture_group=True
@@ -196,11 +186,7 @@ class WorkerServices:
             raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
         return {
             "scope": scope.to_dict(),
-            "sessions": [manifest.to_dict() for manifest in scan.sessions],
-            "corrupt": [
-                {"session_dir": item.session_dir, "message": item.message}
-                for item in scan.corrupt
-            ],
+            **_session_page(scan, offset=offset, limit=limit),
         }
 
     def session_get(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -629,3 +615,106 @@ def _media_type(path: Path) -> str:
     if path.suffix == ".jsonl":
         return "application/x-ndjson"
     return "application/json"
+
+def _pagination(
+    params: dict[str, Any],
+    *,
+    required: set[str] | None = None,
+) -> tuple[int, int]:
+    required = required or set()
+    allowed = required | {"offset", "limit"}
+    if set(params) - allowed or not required.issubset(params):
+        raise WorkerMethodError(
+            "INVALID_PARAMS",
+            "Session pagination accepts only offset and limit.",
+        )
+    offset = params.get("offset", 0)
+    limit = params.get("limit", 20)
+    if (
+        isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or offset < 0
+        or isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= 100
+    ):
+        raise WorkerMethodError(
+            "INVALID_PARAMS",
+            "offset must be non-negative and limit must be between 1 and 100.",
+        )
+    return offset, limit
+
+
+def _session_page(scan, *, offset: int, limit: int) -> dict[str, Any]:
+    total = len(scan.sessions)
+    page = scan.sessions[offset:offset + limit]
+    return {
+        "sessions": [_session_summary(manifest) for manifest in page],
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "has_more": offset + len(page) < total,
+        "corrupt": [
+            {"session_dir": item.session_dir, "message": item.message}
+            for item in scan.corrupt
+        ],
+    }
+
+
+def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": manifest.schema_version,
+        "session_id": manifest.session_id,
+        "job_id": manifest.job_id,
+        "state": manifest.state.value,
+        "created_at": manifest.created_at.isoformat().replace("+00:00", "Z"),
+        "updated_at": manifest.updated_at.isoformat().replace("+00:00", "Z"),
+        "session_dir": manifest.session_dir,
+        "target": manifest.target.to_dict(),
+        "artifact_count": len(manifest.artifacts),
+        "warning_count": len(manifest.warnings),
+        "quality_state": None,
+        "capture_global_quality_state": None,
+        "coverage": None,
+    }
+    if manifest.started_at is not None:
+        payload["started_at"] = (
+            manifest.started_at.isoformat().replace("+00:00", "Z")
+        )
+    if manifest.completed_at is not None:
+        payload["completed_at"] = (
+            manifest.completed_at.isoformat().replace("+00:00", "Z")
+        )
+    if manifest.error is not None:
+        payload["error"] = manifest.error.to_dict()
+
+    summary_artifact = next(
+        (
+            artifact for artifact in manifest.artifacts
+            if artifact.role == "coverage_summary"
+            or artifact.path == "analysis/summary.json"
+        ),
+        None,
+    )
+    if summary_artifact is not None:
+        try:
+            session_dir = Path(manifest.session_dir).resolve(strict=True)
+            summary_path = (
+                session_dir / summary_artifact.path
+            ).resolve(strict=True)
+            summary_path.relative_to(session_dir)
+            with summary_path.open(encoding="utf-8") as stream:
+                summary = json.load(stream)
+            if isinstance(summary, dict):
+                payload["quality_state"] = summary.get("quality_state")
+                payload["capture_global_quality_state"] = summary.get(
+                    "capture_global_quality_state"
+                )
+                coverage = summary.get("coverage")
+                if isinstance(coverage, dict):
+                    page = coverage.get("page_attributed")
+                    if isinstance(page, dict):
+                        payload["coverage"] = page
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    return payload

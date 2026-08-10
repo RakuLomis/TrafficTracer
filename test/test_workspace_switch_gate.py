@@ -60,7 +60,10 @@ def _capture_analyze_list_and_read(
 
     sessions = services.session_list({})["sessions"]
     assert len(sessions) == 1
-    manifest = sessions[0]
+    session_summary = sessions[0]
+    manifest = services.session_get({
+        "session_id": session_summary["session_id"],
+    })
     relative_session = Path(manifest["session_dir"]).relative_to(root.resolve())
     assert len(relative_session.parts) == 3
     assert relative_session.parts[1] == "example.test"

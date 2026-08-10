@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import yaml
+
 from traffictracer.build_info import component_versions_dict
 
 
@@ -31,9 +33,14 @@ def test_build_info_generator_uses_locked_component_commits(tmp_path):
     ], check=True)
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["traffictracer"]["commit"] == traffictracer_commit
+    lock = yaml.safe_load(
+        (ROOT / "complete" / "components.lock.yaml").read_text(
+            encoding="utf-8",
+        )
+    )
     assert payload["mihomo"]["commit"] == (
-        "dcf2215aa223f655c5df3d82b515ab98acc5a4bb"
+        lock["components"]["mihomo"]["commit"]
     )
     assert payload["clash_verge_rev"]["commit"] == (
-        "e6a8d23a59ff8a09205b840d7d39c3ea9dc51492"
+        lock["components"]["clash_verge_rev"]["commit"]
     )

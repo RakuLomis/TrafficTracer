@@ -78,6 +78,11 @@ def resolve_visit_requests(
             ),
         ))
 
+    preliminary = [
+        _resolve_response_endpoint(item, all_flows, pcap_by_connection)
+        for item in preliminary
+    ]
+
     # CDP connection IDs are browser-process local. This function is called per
     # visit, preventing evidence from leaking across pages or sessions.
     flows_by_cdp: dict[int, dict[str, CorrelatedFlowV2]] = {}
@@ -168,6 +173,108 @@ def resolve_visit_requests(
         else:
             resolved.append(resolution)
     return resolved
+
+
+def _resolve_response_endpoint(
+    resolution: RequestResolution,
+    all_flows: list[CorrelatedFlowV2],
+    pcap_by_connection: dict[str, ConnectionPcapResult],
+) -> RequestResolution:
+    """Seed a browser connection from its observed response endpoint."""
+    request = resolution.request
+    if (
+        resolution.flow is not None
+        or request.response_status <= 0
+        or not request.remote_ip
+        or not request.remote_port
+    ):
+        return resolution
+
+    candidates = _rank_request_flows(
+        [
+            flow for flow in all_flows
+            if _flow_matches_response_endpoint(flow, request)
+        ],
+        pcap_by_connection,
+    )
+    if not candidates:
+        return resolution
+
+    selected, _ = _select_preliminary_candidate(
+        request, [], candidates, pcap_by_connection,
+    )
+    temporal_evidence: tuple[str, ...] = ()
+    if selected is None:
+        selected, temporal_evidence = _select_endpoint_lifecycle_candidate(
+            request, candidates,
+        )
+    if selected is not None:
+        return RequestResolution(
+            request=request,
+            flow=selected,
+            candidates=tuple(candidates),
+            method="cdp_response_endpoint",
+            evidence=(
+                f"cdp_response_endpoint:{request.remote_ip}:{request.remote_port}",
+                "cdp_response_received",
+                *(
+                    ("unique_response_endpoint",)
+                    if len(candidates) == 1
+                    else temporal_evidence or ("unique_candidate_evidence",)
+                ),
+            ),
+        )
+    return RequestResolution(
+        request=request,
+        flow=None,
+        candidates=tuple(candidates),
+        method="cdp_response_endpoint",
+        evidence=(
+            f"cdp_response_endpoint:{request.remote_ip}:{request.remote_port}",
+            "cdp_response_received",
+            "multiple_transport_connections",
+        ),
+        status="ambiguous",
+        unmatched_reason="ambiguous_response_endpoint",
+    )
+
+
+def _select_endpoint_lifecycle_candidate(
+    request: AttributedRequest,
+    candidates: list[CorrelatedFlowV2],
+) -> tuple[CorrelatedFlowV2 | None, tuple[str, ...]]:
+    """Select one endpoint candidate only with unique temporal evidence."""
+    active = [
+        flow for flow in candidates
+        if flow.first_observed is not None
+        and flow.last_observed is not None
+        and flow.first_observed <= request.timestamp <= flow.last_observed
+    ]
+    if len(active) == 1:
+        return active[0], (
+            "request_within_transport_lifecycle",
+            f"selected_connection_id:{active[0].stable_connection_id}",
+        )
+    if active:
+        return None, ("multiple_active_transport_connections",)
+
+    preceding = [
+        flow for flow in candidates
+        if flow.last_observed is not None
+        and 0 <= request.timestamp - flow.last_observed <= 30.0
+    ]
+    if not preceding:
+        return None, ("no_nearby_transport_lifecycle",)
+    latest = max(flow.last_observed for flow in preceding)
+    nearest = [flow for flow in preceding if flow.last_observed == latest]
+    if len(nearest) != 1:
+        return None, ("nearest_transport_lifecycle_tie",)
+    selected = nearest[0]
+    return selected, (
+        "nearest_preceding_transport_lifecycle",
+        f"temporal_gap_ms:{round((request.timestamp - latest) * 1000)}",
+        f"selected_connection_id:{selected.stable_connection_id}",
+    )
 
 
 def _select_preliminary_candidate(

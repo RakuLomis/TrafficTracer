@@ -11,6 +11,8 @@ def _request(
     response_status: int = 206,
     reused: bool = True,
     timestamp: float = 100.0,
+    remote_ip: str = "",
+    remote_port: int = 0,
 ) -> AttributedRequest:
     return AttributedRequest(
         request_id=request_id,
@@ -22,6 +24,8 @@ def _request(
         connection_id=cdp_connection_id,
         connection_reused=reused,
         response_status=response_status,
+        remote_ip=remote_ip,
+        remote_port=remote_port,
     )
 
 
@@ -76,6 +80,119 @@ def test_positive_response_reuses_unique_cdp_connection():
         "cdp_connection_reused",
         "unique_transport_connection",
     )
+
+
+def test_response_endpoint_seeds_connection_and_its_reused_requests():
+    connection_id = "conn-11111111111111111111111111111111"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[_flow(connection_id, [], 44001)],
+        requests=[
+            _request(
+                "seed",
+                cdp_connection_id=338,
+                reused=False,
+                remote_ip="198.18.0.39",
+                remote_port=443,
+            ),
+            _request("reused", cdp_connection_id=338),
+        ],
+    )
+
+    seed, reused = resolve_visit_requests(result, [])
+
+    assert seed.flow is not None
+    assert seed.flow.stable_connection_id == connection_id
+    assert seed.method == "cdp_response_endpoint"
+    assert reused.flow is not None
+    assert reused.flow.stable_connection_id == connection_id
+    assert reused.method == "cdp_connection_reuse"
+
+
+def test_response_endpoint_prefers_unique_active_lifecycle():
+    active = _flow("conn-11111111111111111111111111111111", [], 44001)
+    future = _flow("conn-22222222222222222222222222222222", [], 44002)
+    active.first_observed = 90.0
+    active.last_observed = 110.0
+    future.first_observed = 120.0
+    future.last_observed = 130.0
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[active, future],
+        requests=[
+            _request(
+                "endpoint",
+                cdp_connection_id=338,
+                reused=False,
+                remote_ip="198.18.0.39",
+                remote_port=443,
+                timestamp=100.0,
+            ),
+        ],
+    )
+
+    resolution = resolve_visit_requests(result, [])[0]
+
+    assert resolution.flow is active
+    assert "request_within_transport_lifecycle" in resolution.evidence
+
+
+def test_response_endpoint_prefers_unique_nearest_preceding_lifecycle():
+    older = _flow("conn-11111111111111111111111111111111", [], 44001)
+    nearest = _flow("conn-22222222222222222222222222222222", [], 44002)
+    older.first_observed = 90.0
+    older.last_observed = 95.0
+    nearest.first_observed = 96.0
+    nearest.last_observed = 99.5
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[older, nearest],
+        requests=[
+            _request(
+                "endpoint",
+                cdp_connection_id=338,
+                reused=False,
+                remote_ip="198.18.0.39",
+                remote_port=443,
+                timestamp=100.0,
+            ),
+        ],
+    )
+
+    resolution = resolve_visit_requests(result, [])[0]
+
+    assert resolution.flow is nearest
+    assert "nearest_preceding_transport_lifecycle" in resolution.evidence
+    assert "temporal_gap_ms:500" in resolution.evidence
+
+
+def test_ambiguous_response_endpoint_is_not_guessed():
+    first = _flow("conn-11111111111111111111111111111111", [], 44001)
+    second = _flow("conn-22222222222222222222222222222222", [], 44002)
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[first, second],
+        requests=[
+            _request(
+                "endpoint",
+                cdp_connection_id=338,
+                reused=False,
+                remote_ip="198.18.0.39",
+                remote_port=443,
+            ),
+        ],
+    )
+
+    resolution = resolve_visit_requests(result, [])[0]
+
+    assert resolution.flow is None
+    assert resolution.status == "ambiguous"
+    assert resolution.unmatched_reason == "ambiguous_response_endpoint"
+    assert len(resolution.candidates) == 2
 
 
 def test_ambiguous_cdp_connection_is_not_selected():

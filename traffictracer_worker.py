@@ -14,13 +14,43 @@ from threading import Event
 from traffictracer.contracts import validate_worker_message
 from traffictracer.version import COMPLETE_VERSION, WORKER_API_VERSION
 from traffictracer.worker.dispatcher import Dispatcher
-from traffictracer.worker.protocol import JsonlWriter, read_jsonl
+from traffictracer.worker.protocol import (
+    JsonlWriter,
+    MessageTooLargeError,
+    read_jsonl,
+)
 from traffictracer.worker.recovery import WorkerRecovery
 from traffictracer.worker.services import WorkerServices
 
 
 class _TerminateWorker(BaseException):
     pass
+
+
+def _write_response(writer: JsonlWriter, response: dict) -> None:
+    try:
+        writer.write(response)
+    except MessageTooLargeError as exc:
+        request_id = response.get("id")
+        logging.error(
+            "Worker response exceeded protocol limit: id=%r bytes=%d max=%d",
+            request_id,
+            exc.actual_bytes,
+            exc.max_bytes,
+        )
+        writer.write({
+            "api_version": WORKER_API_VERSION,
+            "type": "response",
+            "id": request_id,
+            "error": {
+                "code": "RESPONSE_TOO_LARGE",
+                "message": "Worker response exceeds the protocol size limit.",
+                "data": {
+                    "actual_bytes": exc.actual_bytes,
+                    "max_bytes": exc.max_bytes,
+                },
+            },
+        })
 
 
 def main(argv=None) -> int:
@@ -90,7 +120,7 @@ def main(argv=None) -> int:
     try:
         for frame in read_jsonl(sys.stdin.buffer):
             response = dispatcher.dispatch(frame)
-            writer.write(response)
+            _write_response(writer, response)
             if shutdown_event.is_set():
                 break
     except (_TerminateWorker, KeyboardInterrupt):

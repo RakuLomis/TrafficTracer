@@ -14,6 +14,7 @@ from traffictracer.version import FLOW_SCHEMA_VERSION
 
 from .flow_index import FlowIndex, FlowMapping
 from .consistency import validate_analysis_consistency
+from .request_observation import NON_NETWORK_OBSERVATIONS
 
 
 FLOW_INDEX_NAME = "flow-index.json"
@@ -215,9 +216,7 @@ def _partition(statuses) -> dict:
 
 
 def _request_partition(records: list[dict]) -> dict:
-    non_network = {
-        "disk_cache", "service_worker", "prefetch_cache", "browser_internal",
-    }
+    non_network = NON_NETWORK_OBSERVATIONS
     counts = Counter({
         "matched": 0, "ambiguous": 0, "unmatched": 0, "non_network": 0,
     })

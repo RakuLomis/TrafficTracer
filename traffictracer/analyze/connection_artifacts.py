@@ -386,12 +386,14 @@ def _request_unmatched_reason(
 ) -> str:
     if resolver_reason:
         return resolver_reason
-    if network_observation not in {"network", "unknown"}:
-        return "non_network_response"
     if request.canceled:
         return "request_cancelled"
     if request.failed:
         return "request_failed"
+    if network_observation == "not_dispatched":
+        return "no_response"
+    if network_observation not in {"network", "unknown"}:
+        return "non_network_response"
     if request.response_status > 0 and not (
         request.remote_ip
         or (request.connection_id is not None and request.connection_id > 0)

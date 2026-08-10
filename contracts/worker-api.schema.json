@@ -66,6 +66,7 @@
             "CAPTURE_PERMISSION_DENIED",
             "CORE_UNAVAILABLE",
             "CANCELLED",
+            "RESPONSE_TOO_LARGE",
             "INTERNAL_ERROR"
           ]
         },

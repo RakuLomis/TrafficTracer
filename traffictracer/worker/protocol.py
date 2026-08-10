@@ -14,6 +14,16 @@ from traffictracer.version import WORKER_API_VERSION
 DEFAULT_MAX_MESSAGE_BYTES = 1024 * 1024
 
 
+class MessageTooLargeError(ValueError):
+    def __init__(self, actual_bytes: int, max_bytes: int) -> None:
+        self.actual_bytes = actual_bytes
+        self.max_bytes = max_bytes
+        super().__init__(
+            f"encoded Worker message is {actual_bytes} bytes and exceeds "
+            f"{max_bytes} bytes"
+        )
+
+
 @dataclass(frozen=True)
 class ProtocolFailure:
     reason: str
@@ -139,9 +149,7 @@ class JsonlWriter:
             sort_keys=True,
         ).encode("utf-8")
         if len(encoded) > self._max_message_bytes:
-            raise ValueError(
-                f"encoded Worker message exceeds {self._max_message_bytes} bytes"
-            )
+            raise MessageTooLargeError(len(encoded), self._max_message_bytes)
         with self._lock:
             self._stream.write(encoded + b"\n")
             self._stream.flush()
