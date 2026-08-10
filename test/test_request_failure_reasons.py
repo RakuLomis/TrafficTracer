@@ -41,3 +41,37 @@ def test_response_without_transport_is_distinct_from_no_response(tmp_path):
         "beacon": "no_response",
         "returned": "response_transport_unbound",
     }
+
+
+def test_cancelled_and_endpoint_missing_have_distinct_reasons(tmp_path):
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        requests=[
+            AttributedRequest(
+                "cancelled", "target", "frame",
+                "https://assets.example/cast.js", "Script", 100.0,
+                failed=True, canceled=True,
+                failure_reason="net::ERR_ABORTED",
+            ),
+            AttributedRequest(
+                "missing-endpoint", "target", "frame",
+                "https://login.example/auth", "Document", 101.0,
+                response_status=302,
+            ),
+        ],
+    )
+
+    artifacts = persist_connection_artifacts(tmp_path, SESSION_ID, [result])
+    requests = json.loads(
+        artifacts.request_index.read_text(encoding="utf-8")
+    )["items"]
+    reasons = {
+        item["request_id"]: item["attribution"]["unmatched_reason"]
+        for item in requests
+    }
+
+    assert reasons == {
+        "cancelled": "request_cancelled",
+        "missing-endpoint": "response_endpoint_missing",
+    }

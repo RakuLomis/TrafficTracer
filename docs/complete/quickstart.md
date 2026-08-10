@@ -237,24 +237,26 @@ ls -l /run/clash-verge-service/service.sock
 `direct/proxy/unknown`、完整选择链和最终节点。该快照是可审计证据，但如果捕获
 期间外部程序改变了组选择，它不等同于逐事件路由历史。
 
-启用拆分时，`analysis/pcap` 按规范网络资源生成目录。完整 URL 仍保留在
-request index；资源分组只忽略 transport retry 参数 `rn`/`alr`。同一资源的
-canonical connection 使用 `pre.pcap/post.pcap`，有报文的其他候选使用
-`alternative-XX-<protocol>-*.pcap`；空 QUIC 尝试不生成空 PCAP，但仍在
-`mapping.json` 中记录为 alternative 及其状态。HTTP/2 复用的全部 URL/request ID
-也保留在 mapping 和 connection/request index 中。
+启用拆分时，`analysis/pcap` 按规范网络资源生成目录。完整 URL 始终保留在
+request index；transport race 只按同源同路径建立候选集，不包含站点或 query
+参数特例。只有空 transport 对应唯一一个 packet-backed、完整关联候选时才切换
+canonical connection；其余候选和完整 query 继续保存在 `mapping.json` 与
+connection/request index 中。
 
 HTTP/2/keep-alive 的后续请求可能没有新的 NetLog transport occurrence。若该请求
-收到响应、CDP 标记连接复用，且其正数 `connectionId` 在当前页面只对应一个已确认
-canonical connection，分析器会以 `cdp_connection_reuse` 回填；证据会记录原请求
-ID 与 CDP connectionId。多候选、无响应或 `connectionId=0` 始终保持未关联。
+收到响应且 CDP 标记连接复用，分析器依次使用正数 `connectionId`、response
+endpoint、request/response/completion 时间和 transport 生命周期消歧。只有证据
+唯一时才以 `cdp_connection_reuse` 回填；证据并列、多候选、无响应或
+`connectionId=0` 始终保持未关联。
 
 浏览器 coverage 中 `non_network` 表示 CDP 明确报告 disk cache、Service Worker、
 prefetch，或收到响应但 `connectionId=0` 的浏览器内部响应。这些请求没有可捕获的
 独立五元组，不计为抓包缺失；它们仍保留 URL、request ID 与分类证据。旧 Session
 没有这些 CDP 标志时保持兼容，不会凭空伪造缓存来源。
-`no_response` 表示 Chrome 没有报告响应，`response_transport_unbound` 表示已经收到
-响应但仍缺少唯一 transport；两者不能混为同一种关联失败。
+`no_response` 表示 Chrome 没有报告响应；`request_cancelled` 和 `request_failed`
+分别表示 CDP 明确报告取消或加载失败；`response_endpoint_missing` 表示收到响应但
+没有可用于绑定的 endpoint；`response_transport_unbound` 表示 endpoint 存在但仍
+缺少唯一 transport。这些原因不会被合并成一种关联失败。
 
 UI 中 `Page flows` 只描述当前页面关联的 transport pipeline；
 `Capture-global core flows` 是同一捕获窗口内全部 Mihomo 流量，可能包含后台 TUN

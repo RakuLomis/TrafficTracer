@@ -169,6 +169,8 @@ def correlate_v2(
             match_confidence=decision.confidence,
             conn_id=decision.selected_native_id or "",
             netlog_source_id=tc.netlog_source_id,
+            first_observed=tc.first_observed,
+            last_observed=tc.last_observed,
             terminal=_terminal_from_close(mconn.close if mconn else None),
             outer_conn_id=(
                 mconn.proxy_dial.outer_conn_id

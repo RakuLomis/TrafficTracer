@@ -83,8 +83,15 @@ def trace_transport(
         matched_request_ids = request_bindings.get(observation["sid"], [])
         if not matched_request_ids:
             continue
+        matched_requests = [
+            requests_by_id[item] for item in matched_request_ids
+        ]
         first_observed = min(
-            (requests_by_id[item].timestamp for item in matched_request_ids),
+            (item.timestamp for item in matched_requests),
+            default=None,
+        )
+        last_observed = max(
+            (_request_end(item) for item in matched_requests),
             default=None,
         )
         transport_source_id = observation["transport_source_id"]
@@ -99,6 +106,12 @@ def trace_transport(
                     if existing.first_observed is not None
                     else first_observed
                 )
+            if last_observed is not None:
+                existing.last_observed = (
+                    max(existing.last_observed, last_observed)
+                    if existing.last_observed is not None
+                    else last_observed
+                )
             continue
 
         ft = observation["five_tuple"]
@@ -112,6 +125,7 @@ def trace_transport(
             protocol=ft.protocol or "",
             request_ids=list(matched_request_ids),
             first_observed=first_observed,
+            last_observed=last_observed,
             network=ft.network or "",
             attempted_protocols=list(ft.attempted_protocols),
             application_protocol=_application_protocol(observation["chain"], ft),
@@ -121,6 +135,14 @@ def trace_transport(
     logger.info("Traced %d transport connections for %d CDP requests",
                 len(connections), len(requests))
     return connections
+
+
+def _request_end(request: AttributedRequest) -> float:
+    return (
+        request.completion_timestamp
+        or request.response_timestamp
+        or request.timestamp
+    )
 
 
 def _transport_source_id(chain, fallback: int) -> int:
@@ -310,6 +332,12 @@ def _merge_alias_connections(
                 min(duplicate.first_observed, connection.first_observed)
                 if duplicate.first_observed is not None
                 else connection.first_observed
+            )
+        if connection.last_observed is not None:
+            duplicate.last_observed = (
+                max(duplicate.last_observed, connection.last_observed)
+                if duplicate.last_observed is not None
+                else connection.last_observed
             )
     return merged
 

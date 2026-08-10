@@ -45,6 +45,11 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
             from_disk_cache=raw.get("from_disk_cache", False),
             from_service_worker=raw.get("from_service_worker", False),
             from_prefetch_cache=raw.get("from_prefetch_cache", False),
+            response_timestamp=raw.get("response_timestamp", 0.0),
+            completion_timestamp=raw.get("completion_timestamp", 0.0),
+            failed=raw.get("failed", False),
+            canceled=raw.get("canceled", False),
+            failure_reason=raw.get("failure_reason", ""),
         ))
 
     logger.info("Parsed %d attributed requests from CDP data", len(result))

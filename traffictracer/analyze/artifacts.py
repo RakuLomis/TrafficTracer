@@ -60,7 +60,9 @@ def persist_analysis_artifacts(
     warnings.extend(_quality_warnings(request_records, connection_records, pcap_payload))
     match_counts = Counter(item["match"]["status"] for item in items)
     protocol_counts = Counter(item["protocol"] for item in items)
-    quality = analysis_quality(request_records, connection_records, pcap_payload)
+    quality = analysis_quality(
+        request_records, connection_records, pcap_payload, items, error_count,
+    )
     index_payload = {
         "schema_version": FLOW_SCHEMA_VERSION,
         "session_id": session_id,
@@ -83,7 +85,14 @@ def persist_analysis_artifacts(
         "error_flows": error_count,
         "warnings": warnings,
         "consistency": consistency,
-        "quality_state": _quality_state(consistency, warnings),
+        # This remains the selected page's quality for backward compatibility.
+        # Capture-global diagnostics are reported separately below.
+        "quality_state": _quality_state(
+            consistency, warnings, scope="page_attributed",
+        ),
+        "capture_global_quality_state": _quality_state(
+            consistency, warnings, scope="capture_global",
+        ),
         "quality": quality,
     }
     summary_payload["coverage"] = layered_coverage(
@@ -450,35 +459,42 @@ def _warnings(
     pre_counts: Counter[str],
     error_count: int,
 ) -> list[dict]:
+    """Build diagnostics for all Mihomo flows observed during the capture."""
     warnings: list[dict] = []
     duplicate_keys = sorted(key for key, count in pre_counts.items() if count > 1)
     if duplicate_keys:
-        warnings.append({
-            "code": "DUPLICATE_PRE_FLOW",
-            "count": len(duplicate_keys),
-            "message": "Some pre-proxy tuples map to multiple logical flows.",
-            "keys": duplicate_keys,
-        })
+        warning = _warning(
+            "DUPLICATE_PRE_FLOW",
+            len(duplicate_keys),
+            "Some pre-proxy tuples map to multiple logical flows.",
+            scope="capture_global",
+        )
+        warning["keys"] = duplicate_keys
+        warnings.append(warning)
     shared_count = sum(bool(item["shared"]) for item in items)
     if shared_count:
-        warnings.append({
-            "code": "SHARED_OUTER_FLOW",
-            "count": shared_count,
-            "message": "Shared outer flows are not exclusive one-to-one mappings.",
-        })
+        warnings.append(_warning(
+            "SHARED_OUTER_FLOW",
+            shared_count,
+            "Shared outer flows are not exclusive one-to-one mappings.",
+            scope="capture_global",
+            severity="info",
+        ))
     missing_count = sum(item["post_flow"] is None for item in items)
     if missing_count:
-        warnings.append({
-            "code": "POST_FLOW_UNAVAILABLE",
-            "count": missing_count,
-            "message": "Some logical flows have no complete post-proxy tuple.",
-        })
+        warnings.append(_warning(
+            "POST_FLOW_UNAVAILABLE",
+            missing_count,
+            "Some capture-global logical flows have no complete post-proxy tuple.",
+            scope="capture_global",
+        ))
     if error_count:
-        warnings.append({
-            "code": "FLOW_ERRORS",
-            "count": error_count,
-            "message": "Some logical flows ended with a tracing error.",
-        })
+        warnings.append(_warning(
+            "FLOW_ERRORS",
+            error_count,
+            "Some capture-global logical flows ended with a tracing error.",
+            scope="capture_global",
+        ))
     return warnings
 
 
@@ -486,8 +502,10 @@ def analysis_quality(
     request_records: list[dict],
     connection_records: list[dict],
     pcap_payload: dict,
+    core_flow_records: list[dict] | None = None,
+    core_error_count: int = 0,
 ) -> dict:
-    """Return conservative, denominator-preserving analysis quality metrics."""
+    """Return conservative, denominator-preserving scoped quality metrics."""
     browser = _request_partition(request_records)
     eligible_requests = browser["total"] - browser["non_network"]
     transport = _partition(
@@ -495,9 +513,12 @@ def analysis_quality(
         for record in connection_records
     )
 
-    established = sum(record.get("post_flow") is not None for record in connection_records)
+    established = sum(
+        record.get("post_flow") is not None for record in connection_records
+    )
     failed_before_socket = sum(
-        record.get("post_flow") is None and _is_dial_failure(record.get("terminal"))
+        record.get("post_flow") is None
+        and _is_dial_failure(record.get("terminal"))
         for record in connection_records
     )
     unavailable = len(connection_records) - established - failed_before_socket
@@ -517,7 +538,7 @@ def analysis_quality(
         and item.get("post_proxy", {}).get("status") == "success"
         for item in pcap_connections
     )
-    return {
+    page_quality = {
         "request_attribution": {
             "eligible": eligible_requests,
             "matched": browser["matched"],
@@ -539,6 +560,25 @@ def analysis_quality(
             "complete_pairs": complete_pairs,
         },
     }
+    core_records = core_flow_records or []
+    capture_global = {
+        "logical_flows": {
+            "total": len(core_records),
+            "with_post_flow": sum(
+                item.get("post_flow") is not None for item in core_records
+            ),
+            "missing_post_flow": sum(
+                item.get("post_flow") is None for item in core_records
+            ),
+            "errors": core_error_count,
+        },
+    }
+    # Preserve the original flattened page keys for older UI readers.
+    return {
+        **page_quality,
+        "page_attributed": page_quality,
+        "capture_global": capture_global,
+    }
 
 
 def _quality_warnings(
@@ -553,12 +593,14 @@ def _quality_warnings(
             "REQUEST_ATTRIBUTION_UNMATCHED",
             request_partition["unmatched"],
             "Some network requests could not be attributed to a browser transport.",
+            scope="page_attributed",
         ))
     if request_partition["ambiguous"]:
         warnings.append(_warning(
             "REQUEST_ATTRIBUTION_AMBIGUOUS",
             request_partition["ambiguous"],
             "Some network requests have multiple possible browser transports.",
+            scope="page_attributed",
         ))
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
@@ -566,13 +608,17 @@ def _quality_warnings(
     )
     if transport["unmatched"]:
         warnings.append(_warning(
-            "TRANSPORT_UNMATCHED", transport["unmatched"],
+            "TRANSPORT_UNMATCHED",
+            transport["unmatched"],
             "Some browser transports could not be matched to Mihomo flows.",
+            scope="page_attributed",
         ))
     if transport["ambiguous"]:
         warnings.append(_warning(
-            "TRANSPORT_AMBIGUOUS", transport["ambiguous"],
+            "TRANSPORT_AMBIGUOUS",
+            transport["ambiguous"],
             "Some browser transports match multiple Mihomo flows.",
+            scope="page_attributed",
         ))
     dial_failures = sum(
         record.get("post_flow") is None
@@ -581,8 +627,22 @@ def _quality_warnings(
     )
     if dial_failures:
         warnings.append(_warning(
-            "EGRESS_DIAL_FAILED", dial_failures,
-            "Some logical flows failed before an egress socket was established.",
+            "EGRESS_DIAL_FAILED",
+            dial_failures,
+            "Some page-attributed flows failed before an egress socket was established.",
+            scope="page_attributed",
+        ))
+    unavailable = sum(
+        record.get("post_flow") is None
+        and not _is_dial_failure(record.get("terminal"))
+        for record in connection_records
+    )
+    if unavailable:
+        warnings.append(_warning(
+            "EGRESS_UNAVAILABLE",
+            unavailable,
+            "Some page-attributed flows have no complete egress tuple.",
+            scope="page_attributed",
         ))
     if pcap_payload.get("split_mode") == "unique_connections":
         pcap_connections = pcap_payload.get("connections", [])
@@ -596,13 +656,17 @@ def _quality_warnings(
         )
         if pre_missing:
             warnings.append(_warning(
-                "PCAP_PRE_EMPTY", pre_missing,
+                "PCAP_PRE_EMPTY",
+                pre_missing,
                 "Some pre-proxy PCAP extracts are empty or failed.",
+                scope="page_attributed",
             ))
         if post_missing:
             warnings.append(_warning(
-                "PCAP_POST_UNAVAILABLE", post_missing,
+                "PCAP_POST_UNAVAILABLE",
+                post_missing,
                 "Some post-proxy PCAP extracts are empty or unavailable.",
+                scope="page_attributed",
             ))
     return warnings
 
@@ -613,21 +677,53 @@ def _is_dial_failure(terminal: object) -> bool:
     return terminal.get("stage") == "dial" or terminal.get("status") == "dial_error"
 
 
-def _warning(code: str, count: int, message: str) -> dict:
-    return {"code": code, "count": count, "message": message}
+def _warning(
+    code: str,
+    count: int,
+    message: str,
+    *,
+    scope: str,
+    severity: str = "warning",
+) -> dict:
+    return {
+        "code": code,
+        "count": count,
+        "message": message,
+        "scope": scope,
+        "severity": severity,
+        "affects_page_quality": (
+            scope == "page_attributed" and severity != "info"
+        ),
+    }
 
 
-def _quality_state(consistency: dict, warnings: list[dict]) -> str:
+def _quality_state(
+    consistency: dict,
+    warnings: list[dict],
+    *,
+    scope: str,
+) -> str:
     if consistency.get("status") != "passed":
         return "failed"
     degradation_codes = {
-        "POST_FLOW_UNAVAILABLE", "FLOW_ERRORS",
-        "REQUEST_ATTRIBUTION_UNMATCHED", "REQUEST_ATTRIBUTION_AMBIGUOUS",
-        "TRANSPORT_UNMATCHED", "TRANSPORT_AMBIGUOUS", "EGRESS_DIAL_FAILED",
-        "PCAP_PRE_EMPTY", "PCAP_POST_UNAVAILABLE",
+        "POST_FLOW_UNAVAILABLE",
+        "FLOW_ERRORS",
+        "REQUEST_ATTRIBUTION_UNMATCHED",
+        "REQUEST_ATTRIBUTION_AMBIGUOUS",
+        "TRANSPORT_UNMATCHED",
+        "TRANSPORT_AMBIGUOUS",
+        "EGRESS_DIAL_FAILED",
+        "EGRESS_UNAVAILABLE",
+        "PCAP_PRE_EMPTY",
+        "PCAP_POST_UNAVAILABLE",
     }
     return (
         "degraded"
-        if any(item.get("code") in degradation_codes for item in warnings)
+        if any(
+            item.get("scope") == scope
+            and item.get("severity") != "info"
+            and item.get("code") in degradation_codes
+            for item in warnings
+        )
         else "passed"
     )

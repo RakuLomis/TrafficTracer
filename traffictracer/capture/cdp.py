@@ -31,6 +31,7 @@ class CDPCollector:
         self._session_to_target: dict[str, str] = {}
         self._requests: list[dict] = []
         self._responses: dict[str, dict] = {}
+        self._completions: dict[str, dict] = {}
         self._websockets: list[dict] = []
         self._visit_url = ""
         self._collecting = False
@@ -117,6 +118,10 @@ class CDPCollector:
             self._on_request_will_be_sent(params, session_id)
         elif method == "Network.responseReceived":
             self._on_response_received(params, session_id)
+        elif method == "Network.loadingFinished":
+            self._on_loading_finished(params)
+        elif method == "Network.loadingFailed":
+            self._on_loading_failed(params)
         elif method == "Network.webSocketCreated":
             self._on_websocket_created(params, session_id)
         elif method == "Page.loadEventFired":
@@ -156,10 +161,32 @@ class CDPCollector:
         if not self._collecting:
             return
         request = params.get("request", {})
+        request_id = params.get("requestId", "")
+        redirect_response = params.get("redirectResponse")
+        if isinstance(redirect_response, dict):
+            prior = next(
+                (
+                    item for item in reversed(self._requests)
+                    if item.get("request_id") == request_id
+                    and "_response" not in item
+                ),
+                None,
+            )
+            if prior is not None:
+                timestamp = params.get("timestamp", 0.0)
+                prior["_response"] = _response_payload(
+                    redirect_response, timestamp,
+                )
+                prior["_completion"] = {
+                    "timestamp": timestamp,
+                    "failed": False,
+                    "canceled": False,
+                    "failure_reason": "",
+                }
         tid = self._session_to_target.get(session_id, "")
         initiator = params.get("initiator", {})
         self._requests.append({
-            "request_id": params.get("requestId", ""),
+            "request_id": request_id,
             "target_id": tid,
             "frame_id": params.get("frameId", ""),
             "loader_id": params.get("loaderId", ""),
@@ -174,15 +201,32 @@ class CDPCollector:
             return
         rid = params.get("requestId", "")
         resp = params.get("response", {})
-        self._responses[rid] = {
-            "connection_id": resp.get("connectionId"),
-            "remote_ip": resp.get("remoteIPAddress", ""),
-            "remote_port": resp.get("remotePort", 0),
-            "connection_reused": resp.get("connectionReused", False),
-            "status": resp.get("status", 0),
-            "from_disk_cache": resp.get("fromDiskCache", False),
-            "from_service_worker": resp.get("fromServiceWorker", False),
-            "from_prefetch_cache": resp.get("fromPrefetchCache", False),
+        self._responses[rid] = _response_payload(
+            resp, params.get("timestamp", 0.0),
+        )
+
+    def _on_loading_finished(self, params: dict) -> None:
+        if not self._collecting:
+            return
+        self._completions[params.get("requestId", "")] = {
+            "timestamp": params.get("timestamp", 0.0),
+            "failed": False,
+            "canceled": False,
+            "failure_reason": "",
+        }
+
+    def _on_loading_failed(self, params: dict) -> None:
+        if not self._collecting:
+            return
+        self._completions[params.get("requestId", "")] = {
+            "timestamp": params.get("timestamp", 0.0),
+            "failed": True,
+            "canceled": bool(params.get("canceled", False)),
+            "failure_reason": (
+                params.get("blockedReason")
+                or params.get("errorText")
+                or "loading_failed"
+            ),
         }
 
     def _on_websocket_created(self, params: dict, session_id: str) -> None:
@@ -326,13 +370,27 @@ class CDPCollector:
     def get_structured_data(self) -> dict:
         merged_requests = []
         for req in self._requests:
-            entry = dict(req)
-            resp = self._responses.get(req["request_id"], {})
+            entry = {
+                key: value
+                for key, value in req.items()
+                if not key.startswith("_")
+            }
+            resp = req.get("_response") or self._responses.get(
+                req["request_id"], {},
+            )
+            completion = req.get("_completion") or getattr(
+                self, "_completions", {},
+            ).get(req["request_id"], {})
             entry["connection_id"] = resp.get("connection_id")
             entry["remote_ip"] = resp.get("remote_ip", "")
             entry["remote_port"] = resp.get("remote_port", 0)
             entry["connection_reused"] = resp.get("connection_reused", False)
             entry["response_status"] = resp.get("status", 0)
+            entry["response_timestamp"] = resp.get("timestamp", 0.0)
+            entry["completion_timestamp"] = completion.get("timestamp", 0.0)
+            entry["failed"] = completion.get("failed", False)
+            entry["canceled"] = completion.get("canceled", False)
+            entry["failure_reason"] = completion.get("failure_reason", "")
             entry["from_disk_cache"] = resp.get("from_disk_cache", False)
             entry["from_service_worker"] = resp.get(
                 "from_service_worker", False,
@@ -382,6 +440,20 @@ class CDPCollector:
         if self._ws:
             await self._ws.close()
             self._ws = None
+
+
+def _response_payload(response: dict, timestamp: float) -> dict:
+    return {
+        "connection_id": response.get("connectionId"),
+        "remote_ip": response.get("remoteIPAddress", ""),
+        "remote_port": response.get("remotePort", 0),
+        "connection_reused": response.get("connectionReused", False),
+        "status": response.get("status", 0),
+        "timestamp": timestamp,
+        "from_disk_cache": response.get("fromDiskCache", False),
+        "from_service_worker": response.get("fromServiceWorker", False),
+        "from_prefetch_cache": response.get("fromPrefetchCache", False),
+    }
 
 
 class SyncCDPCollector:

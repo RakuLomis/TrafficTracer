@@ -95,7 +95,17 @@ def test_flow_index_and_summary_keep_duplicates_shared_and_null_post(tmp_path):
     ]
     assert summary["coverage_source"] == "core_only"
     assert summary["coverage"] == layered_coverage([], [], index["items"])
-    assert summary["quality_state"] == "degraded"
+    assert summary["quality_state"] == "passed"
+    assert summary["capture_global_quality_state"] == "degraded"
+    assert all(
+        warning["scope"] == "capture_global"
+        and warning["affects_page_quality"] is False
+        for warning in summary["warnings"]
+    )
+    assert summary["quality"]["capture_global"]["logical_flows"] == {
+        "total": 3, "with_post_flow": 2, "missing_post_flow": 1,
+        "errors": 1,
+    }
     assert summary["quality"]["pcap_extraction"]["requested"] is False
 
 
@@ -277,6 +287,12 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
         "PCAP_POST_UNAVAILABLE",
     ]
     assert summary["quality_state"] == "degraded"
+    assert summary["capture_global_quality_state"] == "passed"
+    assert all(
+        warning["scope"] == "page_attributed"
+        and warning["affects_page_quality"] is True
+        for warning in summary["warnings"]
+    )
     assert summary["quality"]["egress_establishment"] == {
         "total": 1, "established": 0, "failed_before_socket": 1,
         "unavailable": 0,

@@ -169,6 +169,10 @@ def _connection_record(
         ),
         "application_protocol": flow.application_protocol,
         "attempted_protocols": sorted(set(flow.attempted_protocols)),
+        "timing": {
+            "first_observed": flow.first_observed,
+            "last_observed": flow.last_observed,
+        },
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
         "post_flow": _flow_payload(flow.post_flow, "post_proxy") if flow.post_flow else None,
         "sharing": {
@@ -341,6 +345,16 @@ def _request_records(
                     item.stable_connection_id for item in candidates
                 ],
                 "network_observation": network_observation,
+                "timing": {
+                    "request": request.timestamp,
+                    "response": request.response_timestamp or None,
+                    "completion": request.completion_timestamp or None,
+                },
+                "failure": {
+                    "failed": request.failed,
+                    "canceled": request.canceled,
+                    "reason": request.failure_reason or None,
+                },
                 "attribution": (
                     {
                         "status": resolution.status,
@@ -374,11 +388,18 @@ def _request_unmatched_reason(
         return resolver_reason
     if network_observation not in {"network", "unknown"}:
         return "non_network_response"
+    if request.canceled:
+        return "request_cancelled"
+    if request.failed:
+        return "request_failed"
+    if request.response_status > 0 and not (
+        request.remote_ip
+        or (request.connection_id is not None and request.connection_id > 0)
+    ):
+        return "response_endpoint_missing"
     if request.response_status > 0:
         return "response_transport_unbound"
-    if request.response_status == 0:
-        return "no_response"
-    return "no_transport_connection"
+    return "no_response"
 
 
 def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:

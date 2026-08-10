@@ -54,6 +54,11 @@ class AttributedRequest:
     from_disk_cache: bool = False
     from_service_worker: bool = False
     from_prefetch_cache: bool = False
+    response_timestamp: float = 0.0
+    completion_timestamp: float = 0.0
+    failed: bool = False
+    canceled: bool = False
+    failure_reason: str = ""
 
 
 @dataclass
@@ -67,6 +72,7 @@ class TransportConnection:
     protocol: str
     request_ids: list[str] = field(default_factory=list)
     first_observed: float | None = None
+    last_observed: float | None = None
     network: str = ""
     attempted_protocols: list[str] = field(default_factory=list)
     application_protocol: str = "unknown"
@@ -112,6 +118,8 @@ class CorrelatedFlowV2:
     proxy_type: str = ""
     application_protocol: str = "unknown"
     attempted_protocols: list[str] = field(default_factory=list)
+    first_observed: float | None = None
+    last_observed: float | None = None
 
 
 @dataclass

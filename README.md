@@ -71,19 +71,21 @@ sites:
 
 连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
 
-同一网络资源的 transport 重试（例如 YouTube `videoplayback` 的 TCP 与
-QUIC 尝试）按完整 URL 规范化后合并到一个目录；只忽略明确的重试参数
-`rn`/`alr`，不会把其他 query 不同的资源错误合并。`pre.pcap`、`post.pcap`
-属于有包且关联证据最强的 canonical connection；真实有包的其他连接使用
-`alternative-XX-<protocol>-*.pcap`。空 QUIC 尝试不生成空文件，但其 connection
-ID、协议和 `empty/not_requested` 状态仍完整保存在 `mapping.json` 与索引中。
+同一网络资源的 transport 重试（例如 QUIC 尝试后回落 TCP）使用通用的
+“同源 + 同路径”分组，不依赖域名或特定 query 参数名。只有原 transport
+PCAP 为空、且恰好存在一个完成 Mihomo 关联并实际捕获到报文的候选时，才将
+该候选选为 canonical connection；完整 query、所有 candidate connection ID、
+协议和 `empty/not_requested` 状态仍保存在 request/connection index、
+`mapping.json` 与 PCAP index 中。
 
 `request-index-v2.json` 保留每个完整 URL/request ID，并使用 PCAP 证据解决
 “空 QUIC 尝试后回落 TCP”的 transport race；candidate connection 不会被删除。
 对于已经通过 NetLog 确认的连接，后续收到响应且明确复用同一个正数 CDP
-`connectionId` 的请求会以 `cdp_connection_reuse` 回填到该 canonical connection；
-只有映射唯一时才自动关联，零 ID、无响应或多连接歧义不会被猜测。最终回填结果
-同时写入 request/connection index、PCAP index 和资源目录的 `mapping.json`。
+`connectionId` 的请求会先按 response endpoint，再按请求与 transport
+生命周期消歧。只有 endpoint 唯一、时间区间唯一或最近前序请求证据唯一时才以
+`cdp_connection_reuse` 关联；零 ID、无响应或时间证据并列时不会猜测。决策证据
+同时写入 request/connection index，CDP 的 request/response/completion 时间和
+失败状态也保存在 V2 产物中。
 新捕获还记录 CDP 的 disk cache、Service Worker 和 prefetch 标志，在 coverage
 中将无需网络 transport 的请求单列为 `non_network`。`connection-index-v2.json`
 提供 `egress.mode/selection_chain` 以及 `sharing` 的三种独立原因：请求复用、
@@ -114,11 +116,14 @@ IPv4 超时、IPv6 不可达和其他拨号错误。
 socket 只作为 DNS 证据，不会生成业务 transport connection；无法找到真实 socket
 的请求会保守地留在 request index 中并标为 unmatched。
 
-`summary.json.quality_state` 独立于 Job state，值为 `passed/degraded/failed`；
-`quality` 分别给出 request attribution、transport correlation、egress establishment
-和 PCAP extraction 的守恒计数。`warnings` 会明确报告请求/transport 未关联或歧义、
-拨号失败以及 pre/post PCAP 缺失。Job 可以正常 `completed`，但其分析质量仍可能是
-`degraded`，UI 和自动化消费者不得将两者视为同一状态。
+`summary.json.quality_state` 只评价当前页面，值为
+`passed/degraded/failed`；`capture_global_quality_state` 单独评价捕获窗口内全部
+Mihomo 流。`quality.page_attributed` 与 `quality.capture_global` 提供显式分层，
+原有扁平 `quality` 页面计数继续保留用于旧消费者。每条 warning 带
+`scope`、`severity` 和 `affects_page_quality`；没有 URL/request ID/页面 transport
+归属的后台流即使缺少 post-flow，也只降低 capture-global 状态，不能污染页面质量。
+Job 可以正常 `completed`，但页面或全局捕获质量仍可能是 `degraded`，UI 和自动化
+消费者不得将这些状态混为一谈。
 
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。

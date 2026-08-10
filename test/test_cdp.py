@@ -57,6 +57,7 @@ def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector._session_to_target: dict[str, str] = {}
     collector._requests: list[dict] = []
     collector._responses: dict[str, dict] = {}
+    collector._completions: dict[str, dict] = {}
     collector._websockets: list[dict] = []
     collector._visit_url = ""
     collector._collecting = True
@@ -341,3 +342,81 @@ def test_navigation_checks_pre_cancelled_token_before_cdp_commands():
             await collector.navigate("https://example.com")
 
     asyncio.run(scenario())
+
+
+def test_collector_records_response_and_failed_lifecycle_timestamps():
+    collector = _make_collector_with_ws(FakeWS())
+    collector._requests.append({
+        "request_id": "failed.1",
+        "target_id": "",
+        "frame_id": "",
+        "loader_id": "",
+        "url": "https://assets.example/app.js",
+        "resource_type": "Script",
+        "timestamp": 10.0,
+        "initiator_type": "parser",
+    })
+    collector._on_response_received({
+        "requestId": "failed.1",
+        "timestamp": 10.5,
+        "response": {"status": 200, "connectionId": 9},
+    }, "")
+    collector._on_loading_failed({
+        "requestId": "failed.1",
+        "timestamp": 11.0,
+        "canceled": True,
+        "errorText": "net::ERR_ABORTED",
+    })
+
+    request = collector.get_structured_data()["requests"][0]
+
+    assert request["response_timestamp"] == 10.5
+    assert request["completion_timestamp"] == 11.0
+    assert request["failed"] is True
+    assert request["canceled"] is True
+    assert request["failure_reason"] == "net::ERR_ABORTED"
+
+
+def test_redirect_occurrences_keep_distinct_response_evidence():
+    collector = _make_collector_with_ws(FakeWS())
+    collector._on_request_will_be_sent({
+        "requestId": "redirect.1",
+        "timestamp": 10.0,
+        "request": {"url": "https://example.com/"},
+        "type": "Document",
+    }, "")
+    collector._on_request_will_be_sent({
+        "requestId": "redirect.1",
+        "timestamp": 10.5,
+        "request": {"url": "https://www.example.com/"},
+        "redirectResponse": {
+            "status": 301,
+            "connectionId": 7,
+            "remoteIPAddress": "198.51.100.7",
+            "remotePort": 443,
+        },
+        "type": "Document",
+    }, "")
+    collector._on_response_received({
+        "requestId": "redirect.1",
+        "timestamp": 11.0,
+        "response": {
+            "status": 200,
+            "connectionId": 8,
+            "remoteIPAddress": "198.51.100.8",
+            "remotePort": 443,
+        },
+    }, "")
+
+    requests = collector.get_structured_data()["requests"]
+
+    assert [item["url"] for item in requests] == [
+        "https://example.com/",
+        "https://www.example.com/",
+    ]
+    assert [item["response_status"] for item in requests] == [301, 200]
+    assert [item["connection_id"] for item in requests] == [7, 8]
+    assert [item["remote_ip"] for item in requests] == [
+        "198.51.100.7",
+        "198.51.100.8",
+    ]

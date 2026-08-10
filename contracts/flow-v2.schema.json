@@ -39,6 +39,32 @@
         "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
       }
     },
+    "timing": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request", "response", "completion"],
+      "properties": {
+        "request": { "type": "number", "minimum": 0 },
+        "response": { "type": ["number", "null"], "minimum": 0 },
+        "completion": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "connectionTiming": {
+      "type": "object", "additionalProperties": false,
+      "required": ["first_observed", "last_observed"],
+      "properties": {
+        "first_observed": { "type": ["number", "null"], "minimum": 0 },
+        "last_observed": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "requestFailure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["failed", "canceled", "reason"],
+      "properties": {
+        "failed": { "type": "boolean" },
+        "canceled": { "type": "boolean" },
+        "reason": { "type": ["string", "null"] }
+      }
+    },
     "terminal": {
       "type": "object", "additionalProperties": false,
       "required": ["status", "stage", "error", "bytes_up", "bytes_down", "duration_ms"],
@@ -98,7 +124,7 @@
         "method": { "enum": ["netlog_socket", "cdp_connection_reuse", "endpoint_time", "host_time", "none"] },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
         "evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
-        "unmatched_reason": { "enum": ["no_transport_connection", "no_response", "response_transport_unbound", "non_network_response", "multiple_candidates", "ambiguous_cdp_connection", "insufficient_time", "missing_request_metadata"] }
+        "unmatched_reason": { "enum": ["no_transport_connection", "no_response", "request_cancelled", "request_failed", "response_endpoint_missing", "response_transport_unbound", "non_network_response", "multiple_candidates", "ambiguous_cdp_connection", "insufficient_time", "missing_request_metadata"] }
       },
       "allOf": [
         { "if": { "properties": { "status": { "enum": ["ambiguous", "unmatched"] } }, "required": ["status"] }, "then": { "required": ["unmatched_reason"] } }
@@ -119,6 +145,8 @@
         "connection_id": { "oneOf": [{ "$ref": "#/$defs/connectionId" }, { "type": "null" }] },
         "candidate_connection_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/connectionId" } },
         "network_observation": { "enum": ["network", "disk_cache", "service_worker", "prefetch_cache", "browser_internal", "unknown"] },
+        "timing": { "$ref": "#/$defs/timing" },
+        "failure": { "$ref": "#/$defs/requestFailure" },
         "attribution": { "$ref": "#/$defs/requestAttribution" }
       },
       "allOf": [
@@ -148,6 +176,7 @@
         "protocol": { "enum": ["tcp", "udp"] },
         "application_protocol": { "enum": ["unknown", "h2", "h3"] },
         "attempted_protocols": { "type": "array", "uniqueItems": true, "items": { "enum": ["QUIC"] } },
+        "timing": { "$ref": "#/$defs/connectionTiming" },
         "pre_flow": { "$ref": "#/$defs/flowTuple" },
         "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
         "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },

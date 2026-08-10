@@ -10,6 +10,7 @@ def _request(
     cdp_connection_id: int | None,
     response_status: int = 206,
     reused: bool = True,
+    timestamp: float = 100.0,
 ) -> AttributedRequest:
     return AttributedRequest(
         request_id=request_id,
@@ -17,7 +18,7 @@ def _request(
         frame_id="frame",
         url=f"https://media.example/video.m4s?range={request_id}",
         resource_type="Media",
-        timestamp=100.0,
+        timestamp=timestamp,
         connection_id=cdp_connection_id,
         connection_reused=reused,
         response_status=response_status,
@@ -122,3 +123,68 @@ def test_zero_id_or_missing_response_is_never_backfilled():
     assert zero.flow is None
     assert no_response.flow is None
     assert zero.status == no_response.status == "unmatched"
+
+
+def test_reused_connection_prefers_unique_nearest_preceding_transport():
+    first = "conn-11111111111111111111111111111111"
+    second = "conn-22222222222222222222222222222222"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[
+            _flow(first, ["range.1"], 44001),
+            _flow(second, ["range.2"], 44002),
+        ],
+        requests=[
+            _request(
+                "range.1", cdp_connection_id=338, reused=False,
+                timestamp=90.0,
+            ),
+            _request(
+                "range.2", cdp_connection_id=338, reused=False,
+                timestamp=99.0,
+            ),
+            _request("range.3", cdp_connection_id=338, timestamp=100.0),
+        ],
+    )
+
+    resolution = resolve_visit_requests(result, [])[-1]
+
+    assert resolution.flow is not None
+    assert resolution.flow.stable_connection_id == second
+    assert resolution.status == "matched"
+    assert "nearest_preceding_request" in resolution.evidence
+    assert "temporal_gap_ms:1000" in resolution.evidence
+
+
+def test_redirect_occurrences_with_same_request_id_use_full_url():
+    first = _flow(
+        "conn-11111111111111111111111111111111", ["redirect.1"], 44001,
+    )
+    second = _flow(
+        "conn-22222222222222222222222222222222", ["redirect.1"], 44002,
+    )
+    first.url = "https://example.com/"
+    second.url = "https://www.example.com/"
+    result = VisitCorrelation(
+        visit_url="https://example.com/",
+        domain="example.com",
+        flows=[first, second],
+        requests=[
+            AttributedRequest(
+                "redirect.1", "target", "frame", first.url,
+                "Document", 90.0,
+            ),
+            AttributedRequest(
+                "redirect.1", "target", "frame", second.url,
+                "Document", 91.0,
+            ),
+        ],
+    )
+
+    resolutions = resolve_visit_requests(result, [])
+
+    assert [item.flow.stable_connection_id for item in resolutions] == [
+        first.stable_connection_id,
+        second.stable_connection_id,
+    ]
