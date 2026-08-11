@@ -36,7 +36,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["status", "display_filter", "packet_count", "byte_count"],
       "properties": {
-        "status": { "enum": ["success", "empty", "failed", "not_requested"] },
+        "status": { "enum": ["success", "empty", "failed", "not_applicable", "not_requested"] },
         "artifact_id": { "$ref": "#/$defs/artifactId" },
         "path": { "$ref": "#/$defs/relativeArtifactPath" },
         "display_filter": { "type": "string" },

@@ -6,7 +6,6 @@ from dataclasses import asdict, dataclass, replace
 import ipaddress
 import json
 from pathlib import Path
-import re
 from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
@@ -15,7 +14,10 @@ from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideRe
 from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
 from traffictracer.analyze.request_resolver import resolve_visit_requests
-from traffictracer.analyze.request_observation import request_network_observation
+from traffictracer.analyze.request_observation import (
+    flow_targets_loopback,
+    request_network_observation,
+)
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_V2_VERSION, PCAP_INDEX_SCHEMA_VERSION, SESSION_SCHEMA_V2_VERSION
 
@@ -330,7 +332,7 @@ def _request_records(
             network_observation, observation_evidence = (
                 request_network_observation(request)
             )
-            if flow and _flow_targets_loopback(flow):
+            if flow and flow_targets_loopback(flow):
                 network_observation = "local_endpoint"
                 observation_evidence = ["correlated_flow_loopback_endpoint"]
             if connection_id and network_observation != "local_endpoint":
@@ -381,26 +383,6 @@ def _request_records(
                 ),
             })
     return output
-
-
-def _flow_targets_loopback(flow: CorrelatedFlowV2) -> bool:
-    for candidate in (flow.pre_flow, flow.post_flow):
-        if candidate is None:
-            continue
-        for value in (candidate.src_ip, candidate.dst_ip):
-            try:
-                if ipaddress.ip_address(value).is_loopback:
-                    return True
-            except ValueError:
-                continue
-    terminal_error = flow.terminal.error if flow.terminal else ""
-    for value in re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", terminal_error):
-        try:
-            if ipaddress.ip_address(value).is_loopback:
-                return True
-        except ValueError:
-            continue
-    return False
 
 
 def _request_unmatched_reason(
@@ -519,7 +501,13 @@ def _prefer_pcap(
     left: PcapSideResult,
     right: PcapSideResult,
 ) -> PcapSideResult:
-    order = {"success": 3, "empty": 2, "failed": 1, "not_requested": 0}
+    order = {
+        "success": 4,
+        "empty": 3,
+        "failed": 2,
+        "not_applicable": 1,
+        "not_requested": 0,
+    }
     return right if order[right.status] > order[left.status] else left
 
 

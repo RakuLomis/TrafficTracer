@@ -69,6 +69,8 @@ sites:
                     └── alternative-01-udp-pre.pcap  # 仅在备选连接确有报文时存在
 ```
 
+UI 的 `Analysis storage` 默认使用 `Standard`：上述 `analysis/pcap/` 派生目录不会立即生成，但双侧原始 PCAP、完整 URL、request/connection/PCAP 索引及 pre/post 五元组关联全部保留，之后可用 `Full` 重新分析生成派生文件。`Full` 会在分析阶段直接生成每连接 pre/post PCAP，适合立即交付 Wireshark，但空间占用更高。旧任务未携带该选项时继续按 `Full` 执行；切换档位不会自动删除已有文件。
+
 连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
 
 同一网络资源的 transport 重试（例如 QUIC 尝试后回落 TCP）使用通用的

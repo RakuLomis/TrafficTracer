@@ -51,7 +51,11 @@
         "collect_cdp": { "type": "boolean", "default": true },
         "collect_netlog": { "type": "boolean", "default": true },
         "analyze_after_capture": { "type": "boolean", "default": true },
-        "headless": { "type": "boolean", "default": false }
+        "headless": { "type": "boolean", "default": false },
+        "pcap_split_mode": {
+          "enum": ["none", "unique_connections"],
+          "default": "unique_connections"
+        }
       }
     },
     "analysisOptions": {

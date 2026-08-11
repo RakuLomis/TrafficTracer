@@ -531,7 +531,19 @@ class _PersistentCaptureRunner:
                     job_id=self.spec.job_id,
                     session_dir=manifest.session_dir,
                     output_root=str(self.store.output_root),
-                    options=AnalysisJobOptions(overwrite=False),
+                    options=AnalysisJobOptions(
+                        split_pcaps=(
+                            self.spec.options.capture_packets
+                            and self.spec.options.pcap_split_mode
+                            == "unique_connections"
+                        ),
+                        pcap_split_mode=(
+                            self.spec.options.pcap_split_mode
+                            if self.spec.options.capture_packets
+                            else "none"
+                        ),
+                        overwrite=False,
+                    ),
                 )
                 analyzed = AnalysisJob(
                     analysis_spec,

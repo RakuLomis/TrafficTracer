@@ -100,6 +100,14 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
         shutdown_event=Event(),
     )
 
+    analysis_specs = []
+    real_analysis_job = module.AnalysisJob
+
+    class RecordingAnalysisJob(real_analysis_job):
+        def __init__(self, spec, **kwargs):
+            analysis_specs.append(spec)
+            super().__init__(spec, **kwargs)
+
     class FakeCaptureJob:
         def __init__(self, spec, **kwargs):
             self.spec = spec
@@ -124,7 +132,9 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
             )
 
     monkeypatch.setattr(module, "CaptureJob", FakeCaptureJob)
+    monkeypatch.setattr(module, "AnalysisJob", RecordingAnalysisJob)
     payload = _capture_payload(tmp_path)
+    payload["options"]["pcap_split_mode"] = "none"
     started = services.jobs.start_capture({"job": payload})
     assert services.jobs.wait(started["job_id"], timeout=3)
     status = services.jobs.status({"job_id": started["job_id"]})
@@ -143,6 +153,8 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
         "analysis/flow-index.json",
         "analysis/summary.json",
     ]
+    assert analysis_specs[0].options.pcap_split_mode == "none"
+    assert analysis_specs[0].options.split_pcaps is False
     assert any(item["method"] == "job.completed" for item in notifications)
 
 

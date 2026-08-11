@@ -29,6 +29,7 @@
     "collect_cdp": true,
     "collect_netlog": true,
     "analyze_after_capture": true,
-    "headless": false
+    "headless": false,
+    "pcap_split_mode": "unique_connections"
   }
 }

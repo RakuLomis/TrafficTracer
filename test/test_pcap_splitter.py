@@ -12,12 +12,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from traffictracer.analyze.netlog import FiveTupleData
 from traffictracer.analyze.pcap_splitter import (
     SPLIT_NONE,
+    build_incomplete_flow_tuple_filter,
     build_tshark_filter,
     build_flow_tuple_filter,
+    recover_post_flow_from_pcap,
     split_flows_v2,
     _sanitize_name,
 )
-from traffictracer.models import CorrelatedFlowV2, FlowTuple, VisitCorrelation
+from traffictracer.models import (
+    CorrelatedFlowV2,
+    FlowTerminal,
+    FlowTuple,
+    VisitCorrelation,
+)
 
 
 def test_build_filter_src():
@@ -65,6 +72,79 @@ def test_normalized_filter_is_bidirectional_udp_ipv6():
     assert "udp.srcport==50000" in display_filter
     assert "ipv6.src==2001:db8::2" in display_filter
     assert "udp.dstport==50000" in display_filter
+
+
+def test_incomplete_udp_filter_uses_ports_and_destination_not_unspecified_source():
+    flow = FlowTuple(
+        network="udp", src_ip="::", src_port=56571,
+        dst_ip="101.227.12.8", dst_port=443, complete=False,
+        source="dialer_socket",
+    )
+
+    display_filter = build_incomplete_flow_tuple_filter(flow)
+
+    assert "ipv6.addr==::" not in display_filter
+    assert "udp.srcport==56571" in display_filter
+    assert "ip.dst==101.227.12.8" in display_filter
+    assert "udp.dstport==56571" in display_filter
+
+
+def test_recover_udp_post_source_from_unique_physical_tuple(monkeypatch):
+    flow = FlowTuple(
+        network="udp", src_ip="::", src_port=56571,
+        dst_ip="101.227.12.8", dst_port=443, complete=False,
+        source="dialer_socket", scope="post_proxy",
+    )
+
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout=(
+                "192.168.5.11\t\t56571\t101.227.12.8\t\t443\n"
+                "101.227.12.8\t\t443\t192.168.5.11\t\t56571\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run", run,
+    )
+
+    recovered, status = recover_post_flow_from_pcap("phys.pcap", flow)
+
+    assert status == "recovered"
+    assert recovered is not None
+    assert recovered.complete is True
+    assert recovered.src_ip == "192.168.5.11"
+    assert recovered.key == (
+        "udp|192.168.5.11:56571|101.227.12.8:443"
+    )
+
+
+def test_recover_udp_post_source_rejects_ambiguous_candidates(monkeypatch):
+    flow = FlowTuple(
+        network="udp", src_ip="", src_port=56571,
+        dst_ip="101.227.12.8", dst_port=443, complete=False,
+    )
+
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0,
+            stdout=(
+                "192.168.5.11\t\t56571\t101.227.12.8\t\t443\n"
+                "192.168.6.11\t\t56571\t101.227.12.8\t\t443\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run", run,
+    )
+
+    recovered, status = recover_post_flow_from_pcap("phys.pcap", flow)
+
+    assert recovered is None
+    assert status == "ambiguous"
 
 
 def _flow(connection_id: str, request_id: str, *, url: str = "https://example.com/a"):
@@ -146,6 +226,38 @@ def test_unique_connections_split_once_for_many_requests(tmp_path, monkeypatch):
     mapping = json.loads((flow_dir / "mapping.json").read_text(encoding="utf-8"))
     assert mapping["connection_id"] == first
     assert mapping["primary_url"] == "https://example.com/a"
+
+
+def test_local_endpoint_skips_post_pcap_as_not_applicable(tmp_path, monkeypatch):
+    connection_id = "conn-" + "2" * 32
+    flow = _flow(
+        connection_id,
+        "local.1",
+        url="https://localhost.weixin.qq.com:14017/api",
+    )
+    flow.post_flow = None
+    flow.post_proxy_src = ""
+    flow.post_proxy_dst = "localhost.weixin.qq.com:14017"
+    flow.terminal = FlowTerminal(
+        status="dial_error",
+        stage="dial",
+        error="dial tcp 127.0.0.1:14017: connect: connection refused",
+    )
+    calls = []
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run",
+        _successful_tshark(calls),
+    )
+
+    outputs = split_flows_v2(
+        _result([flow]), "tun.pcap", "phys.pcap", str(tmp_path),
+    )
+
+    assert outputs[0].pre_proxy.status == "success"
+    assert outputs[0].post_proxy.status == "not_applicable"
+    assert outputs[0].post_proxy.display_filter == ""
+    assert len(calls) == 2
+    assert not (tmp_path / "0001__https_localhost.weixin.qq.com_14017_api" / "post.pcap").exists()
 
 
 def test_repeated_and_long_urls_create_one_bounded_resource_directory(

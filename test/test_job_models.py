@@ -81,6 +81,11 @@ def test_capture_job_can_be_constructed_without_yaml():
     assert "secret" not in payload["controller"]
 
 
+def test_capture_options_reject_unknown_pcap_split_mode():
+    with pytest.raises(ValueError, match="pcap_split_mode"):
+        CaptureJobOptions(pcap_split_mode="compressed")
+
+
 def test_capture_job_serializes_config_target_provenance():
     source = TargetSource(
         mode="config",

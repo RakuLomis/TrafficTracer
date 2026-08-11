@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import ipaddress
 import os
 from pathlib import Path
 import subprocess
@@ -17,6 +18,7 @@ from ..models import FlowTuple, VisitCorrelation
 from ..utils import logger, ensure_dir
 from .correlator import CorrelationResult
 from .netlog import FiveTupleData
+from .request_observation import flow_targets_loopback
 
 
 SPLIT_NONE = "none"
@@ -97,10 +99,111 @@ def build_flow_tuple_filter(flow: FlowTuple) -> str:
     return f"{proto} and (({forward}) or ({reverse}))"
 
 
+def build_incomplete_flow_tuple_filter(flow: FlowTuple) -> str:
+    """Build a bidirectional filter when only the source IP is unavailable."""
+    proto = flow.network.lower()
+    if (
+        proto not in {"tcp", "udp"}
+        or not flow.src_port
+        or not flow.dst_ip
+        or not flow.dst_port
+    ):
+        return ""
+    try:
+        destination = ipaddress.ip_address(flow.dst_ip)
+    except ValueError:
+        return ""
+    destination = getattr(destination, "ipv4_mapped", None) or destination
+    if destination.is_unspecified:
+        return ""
+    field = "ipv6" if destination.version == 6 else "ip"
+    forward = (
+        f"{proto}.srcport=={flow.src_port} and "
+        f"{field}.dst=={destination} and {proto}.dstport=={flow.dst_port}"
+    )
+    reverse = (
+        f"{field}.src=={destination} and {proto}.srcport=={flow.dst_port} and "
+        f"{proto}.dstport=={flow.src_port}"
+    )
+    return f"{proto} and (({forward}) or ({reverse}))"
+
+
+def recover_post_flow_from_pcap(
+    input_pcap: str,
+    flow: FlowTuple,
+) -> tuple[FlowTuple | None, str]:
+    """Recover an unspecified UDP source IP from an unambiguous PCAP tuple."""
+    if not _post_flow_needs_source_recovery(flow):
+        return (flow, "not_needed")
+    display_filter = build_incomplete_flow_tuple_filter(flow)
+    if not display_filter:
+        return (None, "insufficient_tuple")
+    command = [
+        "tshark", "-r", input_pcap, "-Y", display_filter,
+        "-T", "fields", "-E", "separator=/t",
+        "-e", "ip.src", "-e", "ipv6.src", "-e", f"{flow.network}.srcport",
+        "-e", "ip.dst", "-e", "ipv6.dst", "-e", f"{flow.network}.dstport",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return (None, "tshark_unavailable")
+    if completed.returncode != 0:
+        return (None, "inspect_failed")
+
+    destination = _normalize_ip(flow.dst_ip)
+    candidates: set[str] = set()
+    for line in completed.stdout.splitlines():
+        fields = line.split("\t")
+        fields.extend([""] * (6 - len(fields)))
+        src_ip = _normalize_ip(fields[0] or fields[1])
+        dst_ip = _normalize_ip(fields[3] or fields[4])
+        src_port = _parse_port(fields[2])
+        dst_port = _parse_port(fields[5])
+        if (
+            src_port == flow.src_port
+            and dst_port == flow.dst_port
+            and dst_ip == destination
+            and src_ip
+        ):
+            candidates.add(src_ip)
+        elif (
+            dst_port == flow.src_port
+            and src_port == flow.dst_port
+            and src_ip == destination
+            and dst_ip
+        ):
+            candidates.add(dst_ip)
+
+    if not candidates:
+        return (None, "not_found")
+    if len(candidates) != 1:
+        return (None, "ambiguous")
+    source = candidates.pop()
+    recovered = replace(
+        flow,
+        src_ip=source,
+        key=_flow_key(
+            flow.network, source, flow.src_port,
+            destination, flow.dst_port,
+        ),
+        complete=True,
+    )
+    return (recovered, "recovered")
+
+
 def _build_filter_from_addr(src: str, dst: str) -> str:
     src_ip, src_port = _split_addr(src)
     dst_ip, dst_port = _split_addr(dst)
-    addr = src_ip or dst_ip
+    addr = (
+        src_ip if _normalize_ip(src_ip) else
+        dst_ip if _normalize_ip(dst_ip) else ""
+    )
     port = src_port or dst_port
     if addr and port:
         family = "ipv6" if ":" in addr else "ip"
@@ -109,6 +212,45 @@ def _build_filter_from_addr(src: str, dst: str) -> str:
         family = "ipv6" if ":" in addr else "ip"
         return f"{family}.addr=={addr}"
     return ""
+
+
+def _post_flow_needs_source_recovery(flow: FlowTuple) -> bool:
+    return (
+        flow.network.lower() == "udp"
+        and bool(flow.src_port and flow.dst_ip and flow.dst_port)
+        and not _normalize_ip(flow.src_ip)
+    )
+
+
+def _normalize_ip(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return ""
+    address = getattr(address, "ipv4_mapped", None) or address
+    return "" if address.is_unspecified else str(address)
+
+
+def _parse_port(value: str) -> int:
+    try:
+        port = int(value.split(",", 1)[0])
+    except (TypeError, ValueError):
+        return 0
+    return port if 1 <= port <= 65535 else 0
+
+
+def _flow_key(
+    network: str,
+    src_ip: str,
+    src_port: int,
+    dst_ip: str,
+    dst_port: int,
+) -> str:
+    src = f"[{src_ip}]:{src_port}" if ":" in src_ip else f"{src_ip}:{src_port}"
+    dst = f"[{dst_ip}]:{dst_port}" if ":" in dst_ip else f"{dst_ip}:{dst_port}"
+    return f"{network.lower()}|{src}|{dst}"
 
 
 def _split_addr(addr: str) -> tuple[str, int]:
@@ -169,6 +311,37 @@ def split_flows_v2(
                 bool(item.post_flow and item.post_flow.complete),
             ),
         )
+        post_not_applicable = any(
+            flow_targets_loopback(item) for item in connection_flows
+        )
+        post_recovery_status = "not_applicable" if post_not_applicable else "not_needed"
+        if not post_not_applicable and flow.post_flow is not None:
+            recovered, post_recovery_status = recover_post_flow_from_pcap(
+                phys_pcap, flow.post_flow,
+            )
+            if recovered is not None and post_recovery_status == "recovered":
+                for connection_flow in connection_flows:
+                    candidate = connection_flow.post_flow
+                    if candidate is None or not _same_partial_flow(
+                        candidate, flow.post_flow,
+                    ):
+                        continue
+                    connection_flow.post_flow = recovered
+                    connection_flow.post_proxy_src = recovered.src
+                    connection_flow.post_proxy_dst = recovered.dst
+                    if "post_source_recovered_from_phys_pcap" not in (
+                        connection_flow.match_evidence
+                    ):
+                        connection_flow.match_evidence.append(
+                            "post_source_recovered_from_phys_pcap"
+                        )
+                flow = max(
+                    connection_flows,
+                    key=lambda item: (
+                        bool(item.pre_flow and item.pre_flow.complete),
+                        bool(item.post_flow and item.post_flow.complete),
+                    ),
+                )
         protocol = (
             flow.pre_flow.network
             if flow.pre_flow and flow.pre_flow.network in {"tcp", "udp"}
@@ -183,11 +356,16 @@ def split_flows_v2(
             if flow.pre_flow and flow.pre_flow.complete
             else _build_filter_from_addr(flow.pre_proxy_src, flow.pre_proxy_dst)
         )
-        post_filter = (
-            build_flow_tuple_filter(flow.post_flow)
-            if flow.post_flow and flow.post_flow.complete
-            else _build_filter_from_addr(flow.post_proxy_src, flow.post_proxy_dst)
-        )
+        if post_not_applicable:
+            post_filter = ""
+        elif flow.post_flow and flow.post_flow.complete:
+            post_filter = build_flow_tuple_filter(flow.post_flow)
+        elif flow.post_flow and _post_flow_needs_source_recovery(flow.post_flow):
+            post_filter = build_incomplete_flow_tuple_filter(flow.post_flow)
+        else:
+            post_filter = _build_filter_from_addr(
+                flow.post_proxy_src, flow.post_proxy_dst,
+            )
         request_ids = sorted({
             request_id
             for connection_flow in connection_flows
@@ -207,6 +385,8 @@ def split_flows_v2(
             "protocol": protocol,
             "pre_filter": pre_filter,
             "post_filter": post_filter,
+            "post_recovery_status": post_recovery_status,
+            "post_not_applicable": post_not_applicable,
             "request_ids": request_ids,
             "urls": urls,
             "primary_url": primary_url,
@@ -221,7 +401,12 @@ def split_flows_v2(
                 "not_requested", entry["pre_filter"],
             ),
             post_proxy=PcapSideResult(
-                "not_requested", entry["post_filter"],
+                (
+                    "not_applicable"
+                    if entry["post_not_applicable"]
+                    else "not_requested"
+                ),
+                entry["post_filter"],
             ),
         ) for entry in entries]
 
@@ -247,11 +432,20 @@ def split_flows_v2(
                 resource_dir / f"{stem}-pre.pcap",
                 f"pcap-{connection_id[5:]}-pre",
             )
-            post = _extract_side(
-                phys_pcap, entry["post_filter"],
-                resource_dir / f"{stem}-post.pcap",
-                f"pcap-{connection_id[5:]}-post",
-            )
+            if entry["post_not_applicable"]:
+                post = PcapSideResult("not_applicable", "")
+            elif entry["post_recovery_status"] == "ambiguous":
+                post = PcapSideResult(
+                    "failed",
+                    entry["post_filter"],
+                    error_code="POST_FLOW_SOURCE_AMBIGUOUS",
+                )
+            else:
+                post = _extract_side(
+                    phys_pcap, entry["post_filter"],
+                    resource_dir / f"{stem}-post.pcap",
+                    f"pcap-{connection_id[5:]}-post",
+                )
             extracted.append((entry, ConnectionPcapResult(
                 connection_id=connection_id,
                 protocol=entry["protocol"],
@@ -312,6 +506,15 @@ def split_flows_v2(
             ],
         })
     return outputs
+
+
+def _same_partial_flow(first: FlowTuple, second: FlowTuple) -> bool:
+    return (
+        first.network.lower() == second.network.lower()
+        and first.src_port == second.src_port
+        and _normalize_ip(first.dst_ip) == _normalize_ip(second.dst_ip)
+        and first.dst_port == second.dst_port
+    )
 
 
 def _resource_candidate_rank(

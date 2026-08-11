@@ -110,6 +110,7 @@ make dev
 5. 安装 Clash Verge 服务并开启 TUN。
 6. 打开“流量追踪”，选择“手工输入”并填写单目标，或选择“YAML 配置”加载 `sites.yaml` 后全选/选择子集；再填写 TUN/物理接口、Chrome 绝对路径和输出绝对目录。
 7. 点击“检测环境”，关闭所有阻断项。
+   “Analysis storage”默认选择 `Standard`：保留双侧原始 PCAP、完整 URL/连接索引和关联证据，但不立即复制每连接 pre/post PCAP；需要直接生成这些派生文件时选择 `Full`。
 8. 点击“开始捕获”。所选目标组成一个 Capture group，并强制每项完成分析后才进入下一项。
 9. Capture group 卡片展示当前 N/total、阶段、页面 Session 和错误；可请求取消，failed/interrupted 状态可从准确目标继续。
 10. 捕获运行时“会话”自动选中本次时间戳目录并只显示该 Capture group；空闲时默认不显示历史内容，可点击“选择文件夹”打开当前输出根目录下的历史时间戳目录，再查看状态、警告、产物或“重新分析”。
@@ -278,6 +279,13 @@ UI 中 `Page flows` 只描述当前页面关联的 transport pipeline；
 连接，只用于全局诊断。页面连接失败会按 hostname 与稳定 `error_class` 聚合。
 新构建还会把三个组件的完整 Git commit 写入 Worker hello 和 Session manifest；
 旧 Session 的 `unknown` 只表示当时的构建未嵌入版本元数据。
+
+### 分析存储档位
+
+- `Standard`（UI 默认，`pcap_split_mode=none`）：保留 `raw/tun.pcap`、`raw/phys.pcap`、NetLog、CDP、Mihomo trace，以及 request/connection/PCAP 索引；不生成重复的每连接 PCAP。原始证据和 URL → connection → pre/post 五元组关系不丢失，可在以后以 `Full` 重新分析。
+- `Full`（`pcap_split_mode=unique_connections`）：除上述文件外，立即生成每个规范连接的 pre/post 派生 PCAP，便于直接交付 Wireshark 或外部脚本，空间占用更高。
+
+旧 UI/旧任务未携带该字段时仍按 `Full` 处理，避免升级后静默改变既有行为。切换档位不会删除已有文件；当前版本不自动清理历史派生 PCAP。
 
 ## 8. Linux 打包
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import ip_address
+import re
 from urllib.parse import urlsplit
 
 
@@ -74,3 +75,29 @@ def request_can_have_transport(request) -> bool:
     """Reject cache/internal responses before any endpoint or host fallback."""
     observation, _ = request_network_observation(request)
     return observation not in NON_NETWORK_OBSERVATIONS
+
+
+def flow_targets_loopback(flow) -> bool:
+    """Return whether a correlated flow terminates at a loopback endpoint."""
+    for candidate in (flow.pre_flow, flow.post_flow):
+        if candidate is None:
+            continue
+        for value in (candidate.src_ip, candidate.dst_ip):
+            try:
+                if ip_address(value).is_loopback:
+                    return True
+            except ValueError:
+                continue
+    terminal_error = flow.terminal.error if flow.terminal else ""
+    if "::1" in terminal_error:
+        return True
+    for value in re.findall(
+        r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])",
+        terminal_error,
+    ):
+        try:
+            if ip_address(value).is_loopback:
+                return True
+        except ValueError:
+            continue
+    return False
