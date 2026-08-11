@@ -208,8 +208,17 @@ def check_core(path: Path, smoke_script: Path, lock: dict) -> None:
         raise RuntimeError("Mihomo tracing API does not match component lock")
     if payload.get("event_schema_version") != lock["protocols"]["mihomo_event_schema"]:
         raise RuntimeError("Mihomo event schema does not match component lock")
-    if not payload.get("supports_normalized_flow"):
-        raise RuntimeError("Mihomo binary lacks normalized Flow capability")
+    required_capabilities = (
+        "supports_normalized_flow",
+        "supports_egress_outcome",
+        "supports_session_sink_isolation",
+    )
+    missing = [name for name in required_capabilities if payload.get(name) is not True]
+    if missing:
+        raise RuntimeError(
+            "Mihomo binary lacks required TrafficTracer capabilities: "
+            + ", ".join(missing)
+        )
 
 
 def main() -> int:

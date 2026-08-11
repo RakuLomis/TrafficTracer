@@ -219,6 +219,8 @@ def smoke_core(core: Path, root: Path) -> None:
             "api_version": 1,
             "event_schema_version": 1,
             "supports_normalized_flow": True,
+            "supports_egress_outcome": True,
+            "supports_session_sink_isolation": True,
         }
         if payload is None or any(payload.get(key) != value for key, value in expected.items()):
             raise SmokeFailure(f"packaged core capabilities mismatch: {payload}")
