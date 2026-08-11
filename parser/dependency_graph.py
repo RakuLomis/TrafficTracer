@@ -111,6 +111,7 @@ class ConnectionChain:
     dns_transaction: SourceEntry | None = None
     h2_session: SourceEntry | None = None
     quic_session: SourceEntry | None = None
+    udp_socket: SourceEntry | None = None
     pool_group: SourceEntry | None = None
 
     # Extra info
@@ -361,8 +362,15 @@ def build_connection_chain(
                 result.quic_session = leaf
             elif st in (SOCKET, PROXY_CLIENT_SOCKET) and result.socket is None:
                 result.socket = leaf
-            elif st == UDP_SOCKET:
-                pass  # UDP sockets are handled separately
+            elif (
+                st == UDP_SOCKET
+                and result.udp_socket is None
+                and result.socket is None
+                and result.tcp_attempt is None
+                and result.tls_attempt is None
+                and result.h2_session is None
+            ):
+                result.udp_socket = leaf
 
     # Check for SSL_CONNECT events within the socket entry
     if result.socket:
@@ -386,7 +394,8 @@ def build_connection_chain(
     # Extract five-tuple — combine upstream chain + downstream leaves + address entries
     all_entries = list(chain_entries) + [
         e for e in [result.tcp_attempt, result.tls_attempt,
-                     result.h2_session, result.quic_session]
+                     result.h2_session, result.quic_session,
+                     result.udp_socket]
         if e is not None and e not in chain_entries
     ] + address_entries
     result.five_tuple = extract_five_tuple(all_entries)
@@ -430,7 +439,8 @@ def extract_five_tuple(chain: list[SourceEntry]) -> FiveTuple:
                 addr = addr.split(" [")[0]
             parsed = _parse_ip_port(addr)
             if parsed:
-                ft.dst_ip, ft.dst_port = parsed
+                ft.dst_ip = ft.dst_ip or parsed[0]
+                ft.dst_port = ft.dst_port or parsed[1]
                 ft.protocol = ft.protocol or "UDP"
 
         elif st == HTTP2_SESSION:
@@ -493,6 +503,25 @@ def _extract_address_from_event(
         if parsed:
             ft.dst_ip = ft.dst_ip or parsed[0]
             ft.dst_port = ft.dst_port or parsed[1]
+
+    # Chromium QUIC_SESSION events expose the connected UDP endpoints as
+    # self_address/peer_address rather than local_address/remote_address.
+    # Restrict these aliases to QUIC business transports so similarly named
+    # diagnostic fields cannot turn resolver activity into an HTTP flow.
+    if source_type in (QUIC_SESSION, UDP_SOCKET, HTTP_STREAM_POOL_QUIC_TASK):
+        self_address = params.get("self_address")
+        if isinstance(self_address, str):
+            parsed = _parse_ip_port(self_address)
+            if parsed:
+                ft.src_ip = ft.src_ip or parsed[0]
+                ft.src_port = ft.src_port or parsed[1]
+
+        peer_address = params.get("peer_address")
+        if isinstance(peer_address, str):
+            parsed = _parse_ip_port(peer_address)
+            if parsed:
+                ft.dst_ip = ft.dst_ip or parsed[0]
+                ft.dst_port = ft.dst_port or parsed[1]
 
     # Resolver and UDP events use "address" for the DNS server. Only accept
     # this field from a source known to represent a business transport.

@@ -56,8 +56,15 @@ def persist_analysis_artifacts(
         generation_id=generation_id,
     )
 
-    error_count = sum(bool(mapping.error) for mapping in mappings)
-    warnings = _warnings(items, pre_counts, error_count)
+    error_ids = {
+        mapping.connection_id for mapping in mappings if mapping.error
+    }
+    error_count = len(error_ids)
+    local_connection_ids = _local_connection_ids(request_records)
+    local_core_ids = _local_core_ids(
+        connection_records, items, local_connection_ids,
+    )
+    warnings = _warnings(items, pre_counts, error_ids, local_core_ids)
     warnings.extend(_quality_warnings(request_records, connection_records, pcap_payload))
     match_counts = Counter(item["match"]["status"] for item in items)
     protocol_counts = Counter(item["protocol"] for item in items)
@@ -160,14 +167,26 @@ def layered_coverage(
         or bool(record.get("mihomo_connection_id"))
         or record.get("terminal") is not None
     ]
-    page_core = _core_coverage(page_logical_records, page_reasons)
+    local_connection_ids = _local_connection_ids(request_records)
+    page_core = _core_coverage(
+        page_logical_records, page_reasons,
+        not_applicable_ids=local_connection_ids,
+        id_field="connection_id",
+    )
     core_records = (
         core_flow_records
         if core_flow_records is not None
         else connection_records
     )
     global_reasons: Counter[str] = Counter()
-    global_core = _core_coverage(core_records, global_reasons)
+    local_core_ids = _local_core_ids(
+        connection_records, core_records, local_connection_ids,
+    )
+    global_core = _core_coverage(
+        core_records, global_reasons,
+        not_applicable_ids=local_core_ids,
+        id_field="conn_id",
+    )
     # Preserve the flattened v1 counters for legacy readers. New consumers
     # must use the explicit page_attributed/capture_global scopes below.
     reasons.update(global_reasons)
@@ -191,11 +210,24 @@ def layered_coverage(
     return coverage
 
 
-def _core_coverage(records: list[dict], reasons: Counter[str]) -> dict:
+def _core_coverage(
+    records: list[dict],
+    reasons: Counter[str],
+    *,
+    not_applicable_ids: set[str] | None = None,
+    id_field: str = "connection_id",
+) -> dict:
     with_post = sum(record.get("post_flow") is not None for record in records)
     missing = len(records) - with_post
-    if missing:
-        reasons["missing_post_flow"] += missing
+    local_missing = sum(
+        record.get("post_flow") is None
+        and record.get(id_field) in (not_applicable_ids or set())
+        for record in records
+    )
+    if missing - local_missing:
+        reasons["missing_post_flow"] += missing - local_missing
+    if local_missing:
+        reasons["local_endpoint_not_applicable"] += local_missing
     return {
         "total": len(records),
         "with_post_flow": with_post,
@@ -456,7 +488,8 @@ def _network(value: str) -> str:
 def _warnings(
     items: list[dict],
     pre_counts: Counter[str],
-    error_count: int,
+    error_ids: set[str],
+    local_core_ids: set[str],
 ) -> list[dict]:
     """Build diagnostics for all Mihomo flows observed during the capture."""
     warnings: list[dict] = []
@@ -479,7 +512,14 @@ def _warnings(
             scope="capture_global",
             severity="info",
         ))
-    missing_count = sum(item["post_flow"] is None for item in items)
+    local_missing_count = sum(
+        item["post_flow"] is None and item.get("conn_id") in local_core_ids
+        for item in items
+    )
+    missing_count = sum(
+        item["post_flow"] is None and item.get("conn_id") not in local_core_ids
+        for item in items
+    )
     if missing_count:
         warnings.append(_warning(
             "POST_FLOW_UNAVAILABLE",
@@ -487,10 +527,19 @@ def _warnings(
             "Some capture-global logical flows have no complete post-proxy tuple.",
             scope="capture_global",
         ))
-    if error_count:
+    if local_missing_count:
+        warnings.append(_warning(
+            "LOCAL_ENDPOINT_UNAVAILABLE",
+            local_missing_count,
+            "Local endpoint probes have no applicable post-proxy flow.",
+            scope="capture_global",
+            severity="info",
+        ))
+    actionable_error_count = len(error_ids - local_core_ids)
+    if actionable_error_count:
         warnings.append(_warning(
             "FLOW_ERRORS",
-            error_count,
+            actionable_error_count,
             "Some capture-global logical flows ended with a tracing error.",
             scope="capture_global",
         ))
@@ -507,35 +556,44 @@ def analysis_quality(
     """Return conservative, denominator-preserving scoped quality metrics."""
     browser = _request_partition(request_records)
     eligible_requests = browser["total"] - browser["non_network"]
+    local_connection_ids = _local_connection_ids(request_records)
+    applicable_connections = [
+        record for record in connection_records
+        if record.get("connection_id") not in local_connection_ids
+    ]
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
         for record in connection_records
     )
 
     established = sum(
-        record.get("post_flow") is not None for record in connection_records
+        record.get("post_flow") is not None for record in applicable_connections
     )
     failed_before_socket = sum(
         record.get("post_flow") is None
         and _is_dial_failure(record.get("terminal"))
-        for record in connection_records
+        for record in applicable_connections
     )
-    unavailable = len(connection_records) - established - failed_before_socket
+    unavailable = len(applicable_connections) - established - failed_before_socket
 
     split_mode = pcap_payload.get("split_mode", "none")
     pcap_connections = list(pcap_payload.get("connections", []))
+    applicable_pcaps = [
+        item for item in pcap_connections
+        if item.get("connection_id") not in local_connection_ids
+    ]
     pre_success = sum(
         item.get("pre_proxy", {}).get("status") == "success"
         for item in pcap_connections
     )
     post_success = sum(
         item.get("post_proxy", {}).get("status") == "success"
-        for item in pcap_connections
+        for item in applicable_pcaps
     )
     complete_pairs = sum(
         item.get("pre_proxy", {}).get("status") == "success"
         and item.get("post_proxy", {}).get("status") == "success"
-        for item in pcap_connections
+        for item in applicable_pcaps
     )
     page_quality = {
         "request_attribution": {
@@ -559,6 +617,14 @@ def analysis_quality(
             "complete_pairs": complete_pairs,
         },
     }
+    if local_connection_ids:
+        page_quality["egress_establishment"][
+            "not_applicable_local_endpoint"
+        ] = len(local_connection_ids)
+        page_quality["pcap_extraction"]["applicable"] = len(applicable_pcaps)
+        page_quality["pcap_extraction"]["post_not_applicable"] = (
+            len(pcap_connections) - len(applicable_pcaps)
+        )
     core_records = core_flow_records or []
     capture_global = {
         "logical_flows": {
@@ -586,6 +652,11 @@ def _quality_warnings(
     pcap_payload: dict,
 ) -> list[dict]:
     warnings: list[dict] = []
+    local_connection_ids = _local_connection_ids(request_records)
+    applicable_connections = [
+        record for record in connection_records
+        if record.get("connection_id") not in local_connection_ids
+    ]
     request_partition = _request_partition(request_records)
     if request_partition["unmatched"]:
         warnings.append(_warning(
@@ -622,7 +693,7 @@ def _quality_warnings(
     dial_failures = sum(
         record.get("post_flow") is None
         and _is_dial_failure(record.get("terminal"))
-        for record in connection_records
+        for record in applicable_connections
     )
     if dial_failures:
         warnings.append(_warning(
@@ -634,7 +705,7 @@ def _quality_warnings(
     unavailable = sum(
         record.get("post_flow") is None
         and not _is_dial_failure(record.get("terminal"))
-        for record in connection_records
+        for record in applicable_connections
     )
     if unavailable:
         warnings.append(_warning(
@@ -645,13 +716,17 @@ def _quality_warnings(
         ))
     if pcap_payload.get("split_mode") == "unique_connections":
         pcap_connections = pcap_payload.get("connections", [])
+        applicable_pcaps = [
+            item for item in pcap_connections
+            if item.get("connection_id") not in local_connection_ids
+        ]
         pre_missing = sum(
             item.get("pre_proxy", {}).get("status") != "success"
             for item in pcap_connections
         )
         post_missing = sum(
             item.get("post_proxy", {}).get("status") != "success"
-            for item in pcap_connections
+            for item in applicable_pcaps
         )
         if pre_missing:
             warnings.append(_warning(
@@ -667,7 +742,65 @@ def _quality_warnings(
                 "Some post-proxy PCAP extracts are empty or unavailable.",
                 scope="page_attributed",
             ))
+    if local_connection_ids:
+        warnings.append(_warning(
+            "LOCAL_ENDPOINT_UNAVAILABLE",
+            len(local_connection_ids),
+            "Local client probes were observed; post-proxy flow is not applicable.",
+            scope="page_attributed",
+            severity="info",
+        ))
+        if pcap_payload.get("split_mode") == "unique_connections":
+            warnings.append(_warning(
+                "PCAP_POST_NOT_APPLICABLE",
+                len(local_connection_ids),
+                "Post-proxy PCAP is not applicable to local endpoint probes.",
+                scope="page_attributed",
+                severity="info",
+            ))
     return warnings
+
+
+def _local_connection_ids(request_records: list[dict]) -> set[str]:
+    observations: dict[str, set[str]] = {}
+    for record in request_records:
+        connection_id = record.get("connection_id")
+        if not connection_id:
+            continue
+        observations.setdefault(connection_id, set()).add(
+            record.get("network_observation", "unknown")
+        )
+    return {
+        connection_id
+        for connection_id, values in observations.items()
+        if values and values <= {"local_endpoint"}
+    }
+
+
+def _local_core_ids(
+    connection_records: list[dict],
+    core_records: list[dict],
+    local_connection_ids: set[str],
+) -> set[str]:
+    local_pre_endpoints = {
+        (
+            record.get("pre_flow", {}).get("network"),
+            record.get("pre_flow", {}).get("dst_ip"),
+            record.get("pre_flow", {}).get("dst_port"),
+        )
+        for record in connection_records
+        if record.get("connection_id") in local_connection_ids
+    }
+    return {
+        record.get("conn_id")
+        for record in core_records
+        if (
+            record.get("pre_flow", {}).get("network"),
+            record.get("pre_flow", {}).get("dst_ip"),
+            record.get("pre_flow", {}).get("dst_port"),
+        ) in local_pre_endpoints
+        and record.get("conn_id")
+    }
 
 
 def _is_dial_failure(terminal: object) -> bool:

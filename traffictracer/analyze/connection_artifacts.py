@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass, replace
 import ipaddress
 import json
 from pathlib import Path
+import re
 from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
@@ -329,7 +330,10 @@ def _request_records(
             network_observation, observation_evidence = (
                 request_network_observation(request)
             )
-            if connection_id:
+            if flow and _flow_targets_loopback(flow):
+                network_observation = "local_endpoint"
+                observation_evidence = ["correlated_flow_loopback_endpoint"]
+            if connection_id and network_observation != "local_endpoint":
                 network_observation = "network"
             output.append({
                 "schema_version": FLOW_SCHEMA_V2_VERSION,
@@ -377,6 +381,26 @@ def _request_records(
                 ),
             })
     return output
+
+
+def _flow_targets_loopback(flow: CorrelatedFlowV2) -> bool:
+    for candidate in (flow.pre_flow, flow.post_flow):
+        if candidate is None:
+            continue
+        for value in (candidate.src_ip, candidate.dst_ip):
+            try:
+                if ipaddress.ip_address(value).is_loopback:
+                    return True
+            except ValueError:
+                continue
+    terminal_error = flow.terminal.error if flow.terminal else ""
+    for value in re.findall(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", terminal_error):
+        try:
+            if ipaddress.ip_address(value).is_loopback:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _request_unmatched_reason(

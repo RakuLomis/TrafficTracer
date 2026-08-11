@@ -299,6 +299,75 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
     }
 
 
+def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_path):
+    (tmp_path / "logs").mkdir()
+    results = tmp_path / "results"
+    results.mkdir()
+    generation = "78fdab68-4e5d-4b67-9910-33da00a2632a"
+    connection_id = "conn-11111111111111111111111111111111"
+    url = "https://localhost.weixin.qq.com:14017/wx_game_base/api/business"
+    pre_flow = {
+        "network": "tcp", "src_ip": "198.18.0.1", "src_port": 44000,
+        "dst_ip": "198.18.0.226", "dst_port": 14017,
+    }
+    (results / "request-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [{
+            "request_id": "local.1", "url": url,
+            "connection_id": connection_id,
+            "network_observation": "local_endpoint",
+            "attribution": {"status": "matched"},
+        }],
+    }), encoding="utf-8")
+    (results / "connection-index-v2.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "items": [{
+            "connection_id": connection_id,
+            "request_ids": ["local.1"], "urls": [url], "primary_url": url,
+            "pre_flow": pre_flow, "post_flow": None,
+            "match": {"status": "matched", "method": "exact_pre_flow"},
+            "terminal": {"status": "dial_error", "stage": "dial"},
+            "shared": False,
+        }],
+    }), encoding="utf-8")
+    (results / "pcap-index-v1.json").write_text(json.dumps({
+        "analysis_generation_id": generation,
+        "split_mode": "unique_connections",
+        "connections": [{
+            "connection_id": connection_id, "request_ids": ["local.1"],
+            "pre_proxy": {"status": "success"},
+            "post_proxy": {"status": "not_requested"},
+        }],
+    }), encoding="utf-8")
+
+    summary = json.loads(
+        persist_analysis_artifacts(tmp_path, SESSION_ID).summary.read_text(
+            encoding="utf-8",
+        )
+    )
+
+    assert summary["quality_state"] == "passed"
+    assert [item["code"] for item in summary["warnings"]] == [
+        "LOCAL_ENDPOINT_UNAVAILABLE", "PCAP_POST_NOT_APPLICABLE",
+    ]
+    assert all(item["severity"] == "info" for item in summary["warnings"])
+    assert summary["quality"]["request_attribution"] == {
+        "eligible": 0, "matched": 0, "ambiguous": 0, "unmatched": 0,
+    }
+    assert summary["quality"]["egress_establishment"] == {
+        "total": 1, "established": 0, "failed_before_socket": 0,
+        "unavailable": 0, "not_applicable_local_endpoint": 1,
+    }
+    assert summary["quality"]["pcap_extraction"] == {
+        "requested": True, "total": 1, "applicable": 0,
+        "pre_success": 1, "post_success": 0, "complete_pairs": 0,
+        "post_not_applicable": 1,
+    }
+    assert summary["coverage"]["page_attributed"]["unmatched_reasons"] == {
+        "local_endpoint_not_applicable": 1,
+    }
+
+
 def test_empty_layered_coverage_has_three_zero_denominators():
     coverage = layered_coverage([], [])
     assert coverage["browser_requests"]["total"] == 0

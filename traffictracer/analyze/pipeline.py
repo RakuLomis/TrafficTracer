@@ -17,7 +17,15 @@ from ..session.atomic import write_json_atomic
 from ..utils import logger, ensure_dir, setup_logging
 from ..models import VisitCorrelation
 from .netlog import extract_five_tuples, DomainConnections
-from .mihomo_log import parse_tracing_log, parse_udp_tracing_log
+from .mihomo_log import (
+    MihomoConnection,
+    TcpClose,
+    TcpConnect,
+    TcpProxyDial,
+    UdpConnection,
+    parse_tracing_log,
+    parse_udp_tracing_log,
+)
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
 from .pcap_splitter import (
     ConnectionPcapResult,
@@ -338,8 +346,19 @@ def _analyze_cdp_path(
         finally:
             Path(repaired_path).unlink(missing_ok=True)
 
+    udp_conns = None
+    if os.path.exists(trace_path):
+        try:
+            udp_conns = parse_udp_tracing_log(trace_path)
+            if udp_conns:
+                logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
+        except Exception:
+            pass
+
+    transport_candidates = dict(mihomo_conns)
+    transport_candidates.update(_udp_as_mihomo_candidates(udp_conns or {}))
     result = correlate_v2(
-        transport_conns, mihomo_conns,
+        transport_conns, transport_candidates,
         visit_url=visit_url,
         domain=domain,
         cdp_request_count=len(attributed),
@@ -350,15 +369,6 @@ def _analyze_cdp_path(
     covered_ids: set[str] = set()
     for flow in result.flows:
         covered_ids.update(flow.request_ids)
-
-    udp_conns = None
-    if os.path.exists(trace_path):
-        try:
-            udp_conns = parse_udp_tracing_log(trace_path)
-            if udp_conns:
-                logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
-        except Exception:
-            pass
 
     cdp_direct_flows = correlate_cdp_direct(
         attributed, mihomo_conns, domain,
@@ -371,6 +381,38 @@ def _analyze_cdp_path(
         result.flows.extend(cdp_direct_flows)
 
     return result
+
+
+def _udp_as_mihomo_candidates(
+    connections: dict[str, UdpConnection],
+) -> dict[str, MihomoConnection]:
+    output: dict[str, MihomoConnection] = {}
+    for conn_key, connection in connections.items():
+        native_id = conn_key
+        connect = connection.connect
+        proxy_dial = connection.proxy_dial
+        close = connection.close
+        output[native_id] = MihomoConnection(
+            native_id,
+            TcpConnect(
+                connect.ts, native_id, connect.src, connect.dst, connect.host,
+                pre_flow=connect.pre_flow, event_seq=connect.event_seq,
+            ) if connect else None,
+            TcpProxyDial(
+                proxy_dial.ts, native_id, proxy_dial.proxy,
+                proxy_dial.proxy_type, proxy_dial.proxy_addr,
+                proxy_dial.out_src, out_dst=proxy_dial.out_dst,
+                post_flow=proxy_dial.post_flow,
+                outer_conn_id=proxy_dial.outer_conn_id,
+                event_seq=proxy_dial.event_seq,
+            ) if proxy_dial else None,
+            TcpClose(
+                close.ts, native_id, close.bytes_up, close.bytes_down,
+                close.duration_ms, status=close.status, stage=close.stage,
+                error=close.error, event_seq=close.event_seq,
+            ) if close else None,
+        )
+    return output
 
 
 def _analyze_domain_path(

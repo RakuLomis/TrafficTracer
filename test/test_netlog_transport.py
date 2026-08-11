@@ -22,7 +22,7 @@ def _make_netlog(events: list[dict]) -> str:
                 "HTTP_PROXY_CONNECT_JOB": 10, "TCP_STREAM_ATTEMPT": 20,
                 "HTTP2_SESSION": 14, "HTTP_STREAM_JOB_CONTROLLER": 12,
                 "HOST_RESOLVER_IMPL_JOB": 4, "DNS_TRANSACTION": 25,
-                "UDP_SOCKET": 19,
+                "UDP_SOCKET": 19, "QUIC_SESSION": 13,
             },
             "logEventPhase": {"PHASE_BEGIN": 0, "PHASE_END": 1, "PHASE_NONE": 2},
         },
@@ -321,6 +321,116 @@ def test_duplicate_transport_aliases_with_overlapping_requests_are_merged():
         os.unlink(path)
     assert len(connections) == 1
     assert connections[0].request_ids == ["alias.1"]
+
+
+def test_quic_session_self_peer_addresses_bind_h3_requests():
+    first = "https://www.iqiyi.com/static/js/app.js"
+    second = "https://www.iqiyi.com/api/recommend?page=1"
+    events = [
+        {"time": "1000", "type": 404, "phase": 0,
+         "source": {"id": 100, "type": 1},
+         "params": {"url": first,
+                    "source_dependency": {"id": 177, "type": 13}}},
+        {"time": "1010", "type": 404, "phase": 0,
+         "source": {"id": 101, "type": 1},
+         "params": {"url": second,
+                    "source_dependency": {"id": 177, "type": 13}}},
+        {"time": "990", "type": 327, "phase": 2,
+         "source": {"id": 177, "type": 13},
+         "params": {"host": "www.iqiyi.com", "port": 443,
+                    "self_address": "198.18.0.1:43076",
+                    "peer_address": "198.18.0.234:443"}},
+    ]
+    path = _make_netlog(events)
+    requests = [
+        AttributedRequest("quic.1", "T", "F", first, "Script", 100.0),
+        AttributedRequest("quic.2", "T", "F", second, "Fetch", 101.0),
+    ]
+    try:
+        connections = trace_transport(requests, path)
+    finally:
+        os.unlink(path)
+
+    assert len(connections) == 1
+    connection = connections[0]
+    assert connection.netlog_source_id == 177
+    assert connection.network == "udp"
+    assert connection.protocol == "QUIC"
+    assert connection.application_protocol == "h3"
+    assert connection.src_ip == "198.18.0.1"
+    assert connection.src_port == 43076
+    assert connection.dst_ip == "198.18.0.234"
+    assert connection.dst_port == 443
+    assert connection.request_ids == ["quic.1", "quic.2"]
+
+
+def test_quic_chain_uses_downstream_udp_socket_endpoints():
+    url = "https://quic.example/video"
+    events = [
+        {"time": "1000", "type": 404, "phase": 0,
+         "source": {"id": 100, "type": 1},
+         "params": {"url": url,
+                    "source_dependency": {"id": 177, "type": 13}}},
+        {"time": "990", "type": 322, "phase": 0,
+         "source": {"id": 177, "type": 13},
+         "params": {"host": "quic.example", "port": 443}},
+        {"time": "995", "type": 43, "phase": 2,
+         "source": {"id": 188, "type": 19},
+         "params": {"local_address": "198.18.0.1:44000",
+                    "remote_address": "198.18.0.99:443",
+                    "source_dependency": {"id": 177, "type": 13}}},
+    ]
+    path = _make_netlog(events)
+    request = AttributedRequest("quic.udp", "T", "F", url, "Media", 100.0)
+    try:
+        connections = trace_transport([request], path)
+    finally:
+        os.unlink(path)
+
+    assert len(connections) == 1
+    assert connections[0].network == "udp"
+    assert connections[0].src_port == 44000
+    assert connections[0].dst_ip == "198.18.0.99"
+
+
+def test_h2_socket_is_not_overwritten_by_downstream_udp_dependency():
+    url = "https://api.example/data"
+    events = [
+        {"time": "1000", "type": 404, "phase": 0,
+         "source": {"id": 100, "type": 1},
+         "params": {"url": url,
+                    "source_dependency": {"id": 200, "type": 5}}},
+        {"time": "990", "type": 404, "phase": 0,
+         "source": {"id": 200, "type": 5},
+         "params": {"source_dependency": {"id": 300, "type": 14}}},
+        {"time": "980", "type": 404, "phase": 0,
+         "source": {"id": 300, "type": 14},
+         "params": {"source_dependency": {"id": 400, "type": 3}}},
+        {"time": "970", "type": 4, "phase": 2,
+         "source": {"id": 400, "type": 3},
+         "params": {"local_address": "198.18.0.1:45000",
+                    "remote_address": "198.18.0.210:443"}},
+        {"time": "1010", "type": 43, "phase": 2,
+         "source": {"id": 500, "type": 19},
+         "params": {"address": "[2001:4860:4860::8888]:443",
+                    "source_dependency": {"id": 300, "type": 14}}},
+    ]
+    path = _make_netlog(events)
+    request = AttributedRequest("h2.udp", "T", "F", url, "XHR", 100.0)
+    try:
+        connections = trace_transport([request], path)
+    finally:
+        os.unlink(path)
+
+    assert len(connections) == 1
+    connection = connections[0]
+    assert connection.netlog_source_id == 300
+    assert connection.network == "tcp"
+    assert connection.application_protocol == "h2"
+    assert connection.src_ip == "198.18.0.1"
+    assert connection.src_port == 45000
+    assert connection.dst_ip == "198.18.0.210"
+    assert connection.dst_port == 443
 
 
 

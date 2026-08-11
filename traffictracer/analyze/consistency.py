@@ -23,6 +23,7 @@ def validate_analysis_consistency(
     errors: list[str] = []
     request_keys: set[tuple[str, str]] = set()
     request_ids_by_connection: dict[str, set[str]] = defaultdict(set)
+    legacy_request_ids_by_connection: dict[str, set[str]] = defaultdict(set)
     urls_by_connection: dict[str, set[str]] = defaultdict(set)
     connections = {
         item.get("connection_id"): item
@@ -41,7 +42,11 @@ def validate_analysis_consistency(
         connection_id = request.get("connection_id")
         observation = request.get("network_observation")
         status = request.get("attribution", {}).get("status")
-        if observation in NON_NETWORK_OBSERVATIONS and connection_id is not None:
+        if (
+            observation in NON_NETWORK_OBSERVATIONS
+            and observation != "local_endpoint"
+            and connection_id is not None
+        ):
             errors.append(
                 f"non-network request has connection_id: {request_id}"
             )
@@ -52,6 +57,8 @@ def validate_analysis_consistency(
                 )
                 continue
             request_ids_by_connection[connection_id].add(request_id)
+            if observation not in NON_NETWORK_OBSERVATIONS:
+                legacy_request_ids_by_connection[connection_id].add(request_id)
             if request.get("url"):
                 urls_by_connection[connection_id].add(request["url"])
 
@@ -141,7 +148,7 @@ def validate_analysis_consistency(
             connection_id
             for connection_id, connection in connections.items()
             if connection.get("match", {}).get("status") == "matched"
-            and request_ids_by_connection.get(connection_id)
+            and legacy_request_ids_by_connection.get(connection_id)
         }
         legacy_projection_mismatches = len(
             legacy_ids.symmetric_difference(expected_legacy_ids)

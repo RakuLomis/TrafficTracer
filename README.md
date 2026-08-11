@@ -116,6 +116,13 @@ IPv4 超时、IPv6 不可达和其他拨号错误。
 socket 只作为 DNS 证据，不会生成业务 transport connection；无法找到真实 socket
 的请求会保守地留在 request index 中并标为 unmatched。
 
+HTTP/3 使用 QUIC session 的 `self_address/peer_address` 或其下游 UDP socket 恢复
+代理前五元组，随后与 Mihomo UDP trace 一同进入和 TCP 相同的候选排名器。完整
+五元组是主要证据；Chrome 单调时钟与 Mihomo UTC 无法精确对齐时，唯一完整候选
+仍可关联，多个同分候选继续保持 ambiguous。对于 HTTP/2，已经确认的业务 TCP
+socket 是权威端点；复用 dependency graph 下游出现的 UDP/DoH socket 不得覆盖该
+端点，也不能把 `2001:4860:4860::8888:443` 等解析通道误写成页面业务连接。
+
 `summary.json.quality_state` 只评价当前页面，值为
 `passed/degraded/failed`；`capture_global_quality_state` 单独评价捕获窗口内全部
 Mihomo 流。`quality.page_attributed` 与 `quality.capture_global` 提供显式分层，
@@ -124,6 +131,15 @@ Mihomo 流。`quality.page_attributed` 与 `quality.capture_global` 提供显式
 归属的后台流即使缺少 post-flow，也只降低 capture-global 状态，不能污染页面质量。
 Job 可以正常 `completed`，但页面或全局捕获质量仍可能是 `degraded`，UI 和自动化
 消费者不得将这些状态混为一谈。
+
+`network_observation=local_endpoint` 表示请求已经关联到回环目标；判定同时使用 CDP
+地址、代理前五元组和 Mihomo 拨号终态中的回环地址。此类记录保留 connection ID、
+URL、代理前流和失败终态，但 post-flow 在语义上不适用，不计入出口失败或 post-PCAP
+缺失。对应质量字段为
+`egress_establishment.not_applicable_local_endpoint`、
+`pcap_extraction.applicable` 和 `pcap_extraction.post_not_applicable`。若 CDP 带有
+cache 标记但 NetLog 同时证明存在真实 socket，该请求按 `network` 处理，避免缓存
+提示覆盖实际网络证据。
 
 
 “会话”区域按时间戳 Capture group 浏览，不再默认汇总整个 Session root：捕获运行时自动选中本次时间戳目录；没有活动捕获时默认不显示历史内容，可通过“选择文件夹”手动打开当前输出根目录下的时间戳目录。旧版直属 `<timestamp>_<session-id>` 目录仍可选择。扫描器只识别合法的新旧 Session 布局，并忽略 `.chrome-profiles`、`.batches` 及 Chrome 扩展自己的 `manifest.json`；选定目录内真正损坏的 Session manifest 仍会单独报告。

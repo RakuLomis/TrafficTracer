@@ -179,6 +179,56 @@ def test_exact_pre_flow_accepts_incomparable_monotonic_and_utc_clocks():
     assert "time_unavailable" in decision.candidates[0].evidence
 
 
+def test_unique_exact_pre_flow_survives_clock_alignment_drift():
+    key = "udp|198.18.0.1:44000|198.18.0.9:443"
+    pre = FlowTuple(
+        "udp", "198.18.0.1", 44000, "198.18.0.9", 443,
+        key=key, complete=True,
+    )
+    candidate = MihomoConnection(
+        "quic",
+        TcpConnect("110.0", "quic", pre.src, pre.dst, "cdn.example.net", pre_flow=pre),
+        None, None,
+    )
+    decision = rank_connection_candidates(
+        _transport(
+            protocol="QUIC", network="udp", dst_ip="198.18.0.9",
+            first_observed=100.0,
+        ),
+        {"quic": candidate},
+    )
+    assert decision.status == "matched"
+    assert decision.method == "exact_pre_flow"
+    assert decision.confidence == 0.9
+    assert decision.selected_native_id == "quic"
+    assert "time_outside_window_ms:10000" in decision.candidates[0].evidence
+
+
+def test_drifted_reused_exact_tuple_remains_ambiguous():
+    key = "udp|198.18.0.1:44000|198.18.0.9:443"
+    pre = FlowTuple(
+        "udp", "198.18.0.1", 44000, "198.18.0.9", 443,
+        key=key, complete=True,
+    )
+    candidates = {
+        native_id: MihomoConnection(
+            native_id,
+            TcpConnect(ts, native_id, pre.src, pre.dst, "cdn.example.net", pre_flow=pre),
+            None, None,
+        )
+        for native_id, ts in (("old-a", "110.0"), ("old-b", "120.0"))
+    }
+    decision = rank_connection_candidates(
+        _transport(
+            protocol="QUIC", network="udp", dst_ip="198.18.0.9",
+            first_observed=100.0,
+        ),
+        candidates,
+    )
+    assert decision.status == "ambiguous"
+    assert decision.reason == "multiple_candidates"
+
+
 def test_no_candidate_is_explicitly_unmatched():
     decision = rank_connection_candidates(_transport(), {})
     assert decision.status == "unmatched"

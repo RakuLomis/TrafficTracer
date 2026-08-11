@@ -253,6 +253,21 @@ endpoint、request/response/completion 时间和 transport 生命周期消歧。
 prefetch，或收到响应但 `connectionId=0` 的浏览器内部响应。这些请求没有可捕获的
 独立五元组，不计为抓包缺失；它们仍保留 URL、request ID 与分类证据。旧 Session
 没有这些 CDP 标志时保持兼容，不会凭空伪造缓存来源。
+若带 cache 标记的请求同时拥有 NetLog socket 证据，则真实 transport 优先，该请求
+仍归类为 `network`。
+
+HTTP/3 请求通过 QUIC session 的 `self_address/peer_address` 或下游 UDP socket
+恢复五元组，并直接与 Mihomo UDP trace 关联。HTTP/2 已确认的 TCP socket 优先于
+dependency graph 中复用的 UDP/DoH 旁支；解析通道不能覆盖页面业务端点。完整
+五元组唯一时允许在 Chrome 单调时钟与 Mihomo UTC 存在偏差的情况下关联；存在多个
+同分候选时仍显示 ambiguous。
+
+访问本机服务的请求显示为 `local_endpoint`。它们保留代理前五元组和连接终态，
+但不需要代理后五元组。UI 的 Egress/PCAP 分母按适用连接计算，并单独显示
+`local N/A`。原始字段分别是
+`egress_establishment.not_applicable_local_endpoint`、
+`pcap_extraction.applicable` 和 `pcap_extraction.post_not_applicable`；这些请求不会
+进入代理拨号失败或 post-PCAP 缺失告警。
 `no_response` 表示 Chrome 没有报告响应；`request_cancelled` 和 `request_failed`
 分别表示 CDP 明确报告取消或加载失败；`response_endpoint_missing` 表示收到响应但
 没有可用于绑定的 endpoint；`response_transport_unbound` 表示 endpoint 存在但仍

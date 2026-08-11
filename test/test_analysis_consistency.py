@@ -86,6 +86,16 @@ def test_consistency_rejects_non_network_request_with_connection():
         )
 
 
+def test_consistency_allows_local_endpoint_with_connection():
+    result = validate_analysis_consistency(
+        [_request(observation="local_endpoint")],
+        [_connection()],
+        [_flow()],
+    )
+
+    assert result["status"] == "passed"
+
+
 def test_consistency_rejects_cross_index_orphans_and_generation_mix():
     with pytest.raises(AnalysisConsistencyError) as error:
         validate_analysis_consistency(

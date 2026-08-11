@@ -13,7 +13,11 @@ from traffictracer.analyze.mihomo_log import (
     MihomoConnection,
     TcpConnect,
     TcpProxyDial,
+    UdpConnect,
+    UdpConnection,
+    UdpProxyDial,
 )
+from traffictracer.analyze.pipeline import _udp_as_mihomo_candidates
 from traffictracer.models import FlowTuple, TransportConnection
 
 
@@ -145,3 +149,37 @@ def test_correlator_uses_reconciled_mihomo_tcp_and_post_proxy_tuple():
     assert flow.post_flow.dst == "61.220.99.42:24191"
     assert flow.application_protocol == "unknown"
     assert flow.attempted_protocols == ["QUIC"]
+
+
+def test_quic_transport_uses_normalized_mihomo_udp_candidate():
+    pre = _flow("udp")
+    post = FlowTuple(
+        "udp", "192.0.2.10", 55000, "203.0.113.8", 443,
+        key="udp|192.0.2.10:55000|203.0.113.8:443",
+        complete=True, source="dialer_socket", scope="physical",
+    )
+    udp = UdpConnection(
+        "198.18.0.1:39586",
+        UdpConnect(
+            "2026-08-10T11:20:15Z", "198.18.0.1:39586",
+            pre.src, "cdn.example.net:443", "cdn.example.net", pre_flow=pre,
+        ),
+        UdpProxyDial(
+            "2026-08-10T11:20:15Z", "198.18.0.1:39586",
+            "Direct", "Selector", "", "[::]:55000",
+            out_dst="203.0.113.8:443", post_flow=post,
+        ),
+        None,
+    )
+
+    result = correlate_v2(
+        [_transport()], _udp_as_mihomo_candidates({udp.conn_key: udp}),
+        "https://www.youtube.com/watch?v=example", "youtube.com",
+    )
+
+    flow = result.flows[0]
+    assert flow.match_status == "matched"
+    assert flow.match_method == "exact_pre_flow"
+    assert flow.pre_flow == pre
+    assert flow.post_flow == post
+    assert flow.conn_id == "198.18.0.1:39586"

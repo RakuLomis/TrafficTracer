@@ -100,6 +100,12 @@ def rank_connection_candidates(
             elif time_delta is None:
                 score = 0.95
                 evidence.extend(("normalized_pre_flow", "time_unavailable"))
+            else:
+                score = 0.9
+                evidence.extend((
+                    "normalized_pre_flow",
+                    f"time_outside_window_ms:{round(time_delta * 1000)}",
+                ))
         elif pre and pre.complete and _same_endpoints(connection, pre):
             method = "transport_network_reconciled"
             score = 0.0

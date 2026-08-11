@@ -223,6 +223,94 @@ def test_cached_request_is_not_counted_as_missing_transport(tmp_path):
     assert coverage["unmatched_reasons"] == {}
 
 
+def test_local_endpoint_keeps_connection_without_becoming_network(tmp_path):
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", 44000, "198.18.0.226", 14017,
+        key="tcp|198.18.0.1:44000|198.18.0.226:14017",
+        complete=True, source="metadata_snapshot", scope="pre_proxy",
+    )
+    request = AttributedRequest(
+        "local.1", "target", "frame",
+        "https://localhost.weixin.qq.com:14017/wx_game_base/api/business",
+        "Fetch", 100.0, remote_ip="", remote_port=14017,
+        failed=True, failure_reason="net::ERR_CONNECTION_REFUSED",
+    )
+    flow = CorrelatedFlowV2(
+        url=request.url, resource_type="Fetch", target_type="page",
+        relation="cross_site", pre_proxy_src=pre.src,
+        pre_proxy_dst=pre.dst, post_proxy_src="", post_proxy_dst="",
+        protocol="HTTPS", request_ids=[request.request_id], pre_flow=pre,
+        post_flow=None, match_status="matched", match_confidence=1.0,
+        stable_connection_id=CONNECTION_ID, match_method="exact_pre_flow",
+        match_candidates=[{
+            "connection_id": CONNECTION_ID, "native_id": "local-native",
+            "score": 1.0, "evidence": ["normalized_pre_flow"],
+        }], match_evidence=["normalized_pre_flow"],
+        terminal=FlowTerminal(
+            "dial_error", "dial",
+            "connect failed: dial tcp 127.0.0.1:14017: connect: connection refused",
+        ),
+    )
+    result = VisitCorrelation(
+        visit_url="https://v.qq.com/", domain="qq.com",
+        flows=[flow], requests=[request],
+    )
+
+    artifacts = persist_connection_artifacts(tmp_path, SESSION_ID, [result])
+    request_record = json.loads(
+        artifacts.request_index.read_text(encoding="utf-8")
+    )["items"][0]
+    connection = json.loads(
+        artifacts.connection_index.read_text(encoding="utf-8")
+    )["items"][0]
+
+    assert request_record["network_observation"] == "local_endpoint"
+    assert request_record["connection_id"] == CONNECTION_ID
+    assert request_record["attribution"]["status"] == "matched"
+    assert connection["request_ids"] == ["local.1"]
+    assert connection["urls"] == [request.url]
+    assert connection["pre_flow"]["dst_port"] == 14017
+    assert connection["post_flow"] is None
+    assert connection["terminal"]["error_class"] == "dial_error"
+
+
+def test_cache_hint_with_transport_connection_is_network(tmp_path):
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", 44000, "198.18.0.2", 443,
+        key="tcp|198.18.0.1:44000|198.18.0.2:443",
+        complete=True, source="metadata_snapshot", scope="pre_proxy",
+    )
+    request = AttributedRequest(
+        "cache.revalidated", "target", "frame", "https://example.com/data",
+        "XHR", 100.0, from_disk_cache=True,
+    )
+    flow = CorrelatedFlowV2(
+        url=request.url, resource_type="XHR", target_type="page",
+        relation="same_site", pre_proxy_src=pre.src, pre_proxy_dst=pre.dst,
+        post_proxy_src="", post_proxy_dst="", protocol="HTTPS",
+        request_ids=[request.request_id], pre_flow=pre, post_flow=None,
+        match_status="matched", match_confidence=1.0,
+        stable_connection_id=CONNECTION_ID, match_method="netlog_socket",
+        match_candidates=[{
+            "connection_id": CONNECTION_ID, "native_id": "cache-native",
+            "score": 1.0, "evidence": ["transport_request_ids"],
+        }], match_evidence=["transport_request_ids"],
+    )
+
+    artifacts = persist_connection_artifacts(
+        tmp_path, SESSION_ID,
+        [VisitCorrelation(
+            visit_url="https://example.com/", domain="example.com",
+            flows=[flow], requests=[request],
+        )],
+    )
+    record = json.loads(
+        artifacts.request_index.read_text(encoding="utf-8")
+    )["items"][0]
+    assert record["network_observation"] == "network"
+    assert record["connection_id"] == CONNECTION_ID
+
+
 def test_egress_chain_resolves_direct_and_splits_sharing_semantics(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()
