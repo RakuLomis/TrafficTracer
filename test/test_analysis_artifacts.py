@@ -6,6 +6,8 @@ from traffictracer.analyze.artifacts import (
     _local_connection_ids,
     _mapping_error_class,
     _mapping_targets_loopback,
+    _quality_warnings,
+    analysis_quality,
     _target_document_non_network,
     layered_coverage,
     persist_analysis_artifacts,
@@ -303,6 +305,40 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
         "total": 1, "established": 0, "failed_before_socket": 1,
         "unavailable": 0,
     }
+
+
+def test_rejected_egress_is_not_missing_socket_quality_failure():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": None,
+        "terminal": {"status": "rejected", "stage": "reject"},
+        "egress": {
+            "mode": "unknown", "outcome": "rejected",
+            "policy": "Taobao", "selection_chain": ["Taobao", "REJECT"],
+            "selected_node": "REJECT", "selected_type": "Reject",
+            "evidence": "mihomo_trace",
+        },
+    }
+
+    quality = analysis_quality(
+        [], [connection], {"split_mode": "none", "connections": []},
+    )
+    assert quality["egress_establishment"] == {
+        "total": 1,
+        "established": 0,
+        "failed_before_socket": 0,
+        "unavailable": 0,
+        "not_applicable_outcome": 1,
+    }
+    warning_codes = {
+        item["code"] for item in _quality_warnings(
+            [], [connection], {"split_mode": "none", "connections": []},
+        )
+    }
+    assert "EGRESS_DIAL_FAILED" not in warning_codes
+    assert "EGRESS_UNAVAILABLE" not in warning_codes
+
 
 
 def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_path):

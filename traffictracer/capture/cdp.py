@@ -41,6 +41,8 @@ class CDPCollector:
         self._load_events: dict[str, asyncio.Event] = {}
         self._enabled_sessions: set[str] = set()
         self._enable_tasks: set[asyncio.Task] = set()
+        self._warnings: list[dict] = []
+        self._navigation: dict = {}
 
     async def connect(self, retries: int = 15, delay: float = 0.5) -> None:
         for attempt in range(retries):
@@ -330,13 +332,25 @@ class CDPCollector:
 
         await self._enable_session(page_session, "page")
         load_event = asyncio.Event()
+        navigate_command_timed_out = False
+        self._navigation = {"url": url, "status": "started"}
         self._load_events[page_session] = load_event
         try:
-            await self.send(
-                "Page.navigate",
-                {"url": url},
-                session_id=page_session,
-            )
+            try:
+                await self.send(
+                    "Page.navigate",
+                    {"url": url},
+                    session_id=page_session,
+                )
+            except asyncio.TimeoutError:
+                navigate_command_timed_out = True
+                warning = {
+                    "code": "CDP_NAVIGATE_COMMAND_TIMEOUT",
+                    "message": "Page.navigate response timed out; collection continued",
+                }
+                self._warnings.append(warning)
+                self._navigation["status"] = "command_timeout"
+                logger.warning("%s for %s", warning["message"], url)
             loop = asyncio.get_running_loop()
             deadline = loop.time() + load_timeout
             while not load_event.is_set() and loop.time() < deadline:
@@ -349,11 +363,20 @@ class CDPCollector:
                 except asyncio.TimeoutError:
                     pass
             if not load_event.is_set():
+                self._navigation["status"] = (
+                    "command_and_load_timeout"
+                    if navigate_command_timed_out
+                    else "load_event_timeout"
+                )
                 logger.warning(
                     "Page load event not received for %s within %.1fs",
                     url,
                     load_timeout,
                 )
+            elif navigate_command_timed_out:
+                self._navigation["status"] = "loaded_after_command_timeout"
+            else:
+                self._navigation["status"] = "loaded"
         finally:
             self._load_events.pop(page_session, None)
 
@@ -427,6 +450,8 @@ class CDPCollector:
                 "target_count": len(self._targets),
                 "request_count": len(self._requests),
                 "websocket_count": len(self._websockets),
+                "navigation": dict(getattr(self, "_navigation", {})),
+                "warnings": list(getattr(self, "_warnings", [])),
             },
         }
 

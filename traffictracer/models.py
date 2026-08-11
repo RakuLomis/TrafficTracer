@@ -116,6 +116,9 @@ class CorrelatedFlowV2:
     netlog_source_id: int | None = None
     proxy: str = ""
     proxy_type: str = ""
+    leaf_proxy: str = ""
+    leaf_proxy_type: str = ""
+    egress_outcome: str = ""
     application_protocol: str = "unknown"
     attempted_protocols: list[str] = field(default_factory=list)
     first_observed: float | None = None

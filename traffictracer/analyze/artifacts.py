@@ -592,20 +592,30 @@ def analysis_quality(
         record for record in connection_records
         if record.get("connection_id") not in local_connection_ids
     ]
+    socket_applicable_connections = [
+        record for record in applicable_connections
+        if not _egress_without_socket(record)
+    ]
+    not_applicable_outcome = (
+        len(applicable_connections) - len(socket_applicable_connections)
+    )
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
         for record in connection_records
     )
 
     established = sum(
-        record.get("post_flow") is not None for record in applicable_connections
+        record.get("post_flow") is not None
+        for record in socket_applicable_connections
     )
     failed_before_socket = sum(
         record.get("post_flow") is None
         and _is_dial_failure(record.get("terminal"))
-        for record in applicable_connections
+        for record in socket_applicable_connections
     )
-    unavailable = len(applicable_connections) - established - failed_before_socket
+    unavailable = (
+        len(socket_applicable_connections) - established - failed_before_socket
+    )
 
     split_mode = pcap_payload.get("split_mode", "none")
     pcap_connections = list(pcap_payload.get("connections", []))
@@ -648,6 +658,10 @@ def analysis_quality(
             "complete_pairs": complete_pairs,
         },
     }
+    if not_applicable_outcome:
+        page_quality["egress_establishment"][
+            "not_applicable_outcome"
+        ] = not_applicable_outcome
     if local_connection_ids:
         page_quality["egress_establishment"][
             "not_applicable_local_endpoint"
@@ -693,6 +707,10 @@ def _quality_warnings(
         record for record in connection_records
         if record.get("connection_id") not in local_connection_ids
     ]
+    socket_applicable_connections = [
+        record for record in applicable_connections
+        if not _egress_without_socket(record)
+    ]
     request_partition = _request_partition(request_records)
     if request_partition["unmatched"]:
         warnings.append(_warning(
@@ -729,7 +747,7 @@ def _quality_warnings(
     dial_failures = sum(
         record.get("post_flow") is None
         and _is_dial_failure(record.get("terminal"))
-        for record in applicable_connections
+        for record in socket_applicable_connections
     )
     if dial_failures:
         warnings.append(_warning(
@@ -741,7 +759,7 @@ def _quality_warnings(
     unavailable = sum(
         record.get("post_flow") is None
         and not _is_dial_failure(record.get("terminal"))
-        for record in applicable_connections
+        for record in socket_applicable_connections
     )
     if unavailable:
         warnings.append(_warning(
@@ -945,6 +963,15 @@ def _is_dial_failure(terminal: object) -> bool:
     if not isinstance(terminal, dict):
         return False
     return terminal.get("stage") == "dial" or terminal.get("status") == "dial_error"
+
+
+def _egress_without_socket(record: dict) -> bool:
+    egress = record.get("egress")
+    if not isinstance(egress, dict):
+        return False
+    return egress.get("outcome") in {
+        "rejected", "rejected_drop", "internal_dns", "pass",
+    }
 
 
 def _warning(

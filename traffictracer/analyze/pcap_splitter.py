@@ -312,7 +312,11 @@ def split_flows_v2(
             ),
         )
         post_not_applicable = any(
-            flow_targets_loopback(item) for item in connection_flows
+            flow_targets_loopback(item)
+            or item.egress_outcome in {
+                "rejected", "rejected_drop", "internal_dns", "pass",
+            }
+            for item in connection_flows
         )
         post_recovery_status = "not_applicable" if post_not_applicable else "not_needed"
         if not post_not_applicable and flow.post_flow is not None:

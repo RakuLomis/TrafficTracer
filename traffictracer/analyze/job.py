@@ -15,6 +15,7 @@ from traffictracer.jobs.models import (
     CaptureJobResult,
     JobState,
 )
+from traffictracer.jobs.errors import exception_message
 from traffictracer.jobs.progress import ProgressReporter
 from traffictracer.session.manifest import Artifact, SessionError, SessionManifest
 from traffictracer.session.store import MANIFEST_NAME, SessionStore
@@ -123,7 +124,7 @@ class AnalysisJob:
             )
             self._finish_manifest(
                 JobState.FAILED,
-                SessionError(error_code, str(exc), stage),
+                SessionError(error_code, exception_message(exc, "analysis failed"), stage),
             )
             self.progress.finish(JobState.FAILED, "analysis failed")
             raise

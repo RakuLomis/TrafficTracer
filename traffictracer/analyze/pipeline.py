@@ -405,6 +405,9 @@ def _udp_as_mihomo_candidates(
                 post_flow=proxy_dial.post_flow,
                 outer_conn_id=proxy_dial.outer_conn_id,
                 event_seq=proxy_dial.event_seq,
+                leaf_proxy=proxy_dial.leaf_proxy,
+                leaf_proxy_type=proxy_dial.leaf_proxy_type,
+                egress_outcome=proxy_dial.egress_outcome,
             ) if proxy_dial else None,
             TcpClose(
                 close.ts, native_id, close.bytes_up, close.bytes_down,

@@ -158,6 +158,53 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
     assert any(item["method"] == "job.completed" for item in notifications)
 
 
+def test_capture_failure_records_partial_raw_artifacts_and_non_empty_error(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.services as module
+
+    services = WorkerServices(
+        tmp_path,
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    class FailingCaptureJob:
+        def __init__(self, spec, **kwargs):
+            self.session = kwargs["session"]
+            self._artifacts = ("raw/netlog.json",)
+
+        @property
+        def artifacts(self):
+            return self._artifacts
+
+        def run(self):
+            raw = self.session.directory / "raw"
+            raw.mkdir(exist_ok=True)
+            (raw / "netlog.json").write_text(
+                '{"events": []}\n', encoding="utf-8"
+            )
+            raise TimeoutError()
+
+    monkeypatch.setattr(module, "CaptureJob", FailingCaptureJob)
+    payload = _capture_payload(tmp_path)
+    payload["options"]["analyze_after_capture"] = False
+
+    started = services.jobs.start_capture({"job": payload})
+    assert services.jobs.wait(started["job_id"], timeout=3)
+
+    sessions = services.session_list({})
+    assert sessions["total"] == 1
+    manifest = services.session_get({
+        "session_id": sessions["sessions"][0]["session_id"]
+    })
+    assert manifest["state"] == "failed"
+    assert manifest["error"]["message"] == "TimeoutError"
+    assert [item["path"] for item in manifest["artifacts"]] == [
+        "raw/netlog.json"
+    ]
+
+
 def test_internal_batch_orchestration_creates_three_serial_analyzed_sessions(
     tmp_path, monkeypatch
 ):

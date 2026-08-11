@@ -161,6 +161,22 @@ def test_second_child_failure_stops_before_third_and_checkpoints_error(
     assert manifest.children[2].state is BatchChildState.PENDING
 
 
+def test_empty_child_exception_persists_non_empty_error(tmp_path):
+    spec = _spec(tmp_path, count=1)
+
+    def factory(child, progress, token):
+        return _Runnable(
+            lambda: (_ for _ in ()).throw(TimeoutError())
+        )
+
+    job, result, _ = _execute(spec, factory)
+    manifest = BatchManifest.load(job.manifest_path)
+
+    assert result.state is JobState.FAILED
+    assert manifest.children[0].error is not None
+    assert manifest.children[0].error.message == "TimeoutError"
+
+
 def test_non_fail_fast_continues_serially_but_parent_finishes_failed(tmp_path):
     spec = _spec(tmp_path, fail_fast=False)
     calls = []

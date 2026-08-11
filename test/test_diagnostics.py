@@ -24,11 +24,21 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
     monkeypatch.setattr(environment, "_controller_get", lambda *args: {"version": 1})
     mismatch = environment.check_controller("http://127.0.0.1:9090")
     assert mismatch.code == "CORE_CAPABILITY_MISMATCH"
+    assert mismatch.details["missing_capabilities"] == [
+        "supports_normalized_flow",
+        "supports_egress_outcome",
+        "supports_session_sink_isolation",
+    ]
 
     monkeypatch.setattr(
         environment,
         "_controller_get",
-        lambda *args: {"version": 1, "supports_normalized_flow": True},
+        lambda *args: {
+            "version": 1,
+            "supports_normalized_flow": True,
+            "supports_egress_outcome": True,
+            "supports_session_sink_isolation": True,
+        },
     )
     assert environment.check_controller("http://127.0.0.1:9090").code == "CORE_READY"
 
@@ -112,7 +122,11 @@ def test_environment_report_keeps_all_checks_and_stable_fields(tmp_path, monkeyp
     monkeypatch.setattr(
         environment,
         "_controller_get",
-        lambda *args: {"supports_normalized_flow": True},
+        lambda *args: {
+            "supports_normalized_flow": True,
+            "supports_egress_outcome": True,
+            "supports_session_sink_isolation": True,
+        },
     )
     monkeypatch.setattr(
         environment.socket,

@@ -66,6 +66,8 @@ def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector._load_events: dict[str, asyncio.Event] = {}
     collector._enabled_sessions: set[str] = set()
     collector._enable_tasks: set[asyncio.Task] = set()
+    collector._warnings: list[dict] = []
+    collector._navigation: dict = {}
     return collector
 
 
@@ -317,6 +319,44 @@ def test_navigate_uses_created_target_and_waits_for_load():
         assert ("Page.navigate", {"url": "https://example.com"}, "S3") in sent
         assert collector._visit_url == "https://example.com"
         assert "S3" not in collector._load_events
+
+    asyncio.run(run())
+
+
+def test_navigate_command_timeout_keeps_collecting_and_records_warning():
+    async def run():
+        collector = _make_collector_with_ws(FakeWS())
+
+        async def send(method, params=None, timeout=10.0, session_id=""):
+            if method == "Target.createTarget":
+                collector._session_to_target["S-timeout"] = "T-timeout"
+                collector._targets["T-timeout"] = {
+                    "type": "page",
+                    "url": "about:blank",
+                }
+                return {"targetId": "T-timeout"}
+            if method == "Page.navigate":
+                collector._requests.append({
+                    "request_id": "partial.1", "target_id": "T-timeout",
+                    "frame_id": "frame", "loader_id": "loader",
+                    "url": "https://www.youtube.com/", "resource_type": "Document",
+                    "timestamp": 100.0, "initiator_type": "other",
+                })
+                raise asyncio.TimeoutError()
+            return {}
+
+        collector.send = send
+        await collector.navigate("https://www.youtube.com/", load_timeout=0.01)
+
+        data = collector.get_structured_data()
+        assert len(data["requests"]) == 1
+        assert data["metadata"]["navigation"]["status"] == (
+            "command_and_load_timeout"
+        )
+        assert data["metadata"]["warnings"] == [{
+            "code": "CDP_NAVIGATE_COMMAND_TIMEOUT",
+            "message": "Page.navigate response timed out; collection continued",
+        }]
 
     asyncio.run(run())
 

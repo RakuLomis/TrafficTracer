@@ -73,6 +73,10 @@ class CaptureJob:
         self.finalize_progress = finalize_progress
         self._artifacts: list[str] = []
 
+    @property
+    def artifacts(self) -> tuple[str, ...]:
+        return tuple(self._artifacts)
+
     def run(self) -> CaptureJobResult:
         try:
             self._run()

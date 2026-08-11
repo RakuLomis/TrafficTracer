@@ -15,6 +15,11 @@ from .models import DiagnosticCheck, DiagnosticReport, DiagnosticSeverity
 
 
 DEFAULT_MIN_FREE_BYTES = 1 * 1024 * 1024 * 1024
+REQUIRED_TRACING_CAPABILITIES = (
+    "supports_normalized_flow",
+    "supports_egress_outcome",
+    "supports_session_sink_isolation",
+)
 
 
 @dataclass(frozen=True)
@@ -57,12 +62,19 @@ def check_controller(endpoint: str, secret: str = "") -> DiagnosticCheck:
             "Start mihomo-traffictracer and verify the controller endpoint and secret.",
             endpoint=endpoint,
         )
-    if not isinstance(capabilities, dict) or not capabilities.get("supports_normalized_flow"):
+    missing_capabilities = [
+        name
+        for name in REQUIRED_TRACING_CAPABILITIES
+        if not isinstance(capabilities, dict) or capabilities.get(name) is not True
+    ]
+    if missing_capabilities:
         return _failure(
             "CORE_CAPABILITY_MISMATCH",
-            "The selected core does not advertise normalized Flow support.",
+            "The selected core is missing required TrafficTracer capabilities: "
+            + ", ".join(missing_capabilities),
             "Select the verge-mihomo-tt core built from the pinned TrafficTracer branch.",
             endpoint=endpoint,
+            missing_capabilities=missing_capabilities,
         )
     return _success(
         "CORE_READY",

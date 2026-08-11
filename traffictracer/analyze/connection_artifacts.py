@@ -137,6 +137,7 @@ def _connection_record(
     generation_id: str,
     proxy_selections: dict[str, dict],
 ) -> dict:
+    post_flow = _usable_post_flow(flow.post_flow)
     candidates = [
         {
             "connection_id": item["connection_id"],
@@ -177,20 +178,20 @@ def _connection_record(
             "last_observed": flow.last_observed,
         },
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
-        "post_flow": _flow_payload(flow.post_flow, "post_proxy") if flow.post_flow else None,
+        "post_flow": _flow_payload(post_flow, "post_proxy") if post_flow else None,
         "sharing": {
             "request_multiplexed": bool(
                 flow.connection_reused or len(set(flow.request_ids)) > 1
             ),
             "post_flow_shared": bool(
-                flow.post_flow and flow.post_flow.shared
+                post_flow and post_flow.shared
             ),
             "outer_connection_reused": False,
         },
         "shared": bool(
             flow.connection_reused
             or len(set(flow.request_ids)) > 1
-            or (flow.post_flow and flow.post_flow.shared)
+            or (post_flow and post_flow.shared)
         ),
         "egress": _resolve_egress(flow, proxy_selections),
         "match": match,
@@ -271,49 +272,82 @@ def _resolve_egress(
     selections: dict[str, dict],
 ) -> dict:
     policy = flow.proxy
-    chain: list[str] = []
-    selected_type = flow.proxy_type or ""
-    current = policy
-    seen: set[str] = set()
-    while current and current not in seen:
-        seen.add(current)
-        chain.append(current)
-        selection = selections.get(current)
-        if not selection:
-            break
-        selected_type = str(selection.get("type", "")) or selected_type
-        node = str(selection.get("node", ""))
-        if not node or node == current:
-            break
-        current = node
-    if current and (not chain or chain[-1] != current):
-        chain.append(current)
+    trace_leaf = flow.leaf_proxy
+    selected_type = flow.leaf_proxy_type or flow.proxy_type or ""
+    if trace_leaf:
+        chain = [policy] if policy else []
+        if not chain or chain[-1] != trace_leaf:
+            chain.append(trace_leaf)
+    else:
+        chain = []
+        current = policy
+        seen: set[str] = set()
+        while current and current not in seen:
+            seen.add(current)
+            chain.append(current)
+            selection = selections.get(current)
+            if not selection:
+                break
+            selected_type = str(selection.get("type", "")) or selected_type
+            node = str(selection.get("node", ""))
+            if not node or node == current:
+                break
+            current = node
+        if current and (not chain or chain[-1] != current):
+            chain.append(current)
 
-    terminal = chain[-1] if chain else ""
-    lowered_type = selected_type.lower()
-    if terminal.upper() == "DIRECT" or lowered_type == "direct":
+    selected_node = trace_leaf or (chain[-1] if chain else "")
+    outcome = flow.egress_outcome or _infer_egress_outcome(
+        selected_node, selected_type, flow.post_flow is not None,
+    )
+    if outcome == "direct":
         mode = "direct"
-    elif terminal and (
-        flow.post_flow is not None
-        or lowered_type not in {"", "selector", "fallback", "urltest"}
-    ):
+    elif outcome == "proxy":
         mode = "proxy"
     else:
         mode = "unknown"
     return {
         "mode": mode,
+        "outcome": outcome,
         "policy": policy or None,
         "selection_chain": chain,
-        "selected_node": terminal or None,
+        "selected_node": selected_node or None,
         "selected_type": selected_type or None,
         "evidence": (
-            "mihomo_trace_and_session_proxy_snapshot"
+            "mihomo_trace"
+            if trace_leaf or flow.egress_outcome
+            else "mihomo_trace_and_session_proxy_snapshot"
             if policy and policy in selections
             else "mihomo_trace"
             if policy
             else "unavailable"
         ),
     }
+
+
+def _infer_egress_outcome(
+    selected_node: str,
+    selected_type: str,
+    has_post_flow: bool,
+) -> str:
+    normalized = selected_type.lower().replace("-", "")
+    if selected_node.upper() == "DIRECT" or normalized == "direct":
+        return "direct"
+    if normalized == "reject":
+        return "rejected"
+    if normalized == "rejectdrop":
+        return "rejected_drop"
+    if normalized == "dns":
+        return "internal_dns"
+    if normalized == "pass":
+        return "pass"
+    if normalized == "compatible":
+        return "compatible"
+    if has_post_flow or (
+        selected_node and normalized not in {"", "selector", "fallback", "urltest"}
+    ):
+        return "proxy"
+    return "unknown"
 
 
 def _request_records(
@@ -420,6 +454,21 @@ def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:
     payload["source"] = flow.source or "netlog"
     payload["shared"] = bool(flow.shared)
     return payload
+
+
+def _usable_post_flow(flow: FlowTuple | None) -> FlowTuple | None:
+    """Return only a complete network tuple suitable for the v2 contract.
+
+    Mihomo can emit an intentionally incomplete post-flow for terminal outcomes
+    such as REJECT, where no outbound socket exists. That observation remains
+    meaningful as a terminal/egress outcome, but it is not a five-tuple and must
+    not be serialized as one.
+    """
+    if flow is None or not flow.complete:
+        return None
+    if not flow.src_ip or not flow.src_port or not flow.dst_ip or not flow.dst_port:
+        return None
+    return flow
 
 
 def _network(value: str) -> str:

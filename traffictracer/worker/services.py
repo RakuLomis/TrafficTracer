@@ -28,6 +28,7 @@ from traffictracer.jobs.models import (
     CaptureJobSpec,
     JobState,
 )
+from traffictracer.jobs.errors import exception_message
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import ProgressReporter, ProgressWindow
 from traffictracer.layout import group_directory_name
@@ -560,10 +561,17 @@ class _PersistentCaptureRunner:
             self._transition(JobState.CANCELLED)
             raise
         except Exception as exc:
+            partial_artifacts = getattr(self.capture, "artifacts", ())
+            if isinstance(partial_artifacts, tuple):
+                self._record_paths(partial_artifacts, kind="raw")
             code = getattr(exc, "code", "CAPTURE_FAILED")
             self._transition(
                 JobState.FAILED,
-                SessionError(code, str(exc), "capture"),
+                SessionError(
+                    code,
+                    exception_message(exc, "capture failed"),
+                    "capture",
+                ),
             )
             raise
 

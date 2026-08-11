@@ -71,6 +71,9 @@ def test_parse_normalized_udp_proxy_dial(tmp_path):
                       "dst_ip": "1.1.1.1", "dst_port": 443,
                       "key": "udp|198.18.0.1:50000|1.1.1.1:443", "complete": True}},
         {"type": "udp_proxy_dial", "conn_key": "u1", "outer_conn_id": "outer-u1",
+         "proxy": "automatic", "proxy_type": "URLTest",
+         "leaf_proxy": "tuic-node", "leaf_proxy_type": "Tuic",
+         "egress_outcome": "proxy",
          "post_flow": {"network": "udp", "src_ip": "192.0.2.1", "src_port": 51000,
                        "dst_ip": "203.0.113.1", "dst_port": 443,
                        "key": "udp|192.0.2.1:51000|203.0.113.1:443", "complete": True}},
@@ -81,3 +84,6 @@ def test_parse_normalized_udp_proxy_dial(tmp_path):
     assert conn.connect.pre_flow.key == "udp|198.18.0.1:50000|1.1.1.1:443"
     assert conn.proxy_dial.post_flow.dst == "203.0.113.1:443"
     assert conn.proxy_dial.outer_conn_id == "outer-u1"
+    assert conn.proxy_dial.leaf_proxy == "tuic-node"
+    assert conn.proxy_dial.leaf_proxy_type == "Tuic"
+    assert conn.proxy_dial.egress_outcome == "proxy"

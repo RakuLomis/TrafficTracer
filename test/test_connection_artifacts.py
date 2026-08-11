@@ -274,6 +274,60 @@ def test_local_endpoint_keeps_connection_without_becoming_network(tmp_path):
     assert connection["terminal"]["error_class"] == "dial_error"
 
 
+def test_incomplete_reject_post_flow_is_not_serialized_as_five_tuple(tmp_path):
+    pre = FlowTuple(
+        "tcp", "198.18.0.1", 44000, "198.18.0.226", 443,
+        key="tcp|198.18.0.1:44000|198.18.0.226:443",
+        complete=True, source="metadata_snapshot", scope="pre_proxy",
+    )
+    incomplete_post = FlowTuple(
+        "tcp", complete=False, source="", scope="unknown",
+    )
+    request = AttributedRequest(
+        "reject.1", "target", "frame", "https://www.taobao.com/",
+        "Document", 100.0, failed=True,
+        failure_reason="net::ERR_CONNECTION_CLOSED",
+    )
+    flow = CorrelatedFlowV2(
+        url=request.url, resource_type="Document", target_type="page",
+        relation="same_site", pre_proxy_src=pre.src,
+        pre_proxy_dst=pre.dst, post_proxy_src="", post_proxy_dst="",
+        protocol="HTTPS", request_ids=[request.request_id], pre_flow=pre,
+        post_flow=incomplete_post, match_status="matched",
+        match_confidence=1.0, stable_connection_id=CONNECTION_ID,
+        match_method="exact_pre_flow", match_candidates=[{
+            "connection_id": CONNECTION_ID, "native_id": "reject-native",
+            "score": 1.0, "evidence": ["normalized_pre_flow"],
+        }], match_evidence=["normalized_pre_flow"],
+        terminal=FlowTerminal("dial_error", "dial", "REJECT"),
+        proxy="Taobao", proxy_type="Selector", leaf_proxy="REJECT",
+        leaf_proxy_type="Reject", egress_outcome="rejected",
+    )
+    result = VisitCorrelation(
+        visit_url=request.url, domain="taobao.com",
+        flows=[flow], requests=[request],
+    )
+
+    artifacts = persist_connection_artifacts(tmp_path, SESSION_ID, [result])
+    connection = json.loads(
+        artifacts.connection_index.read_text(encoding="utf-8")
+    )["items"][0]
+
+    assert connection["pre_flow"]["complete"] is True
+    assert connection["post_flow"] is None
+    assert connection["sharing"]["post_flow_shared"] is False
+    assert connection["terminal"]["error"] == "REJECT"
+    assert connection["egress"] == {
+        "mode": "unknown",
+        "outcome": "rejected",
+        "policy": "Taobao",
+        "selection_chain": ["Taobao", "REJECT"],
+        "selected_node": "REJECT",
+        "selected_type": "Reject",
+        "evidence": "mihomo_trace",
+    }
+
+
 def test_cache_hint_with_transport_connection_is_network(tmp_path):
     pre = FlowTuple(
         "tcp", "198.18.0.1", 44000, "198.18.0.2", 443,
@@ -355,6 +409,7 @@ def test_egress_chain_resolves_direct_and_splits_sharing_semantics(tmp_path):
     assert connection["egress"] == {
         "mode": "direct",
         "policy": "Bilibili",
+        "outcome": "direct",
         "selection_chain": ["Bilibili", "DIRECT"],
         "selected_node": "DIRECT",
         "selected_type": "Direct",

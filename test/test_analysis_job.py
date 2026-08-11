@@ -152,6 +152,28 @@ def test_analysis_failure_preserves_raw_artifact_and_records_manifest_error(
     assert events[-1].state is JobState.FAILED
 
 
+def test_analysis_failure_with_empty_exception_has_contract_safe_message(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "run_analysis",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError()),
+    )
+
+    with pytest.raises(TimeoutError):
+        _job(tmp_path, session_dir, []).run()
+
+    failed = store.get(manifest.session_id)
+    assert failed.state is JobState.FAILED
+    assert failed.error is not None
+    assert failed.error.message == "TimeoutError"
+    assert failed.to_dict()["error"]["message"] == "TimeoutError"
+
+
 def test_analysis_cancellation_marks_manifest_cancelled(tmp_path, monkeypatch):
     import traffictracer.analyze.job as module
 

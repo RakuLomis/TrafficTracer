@@ -56,6 +56,9 @@ class TcpProxyDial:
     post_flow: FlowTuple | None = None
     outer_conn_id: str = ""
     event_seq: int = 0
+    leaf_proxy: str = ""
+    leaf_proxy_type: str = ""
+    egress_outcome: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,9 @@ class UdpProxyDial:
     post_flow: FlowTuple | None = None
     outer_conn_id: str = ""
     event_seq: int = 0
+    leaf_proxy: str = ""
+    leaf_proxy_type: str = ""
+    egress_outcome: str = ""
 
 
 @dataclass(frozen=True)
@@ -164,6 +170,9 @@ def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
                 post_flow=parse_flow_tuple(event.get("post_flow")),
                 outer_conn_id=event.get("outer_conn_id", ""),
                 event_seq=int(event.get("event_seq", 0) or 0),
+                leaf_proxy=event.get("leaf_proxy", ""),
+                leaf_proxy_type=event.get("leaf_proxy_type", ""),
+                egress_outcome=event.get("egress_outcome", ""),
             )
         elif etype == "tcp_close":
             conn["close"] = TcpClose(
@@ -200,6 +209,9 @@ def parse_udp_tracing_log(path: str) -> dict[str, UdpConnection]:
                 proxy_addr=_clean_addr(event.get("proxy_addr", "")), out_src=_clean_addr(event.get("out_src", "")),
                 out_dst=_clean_addr(event.get("out_dst", "")), post_flow=parse_flow_tuple(event.get("post_flow")),
                 outer_conn_id=event.get("outer_conn_id", ""), event_seq=int(event.get("event_seq", 0) or 0),
+                leaf_proxy=event.get("leaf_proxy", ""),
+                leaf_proxy_type=event.get("leaf_proxy_type", ""),
+                egress_outcome=event.get("egress_outcome", ""),
             )
         elif etype == "udp_close":
             conn["close"] = UdpClose(

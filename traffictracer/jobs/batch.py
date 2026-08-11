@@ -21,6 +21,7 @@ from .batch_models import (
     BatchTarget,
 )
 from .cancellation import CancellationToken, CancelledError
+from .errors import exception_message
 from .models import CaptureJobResult, CaptureJobSpec, JobState, TargetSource
 from .progress import JobStage, ProgressEvent, ProgressReporter
 
@@ -127,7 +128,10 @@ class SerialBatchJob:
                     manifest = manifest.finish_child(
                         BatchChildState.FAILED,
                         session_id=self.session_for_job(child_spec.job_id),
-                        error=BatchError(str(code), str(exc)),
+                        error=BatchError(
+                            str(code),
+                            exception_message(exc, "batch child failed"),
+                        ),
                     )
                     self._save(manifest)
                     if manifest.state is BatchState.FAILED:

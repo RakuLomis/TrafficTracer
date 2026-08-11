@@ -187,6 +187,21 @@ def correlate_v2(
                 if mconn and mconn.proxy_dial
                 else ""
             ),
+            leaf_proxy=(
+                mconn.proxy_dial.leaf_proxy
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
+            leaf_proxy_type=(
+                mconn.proxy_dial.leaf_proxy_type
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
+            egress_outcome=(
+                mconn.proxy_dial.egress_outcome
+                if mconn and mconn.proxy_dial
+                else ""
+            ),
             stable_connection_id=stable_id,
             match_method=decision.method,
             match_candidates=[
@@ -374,6 +389,17 @@ def _correlate_cdp_udp(
                 rich.proxy_dial.proxy_type
                 if rich and rich.proxy_dial
                 else ""
+            ),
+            leaf_proxy=(
+                rich.proxy_dial.leaf_proxy if rich and rich.proxy_dial else ""
+            ),
+            leaf_proxy_type=(
+                rich.proxy_dial.leaf_proxy_type
+                if rich and rich.proxy_dial else ""
+            ),
+            egress_outcome=(
+                rich.proxy_dial.egress_outcome
+                if rich and rich.proxy_dial else ""
             ),
             terminal=_terminal_from_close(rich.close if rich else None),
         ))
