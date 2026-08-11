@@ -287,6 +287,13 @@ UI 中 `Page flows` 只描述当前页面关联的 transport pipeline；
 
 旧 UI/旧任务未携带该字段时仍按 `Full` 处理，避免升级后静默改变既有行为。切换档位不会删除已有文件；当前版本不自动清理历史派生 PCAP。
 
+### 浏览器缓存策略与按需包验证
+
+- `Cold`（UI 默认）：每个 Session 使用独立 profile；导航前禁用 HTTP cache、绕过 Service Worker，Chrome 完全退出后清理该临时 profile。
+- `Warm`：复用同一 domain/page type 的 profile，只用于明确需要研究缓存命中的实验。旧任务未记录 `cache_mode` 时按 `Warm` 解释。
+- Standard 结果中的 `pcap_extraction.requested=false` 仅表示没有生成派生连接 PCAP，双侧 `raw/*.pcap` 仍保留。Session 详情中的 `Verify packet evidence (Full)` 可按需重新分析。
+- 若目标 Document 全部来自 disk cache、Service Worker、prefetch 或浏览器内部来源，页面质量为 `degraded` 并报告 `TARGET_DOCUMENT_NON_NETWORK`；这类结果不再视为有效网络可达性样本。
+
 ## 8. Linux 打包
 
 开发测试可使用 `make package-linux`。该入口会先重建核心和 Worker、注入并核对 sidecar，再调用 Tauri；不要直接从 UI 子仓库运行裸 `pnpm tauri build`。正式发布候选必须从三个仓库均无已

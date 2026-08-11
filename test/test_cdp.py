@@ -48,6 +48,7 @@ class FakeWS:
 def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector = CDPCollector.__new__(CDPCollector)
     collector._port = 9222
+    collector._cache_mode = "warm"
     collector._ws = ws
     collector._cmd_id = 0
     collector._pending = {}
@@ -265,6 +266,24 @@ def test_late_attached_target_enables_network_and_page():
         assert ("Network.enable", "S2") in sent
         assert ("Page.enable", "S2") in sent
         assert "S2" in collector._enabled_sessions
+
+    asyncio.run(run())
+
+
+def test_cold_cache_mode_disables_cache_and_bypasses_service_worker():
+    async def run():
+        collector = _make_collector_with_ws(FakeWS())
+        collector._cache_mode = "cold"
+        sent = []
+
+        async def send(method, params=None, timeout=10.0, session_id=""):
+            sent.append((method, params, session_id))
+            return {}
+
+        collector.send = send
+        await collector._enable_session("S-cold", "page")
+        assert ("Network.setCacheDisabled", {"cacheDisabled": True}, "S-cold") in sent
+        assert ("Network.setBypassServiceWorker", {"bypass": True}, "S-cold") in sent
 
     asyncio.run(run())
 

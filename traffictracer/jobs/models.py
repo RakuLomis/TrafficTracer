@@ -63,12 +63,15 @@ class CaptureJobOptions:
     analyze_after_capture: bool = True
     headless: bool = False
     pcap_split_mode: str = "unique_connections"
+    cache_mode: str = "cold"
 
     def __post_init__(self) -> None:
         if self.pcap_split_mode not in {"none", "unique_connections"}:
             raise ValueError(
                 "pcap_split_mode must be none or unique_connections"
             )
+        if self.cache_mode not in {"cold", "warm"}:
+            raise ValueError("cache_mode must be cold or warm")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -78,6 +81,7 @@ class CaptureJobOptions:
             "analyze_after_capture": self.analyze_after_capture,
             "headless": self.headless,
             "pcap_split_mode": self.pcap_split_mode,
+            "cache_mode": self.cache_mode,
         }
 
 
@@ -193,6 +197,8 @@ class CaptureJobSpec:
                 pcap_split_mode=options.get(
                     "pcap_split_mode", "unique_connections",
                 ),
+                # Missing means a job written before cache policy existed.
+                cache_mode=options.get("cache_mode", "warm"),
             ),
             wait_load_timeout=data.get("wait_load_timeout", 30),
             run_label=data.get("run_label", data["network"]),

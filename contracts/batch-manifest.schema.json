@@ -51,7 +51,8 @@
             "collect_netlog": { "type": "boolean" },
             "analyze_after_capture": { "const": true },
             "headless": { "type": "boolean" },
-            "pcap_split_mode": { "enum": ["none", "unique_connections"] }
+            "pcap_split_mode": { "enum": ["none", "unique_connections"] },
+            "cache_mode": { "enum": ["cold", "warm"] }
           }
         }
       }

@@ -314,7 +314,7 @@ def test_cdp_cancellation_closes_browser_before_terminating_process(tmp_path, mo
     job.runtime = replace(job.runtime, enable_cdp=True)
 
     class CancellingCollector:
-        def __init__(self, debugging_port, cancellation):
+        def __init__(self, debugging_port, cancellation, cache_mode="warm"):
             self.token = cancellation
 
         def connect(self):

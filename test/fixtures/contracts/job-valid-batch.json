@@ -36,7 +36,8 @@
     "collect_netlog": true,
     "analyze_after_capture": true,
     "headless": false,
-    "pcap_split_mode": "unique_connections"
+    "pcap_split_mode": "unique_connections",
+    "cache_mode": "cold"
   },
   "fail_fast": true
 }

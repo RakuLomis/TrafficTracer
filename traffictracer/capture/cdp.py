@@ -18,9 +18,11 @@ class CDPCollector:
         self,
         debugging_port: int = 9222,
         cancellation: CancellationToken | None = None,
+        cache_mode: str = "warm",
     ):
         self._port = debugging_port
         self._cancellation = cancellation
+        self._cache_mode = cache_mode
         self._ws = None
         self._cmd_id = 0
         self._pending: dict[int, asyncio.Future] = {}
@@ -277,6 +279,17 @@ class CDPCollector:
             return
         try:
             await self.send("Network.enable", session_id=session_id)
+            if self._cache_mode == "cold":
+                await self.send(
+                    "Network.setCacheDisabled",
+                    {"cacheDisabled": True},
+                    session_id=session_id,
+                )
+                await self.send(
+                    "Network.setBypassServiceWorker",
+                    {"bypass": True},
+                    session_id=session_id,
+                )
             if target_type in {"page", "iframe"}:
                 await self.send("Page.enable", session_id=session_id)
             self._enabled_sessions.add(session_id)
@@ -461,8 +474,9 @@ class SyncCDPCollector:
         self,
         debugging_port: int = 9222,
         cancellation: CancellationToken | None = None,
+        cache_mode: str = "warm",
     ):
-        self._collector = CDPCollector(debugging_port, cancellation)
+        self._collector = CDPCollector(debugging_port, cancellation, cache_mode)
         self._loop = asyncio.new_event_loop()
         self._thread = __import__("threading").Thread(
             target=self._run_loop, daemon=True,

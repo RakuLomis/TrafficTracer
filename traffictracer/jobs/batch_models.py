@@ -174,7 +174,8 @@ class BatchJobSpec:
         validate_job(data)
         if data["kind"] != "batch":
             raise ValueError("BatchJobSpec requires kind='batch'")
-        options = data["options"]
+        options = dict(data["options"])
+        options.setdefault("cache_mode", "warm")
         controller = data["controller"]
         return cls(
             job_id=data["job_id"],
@@ -501,6 +502,8 @@ class BatchManifest:
         validate_batch_manifest(data)
         config = data["config"]
         execution = data["execution"]
+        execution_options = dict(execution["options"])
+        execution_options.setdefault("cache_mode", "warm")
         children = tuple(
             BatchChild(
                 target_index=item["target_index"],
@@ -523,7 +526,7 @@ class BatchManifest:
             chrome_binary=execution["chrome_binary"],
             controller_endpoint=execution["controller_endpoint"],
             controller_generated_config=execution["controller_generated_config"],
-            options=CaptureJobOptions(**execution["options"]),
+            options=CaptureJobOptions(**execution_options),
             targets=tuple(BatchTarget.from_dict(item) for item in data["targets"]),
             current_index=data["current_index"],
             children=children,

@@ -86,6 +86,11 @@ def test_capture_options_reject_unknown_pcap_split_mode():
         CaptureJobOptions(pcap_split_mode="compressed")
 
 
+def test_capture_options_reject_unknown_cache_mode():
+    with pytest.raises(ValueError, match="cache_mode"):
+        CaptureJobOptions(cache_mode="stale")
+
+
 def test_capture_job_serializes_config_target_provenance():
     source = TargetSource(
         mode="config",

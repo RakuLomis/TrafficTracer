@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections import Counter
+from ipaddress import ip_address
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
+from urllib.parse import urldefrag
 
 from traffictracer.contracts import validate_flow
 from traffictracer.models import FlowTuple
@@ -60,16 +63,29 @@ def persist_analysis_artifacts(
         mapping.connection_id for mapping in mappings if mapping.error
     }
     error_count = len(error_ids)
-    local_connection_ids = _local_connection_ids(request_records)
+    local_connection_ids = _local_connection_ids(request_records, connection_records)
     local_core_ids = _local_core_ids(
         connection_records, items, local_connection_ids,
     )
-    warnings = _warnings(items, pre_counts, error_ids, local_core_ids)
-    warnings.extend(_quality_warnings(request_records, connection_records, pcap_payload))
+    local_core_ids.update(
+        mapping.connection_id for mapping in mappings
+        if _mapping_targets_loopback(mapping)
+    )
+    error_classes = Counter(
+        _mapping_error_class(mapping) for mapping in mappings
+        if mapping.error and mapping.connection_id not in local_core_ids
+    )
+    warnings = _warnings(
+        items, pre_counts, error_ids, local_core_ids, error_classes,
+    )
+    warnings.extend(_quality_warnings(
+        request_records, connection_records, pcap_payload, _target_url(session),
+    ))
     match_counts = Counter(item["match"]["status"] for item in items)
     protocol_counts = Counter(item["protocol"] for item in items)
     quality = analysis_quality(
-        request_records, connection_records, pcap_payload, items, error_count,
+        request_records, connection_records, pcap_payload, items,
+        len(error_ids - local_core_ids), local_core_ids,
     )
     index_payload = {
         "schema_version": FLOW_SCHEMA_VERSION,
@@ -107,6 +123,7 @@ def persist_analysis_artifacts(
         request_records,
         connection_records,
         items,
+        local_core_ids=local_core_ids,
     )
     summary_payload["match_method_counts"] = dict(sorted(
         Counter(
@@ -133,6 +150,8 @@ def layered_coverage(
     request_records: list[dict],
     connection_records: list[dict],
     core_flow_records: list[dict] | None = None,
+    *,
+    local_core_ids: set[str] | None = None,
 ) -> dict:
     """Recompute conservative layer-specific coverage from persisted indexes."""
     browser = _request_partition(request_records)
@@ -167,7 +186,7 @@ def layered_coverage(
         or bool(record.get("mihomo_connection_id"))
         or record.get("terminal") is not None
     ]
-    local_connection_ids = _local_connection_ids(request_records)
+    local_connection_ids = _local_connection_ids(request_records, connection_records)
     page_core = _core_coverage(
         page_logical_records, page_reasons,
         not_applicable_ids=local_connection_ids,
@@ -179,7 +198,7 @@ def layered_coverage(
         else connection_records
     )
     global_reasons: Counter[str] = Counter()
-    local_core_ids = _local_core_ids(
+    local_core_ids = (local_core_ids or set()) | _local_core_ids(
         connection_records, core_records, local_connection_ids,
     )
     global_core = _core_coverage(
@@ -490,6 +509,7 @@ def _warnings(
     pre_counts: Counter[str],
     error_ids: set[str],
     local_core_ids: set[str],
+    error_classes: Counter[str] | None = None,
 ) -> list[dict]:
     """Build diagnostics for all Mihomo flows observed during the capture."""
     warnings: list[dict] = []
@@ -543,6 +563,16 @@ def _warnings(
             "Some capture-global logical flows ended with a tracing error.",
             scope="capture_global",
         ))
+    classified = error_classes or Counter()
+    for code, message in (
+        ("proxy_node_timeout", "Proxy node connections timed out before establishment."),
+        ("dns_resolution", "Mihomo could not resolve one or more flow destinations."),
+    ):
+        if classified[code]:
+            warnings.append(_warning(
+                code.upper(), classified[code], message,
+                scope="capture_global",
+            ))
     return warnings
 
 
@@ -552,11 +582,12 @@ def analysis_quality(
     pcap_payload: dict,
     core_flow_records: list[dict] | None = None,
     core_error_count: int = 0,
+    local_core_ids: set[str] | None = None,
 ) -> dict:
     """Return conservative, denominator-preserving scoped quality metrics."""
     browser = _request_partition(request_records)
     eligible_requests = browser["total"] - browser["non_network"]
-    local_connection_ids = _local_connection_ids(request_records)
+    local_connection_ids = _local_connection_ids(request_records, connection_records)
     applicable_connections = [
         record for record in connection_records
         if record.get("connection_id") not in local_connection_ids
@@ -638,6 +669,10 @@ def analysis_quality(
             "errors": core_error_count,
         },
     }
+    if local_core_ids:
+        capture_global["logical_flows"][
+            "not_applicable_local_endpoint"
+        ] = len(local_core_ids)
     # Preserve the original flattened page keys for older UI readers.
     return {
         **page_quality,
@@ -650,9 +685,10 @@ def _quality_warnings(
     request_records: list[dict],
     connection_records: list[dict],
     pcap_payload: dict,
+    target_url: str = "",
 ) -> list[dict]:
     warnings: list[dict] = []
-    local_connection_ids = _local_connection_ids(request_records)
+    local_connection_ids = _local_connection_ids(request_records, connection_records)
     applicable_connections = [
         record for record in connection_records
         if record.get("connection_id") not in local_connection_ids
@@ -714,6 +750,14 @@ def _quality_warnings(
             "Some page-attributed flows have no complete egress tuple.",
             scope="page_attributed",
         ))
+    target_non_network = _target_document_non_network(request_records, target_url)
+    if target_non_network:
+        warnings.append(_warning(
+            "TARGET_DOCUMENT_NON_NETWORK",
+            target_non_network,
+            "The primary target document was served entirely without network transport.",
+            scope="page_attributed",
+        ))
     if pcap_payload.get("split_mode") == "unique_connections":
         pcap_connections = pcap_payload.get("connections", [])
         applicable_pcaps = [
@@ -761,7 +805,10 @@ def _quality_warnings(
     return warnings
 
 
-def _local_connection_ids(request_records: list[dict]) -> set[str]:
+def _local_connection_ids(
+    request_records: list[dict],
+    connection_records: list[dict] | None = None,
+) -> set[str]:
     observations: dict[str, set[str]] = {}
     for record in request_records:
         connection_id = record.get("connection_id")
@@ -770,11 +817,77 @@ def _local_connection_ids(request_records: list[dict]) -> set[str]:
         observations.setdefault(connection_id, set()).add(
             record.get("network_observation", "unknown")
         )
-    return {
+    local_ids = {
         connection_id
         for connection_id, values in observations.items()
         if values and values <= {"local_endpoint"}
     }
+    local_ids.update(
+        record.get("connection_id")
+        for record in (connection_records or [])
+        if record.get("connection_id") and _record_targets_loopback(record)
+    )
+    return local_ids
+
+
+def _record_targets_loopback(record: dict) -> bool:
+    for name in ("pre_flow", "post_flow"):
+        flow = record.get(name)
+        if not isinstance(flow, dict):
+            continue
+        for field in ("src_ip", "dst_ip"):
+            try:
+                if ip_address(flow.get(field, "")).is_loopback:
+                    return True
+            except ValueError:
+                pass
+    terminal = record.get("terminal")
+    error = terminal.get("error", "") if isinstance(terminal, dict) else ""
+    return _text_targets_loopback(error)
+
+
+def _mapping_targets_loopback(mapping: FlowMapping) -> bool:
+    for flow in (mapping.pre_flow, mapping.post_flow):
+        if flow is None:
+            continue
+        for value in (flow.src_ip, flow.dst_ip):
+            try:
+                if ip_address(value).is_loopback:
+                    return True
+            except ValueError:
+                pass
+    return _text_targets_loopback(mapping.error)
+
+
+def _text_targets_loopback(error: str) -> bool:
+    if "::1" in error:
+        return True
+    for value in re.findall(
+        r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])", error,
+    ):
+        try:
+            if ip_address(value).is_loopback:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def _mapping_error_class(mapping: FlowMapping) -> str:
+    message = mapping.error.lower()
+    if mapping.status == "resolve_error" or any(
+        token in message for token in ("find ip", "no such host", "dns")
+    ):
+        return "dns_resolution"
+    if (
+        any(
+            token in message
+            for token in ("deadline exceeded", "timed out", "timeout")
+        )
+        and re.search(r"\S+:\d+ connect error", message)
+    ):
+        return "proxy_node_timeout"
+    return "dial_error" if mapping.status == "dial_error" else "transport_error"
 
 
 def _local_core_ids(
@@ -801,6 +914,31 @@ def _local_core_ids(
         ) in local_pre_endpoints
         and record.get("conn_id")
     }
+
+
+def _target_url(session: Path) -> str:
+    context = _read_index(session / "raw" / "capture-context.json")
+    target = context.get("target")
+    return target.get("url", "") if isinstance(target, dict) else ""
+
+
+def _target_document_non_network(records: list[dict], target_url: str) -> int:
+    if not target_url:
+        return 0
+    target, _ = urldefrag(target_url)
+    exact = [
+        record for record in records
+        if str(record.get("resource_type", "")).lower() == "document"
+        and urldefrag(str(record.get("url", "")))[0] == target
+    ]
+    return (
+        len(exact)
+        if exact and all(
+            record.get("network_observation") in NON_NETWORK_OBSERVATIONS
+            for record in exact
+        )
+        else 0
+    )
 
 
 def _is_dial_failure(terminal: object) -> bool:
@@ -848,6 +986,7 @@ def _quality_state(
         "EGRESS_UNAVAILABLE",
         "PCAP_PRE_EMPTY",
         "PCAP_POST_UNAVAILABLE",
+        "TARGET_DOCUMENT_NON_NETWORK",
     }
     return (
         "degraded"

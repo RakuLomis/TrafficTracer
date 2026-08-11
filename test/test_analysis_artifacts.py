@@ -3,10 +3,16 @@
 import json
 
 from traffictracer.analyze.artifacts import (
+    _local_connection_ids,
+    _mapping_error_class,
+    _mapping_targets_loopback,
+    _target_document_non_network,
     layered_coverage,
     persist_analysis_artifacts,
 )
 from traffictracer.contracts import validate_flow
+from traffictracer.analyze.flow_index import FlowMapping
+from traffictracer.models import FlowTuple
 
 
 SESSION_ID = "5027aee9-c6e4-41de-8625-7ea0869a3307"
@@ -454,3 +460,55 @@ def test_flow_index_backfills_requests_urls_and_generation_from_v2(tmp_path):
     assert flow["url"] == url_one
     assert flow["urls"] == [url_one, url_two]
     assert summary["consistency"]["status"] == "passed"
+
+
+def test_capture_global_error_classifies_local_proxy_timeout_and_dns():
+    base = FlowTuple(
+        network="tcp", src_ip="198.18.0.1", src_port=40000,
+        dst_ip="198.18.0.2", dst_port=443, complete=True,
+    )
+    local = FlowMapping(
+        "local", "", base, None, "dial_error",
+        "dial tcp 127.0.0.1:25120: connect: connection refused",
+    )
+    proxy_timeout = FlowMapping(
+        "proxy", "", base, None, "dial_error",
+        "node.example:24191 connect error: context deadline exceeded",
+    )
+    dns = FlowMapping(
+        "dns", "", base, None, "resolve_error", "could not find ip",
+    )
+    assert _mapping_targets_loopback(local) is True
+    assert _mapping_error_class(proxy_timeout) == "proxy_node_timeout"
+    assert _mapping_error_class(dns) == "dns_resolution"
+
+
+def test_target_document_entirely_non_network_is_inconclusive():
+    records = [{
+        "request_id": "1.1",
+        "url": "https://example.com/",
+        "resource_type": "Document",
+        "network_observation": "disk_cache",
+    }]
+    assert _target_document_non_network(records, "https://example.com/") == 1
+    records.append({
+        "request_id": "1.2",
+        "url": "https://example.com/",
+        "resource_type": "Document",
+        "network_observation": "network",
+    })
+    assert _target_document_non_network(records, "https://example.com/") == 0
+
+
+def test_local_connection_is_detected_without_page_request_attribution():
+    connection_id = "conn-background-local"
+    connections = [{
+        "connection_id": connection_id,
+        "pre_flow": {"src_ip": "198.18.0.1", "dst_ip": "198.18.0.2"},
+        "post_flow": None,
+        "terminal": {
+            "status": "dial_error",
+            "error": "dial tcp 127.0.0.1:25120: connect: connection refused",
+        },
+    }]
+    assert _local_connection_ids([], connections) == {connection_id}

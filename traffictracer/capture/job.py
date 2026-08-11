@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import sys
+import shutil
 from typing import Any
 
 from traffictracer.jobs.cancellation import CancellationToken, CancelledError
@@ -108,6 +109,7 @@ class CaptureJob:
             "target": {"url": self.spec.url, "domain": self.spec.domain},
             "interfaces": self.spec.interfaces.to_dict(),
             "output_root": self.spec.output_root,
+            "cache_mode": self.spec.options.cache_mode,
         }
         write_json_atomic(paths["capture_context"], capture_context)
         self._record(paths["capture_context"])
@@ -168,6 +170,7 @@ class CaptureJob:
                 collector = SyncCDPCollector(
                     debugging_port=self.runtime.remote_debugging_port,
                     cancellation=self.cancellation,
+                    cache_mode=self.spec.options.cache_mode,
                 )
                 collector.connect()
                 collector.setup()
@@ -247,14 +250,16 @@ class CaptureJob:
             logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
             errors.append(RuntimeError("; ".join(cleanup.errors)))
         if chrome_proc is not None:
-            attempt(
-                "Chrome quiescence barrier",
-                lambda: verify_chrome_quiescence(
+            def quiesce_chrome() -> None:
+                verify_chrome_quiescence(
                     chrome_proc,
                     chrome_profile,
                     timeout=self.runtime.chrome_quiescence_timeout,
-                ),
-            )
+                )
+                if self.spec.options.cache_mode == "cold":
+                    shutil.rmtree(chrome_profile, ignore_errors=True)
+
+            attempt("Chrome quiescence barrier", quiesce_chrome)
         if previous_tracing is not None:
             try:
                 self.mihomo.restore_tracing(previous_tracing)
@@ -278,8 +283,13 @@ class CaptureJob:
                 "tun_pcap": raw_dir / "tun.pcap",
                 "phys_pcap": raw_dir / "phys.pcap",
                 "profile": Path(self.runtime.user_data_dir)
+                / ("cold" if self.spec.options.cache_mode == "cold" else "warm")
                 / self.spec.domain
-                / self.spec.page_type,
+                / (
+                    self.session.session_id
+                    if self.spec.options.cache_mode == "cold"
+                    else self.spec.page_type
+                ),
             }
 
         # Compatibility for Sessions written before the Capture Group layout.

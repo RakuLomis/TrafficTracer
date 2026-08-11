@@ -71,6 +71,10 @@ sites:
 
 UI 的 `Analysis storage` 默认使用 `Standard`：上述 `analysis/pcap/` 派生目录不会立即生成，但双侧原始 PCAP、完整 URL、request/connection/PCAP 索引及 pre/post 五元组关联全部保留，之后可用 `Full` 重新分析生成派生文件。`Full` 会在分析阶段直接生成每连接 pre/post PCAP，适合立即交付 Wireshark，但空间占用更高。旧任务未携带该选项时继续按 `Full` 执行；切换档位不会自动删除已有文件。
 
+UI 的 `Browser cache policy` 默认使用 `Cold`：每个 Session 使用独立 Chrome profile，CDP 在导航前禁用 HTTP cache 并绕过 Service Worker；Chrome 进程树确认退出后删除该临时 profile。需要专门测量缓存命中行为时才选择 `Warm`，它会按 domain/page type 复用 profile。实际策略写入 `raw/capture-context.json.cache_mode`；旧任务没有该字段时按 `Warm` 读取，避免重解释历史实验。
+
+Standard 的 `PCAP extraction requested=false` 表示“本次未请求派生包验证”，不是“PCAP 不可用”；UI 会显示 `Packet verification not requested (Standard) · raw captures retained`，并可用 `Verify packet evidence (Full)` 对当前 Session 按需生成每连接 pre/post PCAP。
+
 连接 ID 仍是索引中的稳定机器标识，但不再作为用户可见流目录名。恢复失败目标时保留原目录并写入 `__retryN` 页面目录。
 
 同一网络资源的 transport 重试（例如 QUIC 尝试后回落 TCP）使用通用的
@@ -89,7 +93,7 @@ PCAP 为空、且恰好存在一个完成 Mihomo 关联并实际捕获到报文�
 同时写入 request/connection index，CDP 的 request/response/completion 时间和
 失败状态也保存在 V2 产物中。
 新捕获还记录 CDP 的 disk cache、Service Worker 和 prefetch 标志，在 coverage
-中将无需网络 transport 的请求单列为 `non_network`。`connection-index-v2.json`
+中将无需网络 transport 的请求单列为 `non_network`。 如果目标主文档的全部 Document 观测都属于这些非网络来源，分析会输出 `TARGET_DOCUMENT_NON_NETWORK` 并将页面质量标记为 `degraded`，避免把没有实际网络实验的页面误报为通过。`connection-index-v2.json`
 提供 `egress.mode/selection_chain` 以及 `sharing` 的三种独立原因：请求复用、
 post-flow 共享和外层连接复用；旧 `shared` 布尔字段继续保留用于兼容。
 
@@ -97,7 +101,7 @@ Coverage 同时提供 `page_attributed` 和 `capture_global`：前者只统计�
 浏览器请求、transport connection 与逻辑流，后者保留捕获窗口中所有 Mihomo
 核心流用于后台诊断。旧的扁平字段继续输出供旧 UI 读取，但不能把全局核心流
 当作页面关联率。连接终止错误还会输出稳定的 `error_class`，用于按域名聚合
-IPv4 超时、IPv6 不可达和其他拨号错误。
+IPv4 超时、IPv6 不可达和其他拨号错误。 未绑定到页面 request ID 的 loopback 探测也会根据 connection 端点或终止错误中的 `127.0.0.0/8`、`::1` 在 capture-global 范围标记为 local N/A；代理节点连接超时和 DNS 解析失败分别输出 `PROXY_NODE_TIMEOUT`、`DNS_RESOLUTION`。
 无 Mihomo connection ID、无终止事件且无 post flow 的空 QUIC/UDP 候选只保留在
 `transport_connections` 层，不进入 `page_attributed.logical_flows` 分母；它仍保留
 完整候选和 PCAP empty 状态，因此不会通过压缩统计丢失连接证据。
