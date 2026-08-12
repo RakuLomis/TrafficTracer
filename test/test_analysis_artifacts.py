@@ -341,6 +341,40 @@ def test_rejected_egress_is_not_missing_socket_quality_failure():
 
 
 
+def test_rejected_egress_is_conserved_as_not_applicable_in_layered_coverage():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": None,
+        "shared": False,
+        "egress": {"outcome": "rejected"},
+    }
+    core = {
+        "conn_id": "mihomo-reject",
+        "post_flow": None,
+        "shared": False,
+        "egress_outcome": "rejected",
+    }
+
+    coverage = layered_coverage([], [connection], [core])
+    assert coverage["page_attributed"]["logical_flows"] == {
+        "total": 1,
+        "with_post_flow": 0,
+        "shared": 0,
+        "missing_post_flow": 0,
+        "not_applicable_outcome": 1,
+    }
+    assert coverage["capture_global"]["core_logical_flows"] == {
+        "total": 1,
+        "with_post_flow": 0,
+        "shared": 0,
+        "missing_post_flow": 0,
+        "not_applicable_outcome": 1,
+    }
+    assert coverage["page_attributed"]["unmatched_reasons"] == {}
+    assert coverage["capture_global"]["unmatched_reasons"] == {}
+
+
 def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_path):
     (tmp_path / "logs").mkdir()
     results = tmp_path / "results"
@@ -548,3 +582,31 @@ def test_local_connection_is_detected_without_page_request_attribution():
         },
     }]
     assert _local_connection_ids([], connections) == {connection_id}
+
+
+def test_storage_summary_counts_only_capture_inputs(tmp_path):
+    from traffictracer.analyze.artifacts import _storage_summary
+
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "tun.pcap").write_bytes(b"p" * 7)
+    (raw / "netlog.json").write_bytes(b"n" * 11)
+    (raw / "mihomo-trace.jsonl").write_bytes(b"t" * 13)
+    (raw / "capture-context.json").write_bytes(b"c" * 5)
+    published = tmp_path / "analysis"
+    published.mkdir()
+    (published / "old.json").write_bytes(b"x" * 101)
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "connection-index-v2.json").write_bytes(b"r" * 17)
+
+    storage = _storage_summary(tmp_path, results)
+    assert storage == {
+        "capture_bytes": 36,
+        "raw_packet_capture_bytes": 7,
+        "netlog_bytes": 11,
+        "mihomo_trace_bytes": 13,
+        "capture_metadata_bytes": 5,
+        "analysis_result_bytes_before_summary": 17,
+        "compression": "none",
+    }

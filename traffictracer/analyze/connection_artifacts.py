@@ -25,6 +25,8 @@ from traffictracer.version import FLOW_SCHEMA_V2_VERSION, PCAP_INDEX_SCHEMA_VERS
 CONNECTION_INDEX_V2_NAME = "connection-index-v2.json"
 REQUEST_INDEX_V2_NAME = "request-index-v2.json"
 PCAP_INDEX_V1_NAME = "pcap-index-v1.json"
+MATCHED_CANDIDATE_LIMIT = 5
+UNRESOLVED_CANDIDATE_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -138,7 +140,7 @@ def _connection_record(
     proxy_selections: dict[str, dict],
 ) -> dict:
     post_flow = _usable_post_flow(flow.post_flow)
-    candidates = [
+    all_candidates = [
         {
             "connection_id": item["connection_id"],
             "score": item["score"],
@@ -146,11 +148,30 @@ def _connection_record(
         }
         for item in flow.match_candidates
     ]
+    candidate_limit = (
+        MATCHED_CANDIDATE_LIMIT
+        if flow.match_status == "matched"
+        else UNRESOLVED_CANDIDATE_LIMIT
+    )
+    candidates = all_candidates[:candidate_limit]
+    if flow.match_status == "matched" and all_candidates:
+        winner = next(
+            (
+                candidate
+                for candidate in all_candidates
+                if candidate["connection_id"] == flow.stable_connection_id
+            ),
+            all_candidates[0],
+        )
+        if winner not in candidates:
+            candidates[-1] = winner
     match = {
         "status": flow.match_status,
         "method": flow.match_method,
         "confidence": flow.match_confidence,
         "candidates": candidates,
+        "candidate_count": len(all_candidates),
+        "candidates_truncated": len(candidates) < len(all_candidates),
         "evidence": (
             flow.match_evidence
             or [flow.match_reason or "no_ranked_candidate"]

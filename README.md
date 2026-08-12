@@ -29,6 +29,8 @@ make bootstrap
 
 安装版用户在 UI 中依次导入代理 YAML、选择 `verge-mihomo-tt`、测速选节点、安装服务并开启 TUN，然后在“流量追踪”页选择手工目标，或加载预先编写的 `sites.yaml` 并全选/选择子集。多目标严格按 YAML 顺序串行执行捕获、Chrome 清理、分析和 checkpoint；失败或 Worker 中断后可从准确目标继续。每个子目标生成独立 Session，并可用代理前五元组查询全部匹配逻辑流及实际观测到的代理后五元组，无需运行 Python 命令。
 
+新版捕获在资源停稳后向 Mihomo 写入并持久化 `trace_barrier`，分析只使用截止序号以内的事件；截止后的长连接 close 作为 late event 保留和计数，不再令同一 Session 的重复分析结果漂移。REJECT、REJECT-DROP、internal DNS 与 PASS 等显式无 socket 结果单列为 `not_applicable_outcome`，不会被误报为 post-flow 缺失。旧 Session 没有 barrier 时仍可分析，但 UI 标记为 `legacy_unbounded`。
+
 Complete 的推荐目标配置显式填写 `page_type`：
 
 ```yaml

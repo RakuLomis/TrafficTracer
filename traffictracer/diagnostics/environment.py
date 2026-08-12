@@ -19,6 +19,7 @@ REQUIRED_TRACING_CAPABILITIES = (
     "supports_normalized_flow",
     "supports_egress_outcome",
     "supports_session_sink_isolation",
+    "supports_trace_barrier",
 )
 
 

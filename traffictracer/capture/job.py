@@ -101,6 +101,7 @@ class CaptureJob:
         self.progress.emit(JobState.PREPARING, JobStage.PREPARING, 0.05)
         paths = self._prepare_paths()
         previous_tracing: dict[str, Any] | None = None
+        tracing_configured = False
         tun_capture = None
         phys_capture = None
         chrome_proc = None
@@ -126,6 +127,7 @@ class CaptureJob:
             self.mihomo.enable_tracing(
                 str(paths["mihomo_trace"]), session_id=self.session.session_id
             )
+            tracing_configured = True
             self._record(paths["mihomo_trace"])
 
             proxy_info = self.mihomo.get_proxy_info()
@@ -211,6 +213,9 @@ class CaptureJob:
                 tun_capture=tun_capture,
                 phys_capture=phys_capture,
                 previous_tracing=previous_tracing,
+                tracing_configured=tracing_configured,
+                capture_context=capture_context,
+                capture_context_path=paths["capture_context"],
                 suppress_errors=sys.exc_info()[0] is not None,
             )
 
@@ -223,6 +228,9 @@ class CaptureJob:
         tun_capture: Any,
         phys_capture: Any,
         previous_tracing: dict[str, Any] | None,
+        tracing_configured: bool,
+        capture_context: dict[str, Any],
+        capture_context_path: Path,
         suppress_errors: bool,
     ) -> None:
         errors: list[Exception] = []
@@ -264,6 +272,23 @@ class CaptureJob:
                     shutil.rmtree(chrome_profile, ignore_errors=True)
 
             attempt("Chrome quiescence barrier", quiesce_chrome)
+        if tracing_configured:
+            def persist_trace_boundary() -> None:
+                boundary = self.mihomo.trace_barrier()
+                if boundary.get("session_id") != self.session.session_id:
+                    raise RuntimeError(
+                        "Mihomo trace barrier session_id does not match capture session"
+                    )
+                capture_context["trace_boundary"] = {
+                    "source": "mihomo_barrier",
+                    "session_id": boundary["session_id"],
+                    "event_seq": boundary["event_seq"],
+                    "ts": boundary["ts"],
+                    "output": boundary["output"],
+                }
+                write_json_atomic(capture_context_path, capture_context)
+
+            attempt("Mihomo trace barrier", persist_trace_boundary)
         if previous_tracing is not None:
             try:
                 self.mihomo.restore_tracing(previous_tracing)

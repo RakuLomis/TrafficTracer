@@ -78,7 +78,9 @@
         "total": { "type": "integer", "minimum": 0 },
         "with_post_flow": { "type": "integer", "minimum": 0 },
         "shared": { "type": "integer", "minimum": 0 },
-        "missing_post_flow": { "type": "integer", "minimum": 0 }
+        "missing_post_flow": { "type": "integer", "minimum": 0 },
+        "not_applicable_local_endpoint": { "type": "integer", "minimum": 0 },
+        "not_applicable_outcome": { "type": "integer", "minimum": 0 }
       }
     },
     "reasonCounts": {

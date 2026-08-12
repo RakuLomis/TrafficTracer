@@ -17,6 +17,7 @@ class FlowMapping:
     post_flow: FlowTuple | None
     status: str
     error: str = ""
+    egress_outcome: str = ""
 
 
 class FlowIndex:
@@ -28,13 +29,13 @@ class FlowIndex:
                 self._by_pre_key.setdefault(mapping.pre_flow.key, []).append(mapping)
 
     @classmethod
-    def from_log(cls, path: str) -> "FlowIndex":
+    def from_log(cls, path: str, max_event_seq: int | None = None) -> "FlowIndex":
         mappings: list[FlowMapping] = []
-        for conn in parse_tracing_log(path).values():
+        for conn in parse_tracing_log(path, max_event_seq=max_event_seq).values():
             mapping = _tcp_mapping(conn)
             if mapping:
                 mappings.append(mapping)
-        for conn in parse_udp_tracing_log(path).values():
+        for conn in parse_udp_tracing_log(path, max_event_seq=max_event_seq).values():
             mapping = _udp_mapping(conn)
             if mapping:
                 mappings.append(mapping)
@@ -84,6 +85,7 @@ def _tcp_mapping(conn: MihomoConnection) -> FlowMapping | None:
         post_flow=dial.post_flow if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
+        egress_outcome=dial.egress_outcome if dial else "",
     )
 
 
@@ -100,4 +102,5 @@ def _udp_mapping(conn: UdpConnection) -> FlowMapping | None:
         post_flow=dial.post_flow if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
+        egress_outcome=dial.egress_outcome if dial else "",
     )

@@ -64,6 +64,15 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
         match_reason="multiple_candidates",
         match_evidence=["top_score_tie"],
     )
+    flow.match_candidates.extend(
+        {
+            "connection_id": f"conn-{index:032x}",
+            "native_id": f"extra-{index}",
+            "score": 0.7 - index / 100,
+            "evidence": ["host", "time"],
+        }
+        for index in range(10)
+    )
     result = VisitCorrelation(
         visit_url="https://example.com/",
         domain="example.com",
@@ -85,6 +94,9 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     assert connections[0]["request_ids"] == ["1.1", "1.2"]
     assert connections[0]["match"]["status"] == "ambiguous"
     assert connections[0]["match"]["evidence"] == ["top_score_tie"]
+    assert len(connections[0]["match"]["candidates"]) == 10
+    assert connections[0]["match"]["candidate_count"] == 12
+    assert connections[0]["match"]["candidates_truncated"] is True
     assert len(requests) == 2
     assert requests[0]["url"] == requests[1]["url"]
     assert {item["connection_id"] for item in requests} == {CONNECTION_ID}

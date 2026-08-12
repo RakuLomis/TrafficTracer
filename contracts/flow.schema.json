@@ -41,7 +41,10 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "conn_id": { "type": "string" },
-    "outer_conn_id": { "type": "string" }
+    "outer_conn_id": { "type": "string" },
+    "egress_outcome": {
+      "enum": ["direct", "proxy", "rejected", "rejected_drop", "internal_dns", "pass", "compatible", "unknown"]
+    }
   },
   "$defs": {
     "uuid": {

@@ -123,6 +123,20 @@ def test_enable_tracing_propagates_session_id(tmp_path):
     }]
 
 
+def test_trace_barrier_calls_stable_endpoint_and_validates_result():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    calls = []
+    expected = {
+        "session_id": "session-1",
+        "event_seq": 42,
+        "ts": "2026-08-12T00:00:00Z",
+        "output": "/tmp/trace.jsonl",
+    }
+    mgr._api_request = lambda method, path, body=None: calls.append((method, path, body)) or expected
+    assert mgr.trace_barrier() == expected
+    assert calls == [("POST", "/experimental/tracing/barrier", None)]
+
+
 def test_restore_tracing_clears_session_ownership_when_previously_absent():
     mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
     calls = []

@@ -1,6 +1,7 @@
 """Tests for Mihomo tracing log parser."""
 
 import sys
+import json
 import os
 import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -87,3 +88,54 @@ def test_parse_normalized_udp_proxy_dial(tmp_path):
     assert conn.proxy_dial.leaf_proxy == "tuic-node"
     assert conn.proxy_dial.leaf_proxy_type == "Tuic"
     assert conn.proxy_dial.egress_outcome == "proxy"
+
+
+def test_trace_barrier_cutoff_excludes_late_events(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    trace = raw / "mihomo-trace.jsonl"
+    events = [
+        {"type": "tcp_connect", "conn_id": "c1", "event_seq": 1, "src": "198.18.0.1:40000", "dst": "1.1.1.1:443"},
+        {"type": "tcp_proxy_dial", "conn_id": "c1", "event_seq": 2, "egress_outcome": "direct"},
+        {"type": "trace_barrier", "session_id": "s1", "event_seq": 3},
+        {"type": "tcp_close", "conn_id": "c1", "event_seq": 4, "status": "closed"},
+    ]
+    trace.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+    (raw / "capture-context.json").write_text(json.dumps({
+        "trace_boundary": {
+            "source": "mihomo_barrier", "session_id": "s1",
+            "event_seq": 3, "ts": "2026-08-12T00:00:00Z", "output": str(trace),
+        }
+    }), encoding="utf-8")
+
+    from traffictracer.analyze.mihomo_log import trace_snapshot_info
+    bounded = parse_tracing_log(str(trace), max_event_seq=3)["c1"]
+    assert bounded.connect is not None
+    assert bounded.proxy_dial is not None
+    assert bounded.close is None
+    assert parse_tracing_log(str(trace))["c1"].close is not None
+    snapshot = trace_snapshot_info(str(trace))
+    assert snapshot["source"] == "mihomo_barrier"
+    assert snapshot["cutoff_event_seq"] == 3
+    assert snapshot["late_event_count"] == 1
+    assert snapshot["max_observed_event_seq"] == 4
+    assert snapshot["barrier_verified"] is True
+
+
+def test_trace_barrier_cutoff_rejects_missing_marker(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    trace = raw / "mihomo-trace.jsonl"
+    trace.write_text(json.dumps({
+        "type": "tcp_connect", "conn_id": "c1", "event_seq": 1
+    }), encoding="utf-8")
+    (raw / "capture-context.json").write_text(json.dumps({
+        "trace_boundary": {
+            "source": "mihomo_barrier", "session_id": "s1",
+            "event_seq": 2, "ts": "2026-08-12T00:00:00Z", "output": str(trace),
+        }
+    }), encoding="utf-8")
+    from traffictracer.analyze.mihomo_log import trace_snapshot_info
+    import pytest
+    with pytest.raises(ValueError, match="barrier marker"):
+        trace_snapshot_info(str(trace))

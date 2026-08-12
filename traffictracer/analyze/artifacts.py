@@ -16,6 +16,7 @@ from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_VERSION
 
 from .flow_index import FlowIndex, FlowMapping
+from .mihomo_log import trace_snapshot_info
 from .consistency import validate_analysis_consistency
 from .request_observation import NON_NETWORK_OBSERVATIONS
 
@@ -38,6 +39,7 @@ def persist_analysis_artifacts(
 ) -> AnalysisArtifacts:
     session = Path(session_dir)
     mappings = _load_mappings(session)
+    trace_snapshot = _trace_snapshot_summary(session)
 
     pre_counts = Counter(mapping.pre_flow.key for mapping in mappings)
     outer_counts = Counter(
@@ -118,6 +120,8 @@ def persist_analysis_artifacts(
             consistency, warnings, scope="capture_global",
         ),
         "quality": quality,
+        "trace_snapshot": trace_snapshot,
+        "storage": _storage_summary(session, results),
     }
     summary_payload["coverage"] = layered_coverage(
         request_records,
@@ -125,6 +129,9 @@ def persist_analysis_artifacts(
         items,
         local_core_ids=local_core_ids,
     )
+    summary_payload["missing_post_flows"] = summary_payload["coverage"][
+        "capture_global"
+    ]["core_logical_flows"]["missing_post_flow"]
     summary_payload["match_method_counts"] = dict(sorted(
         Counter(
             item["match"]["method"]
@@ -185,6 +192,7 @@ def layered_coverage(
         if record.get("post_flow") is not None
         or bool(record.get("mihomo_connection_id"))
         or record.get("terminal") is not None
+        or _egress_without_socket(record)
     ]
     local_connection_ids = _local_connection_ids(request_records, connection_records)
     page_core = _core_coverage(
@@ -237,22 +245,33 @@ def _core_coverage(
     id_field: str = "connection_id",
 ) -> dict:
     with_post = sum(record.get("post_flow") is not None for record in records)
-    missing = len(records) - with_post
     local_missing = sum(
         record.get("post_flow") is None
         and record.get(id_field) in (not_applicable_ids or set())
         for record in records
     )
-    if missing - local_missing:
-        reasons["missing_post_flow"] += missing - local_missing
+    outcome_not_applicable = sum(
+        record.get("post_flow") is None
+        and record.get(id_field) not in (not_applicable_ids or set())
+        and _egress_without_socket(record)
+        for record in records
+    )
+    missing = len(records) - with_post - local_missing - outcome_not_applicable
+    if missing:
+        reasons["missing_post_flow"] += missing
     if local_missing:
         reasons["local_endpoint_not_applicable"] += local_missing
-    return {
+    coverage = {
         "total": len(records),
         "with_post_flow": with_post,
         "shared": sum(bool(record.get("shared")) for record in records),
         "missing_post_flow": missing,
     }
+    if local_missing:
+        coverage["not_applicable_local_endpoint"] = local_missing
+    if outcome_not_applicable:
+        coverage["not_applicable_outcome"] = outcome_not_applicable
+    return coverage
 
 
 def _partition(statuses) -> dict:
@@ -293,7 +312,13 @@ def _assert_coverage_conservation(coverage: dict) -> None:
         if accounted != partition["total"]:
             raise ValueError(f"{name} coverage does not conserve its total")
     core = coverage["core_logical_flows"]
-    if core["with_post_flow"] + core["missing_post_flow"] != core["total"]:
+    accounted_core = (
+        core["with_post_flow"]
+        + core["missing_post_flow"]
+        + core.get("not_applicable_local_endpoint", 0)
+        + core.get("not_applicable_outcome", 0)
+    )
+    if accounted_core != core["total"]:
         raise ValueError("core logical flow coverage does not conserve its total")
     if core["shared"] > core["total"]:
         raise ValueError("shared core logical flow count exceeds total")
@@ -380,16 +405,87 @@ def core_flow_records(
     return _core_flow_items(mappings, session_id, pre_counts, outer_counts)
 
 
-def _load_mappings(session: Path) -> list[FlowMapping]:
-    mappings: list[FlowMapping] = []
+def _tree_bytes(root: Path, predicate=None) -> int:
+    if not root.exists():
+        return 0
+    total = 0
+    paths = [root] if root.is_file() else root.rglob("*")
+    for path in paths:
+        if not path.is_file() or (predicate is not None and not predicate(path)):
+            continue
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _storage_summary(session: Path, results: Path) -> dict:
+    raw = session / "raw"
+    capture_roots = (
+        [raw]
+        if raw.is_dir()
+        else [session / "logs", session / "captures"]
+    )
+    capture_bytes = sum(_tree_bytes(root) for root in capture_roots)
+    packet_bytes = sum(
+        _tree_bytes(root, lambda path: path.suffix == ".pcap")
+        for root in capture_roots
+    )
+    netlog_bytes = sum(
+        _tree_bytes(root, lambda path: path.name.startswith("netlog"))
+        for root in capture_roots
+    )
+    trace_bytes = sum(
+        _tree_bytes(
+            root,
+            lambda path: "mihomo-trace" in path.name.replace("_", "-"),
+        )
+        for root in capture_roots
+    )
+    return {
+        "capture_bytes": capture_bytes,
+        "raw_packet_capture_bytes": packet_bytes,
+        "netlog_bytes": netlog_bytes,
+        "mihomo_trace_bytes": trace_bytes,
+        "capture_metadata_bytes": max(
+            0, capture_bytes - packet_bytes - netlog_bytes - trace_bytes
+        ),
+        "analysis_result_bytes_before_summary": _tree_bytes(results),
+        "compression": "none",
+    }
+
+
+def _trace_paths(session: Path) -> list[Path]:
     raw_trace = session / "raw" / "mihomo-trace.jsonl"
-    trace_paths = (
+    return (
         [raw_trace]
         if raw_trace.is_file()
         else sorted((session / "logs").glob("mihomo_trace_*.jsonl"))
     )
+
+
+def _trace_snapshot_summary(session: Path) -> dict:
+    traces = [trace_snapshot_info(str(path)) for path in _trace_paths(session)]
+    sources = {item["source"] for item in traces}
+    return {
+        "source": sources.pop() if len(sources) == 1 else "mixed",
+        "trace_count": len(traces),
+        "late_event_count": sum(item["late_event_count"] for item in traces),
+        "traces": traces,
+    }
+
+
+def _load_mappings(session: Path) -> list[FlowMapping]:
+    mappings: list[FlowMapping] = []
+    trace_paths = _trace_paths(session)
     for trace_path in trace_paths:
-        mappings.extend(FlowIndex.from_log(str(trace_path)).mappings)
+        snapshot = trace_snapshot_info(str(trace_path))
+        mappings.extend(
+            FlowIndex.from_log(
+                str(trace_path), max_event_seq=snapshot["cutoff_event_seq"]
+            ).mappings
+        )
     return [
         mapping
         for mapping in mappings
@@ -439,7 +535,11 @@ def _flow_item(
             and outer_counts[mapping.outer_conn_id] > 1
         )
     )
-    if usable_post is None:
+    if usable_post is None and _outcome_without_socket(mapping.egress_outcome):
+        match_status = "matched"
+        confidence = 1.0
+        reason = f"explicit {mapping.egress_outcome} egress has no outbound socket"
+    elif usable_post is None:
         match_status = "unmatched"
         confidence = 0.0
         reason = "no complete post-proxy flow"
@@ -475,6 +575,8 @@ def _flow_item(
     }
     if mapping.outer_conn_id:
         item["outer_conn_id"] = mapping.outer_conn_id
+    if mapping.egress_outcome:
+        item["egress_outcome"] = mapping.egress_outcome
     return item
 
 
@@ -536,8 +638,16 @@ def _warnings(
         item["post_flow"] is None and item.get("conn_id") in local_core_ids
         for item in items
     )
+    outcome_not_applicable_count = sum(
+        item["post_flow"] is None
+        and item.get("conn_id") not in local_core_ids
+        and _egress_without_socket(item)
+        for item in items
+    )
     missing_count = sum(
-        item["post_flow"] is None and item.get("conn_id") not in local_core_ids
+        item["post_flow"] is None
+        and item.get("conn_id") not in local_core_ids
+        and not _egress_without_socket(item)
         for item in items
     )
     if missing_count:
@@ -546,6 +656,14 @@ def _warnings(
             missing_count,
             "Some capture-global logical flows have no complete post-proxy tuple.",
             scope="capture_global",
+        ))
+    if outcome_not_applicable_count:
+        warnings.append(_warning(
+            "EGRESS_OUTCOME_NOT_APPLICABLE",
+            outcome_not_applicable_count,
+            "Explicit no-socket egress outcomes have no applicable post-proxy flow.",
+            scope="capture_global",
+            severity="info",
         ))
     if local_missing_count:
         warnings.append(_warning(
@@ -671,22 +789,42 @@ def analysis_quality(
             len(pcap_connections) - len(applicable_pcaps)
         )
     core_records = core_flow_records or []
+    global_local_ids = local_core_ids or set()
+    global_with_post = sum(
+        item.get("post_flow") is not None for item in core_records
+    )
+    global_outcome_not_applicable = sum(
+        item.get("post_flow") is None
+        and item.get("conn_id") not in global_local_ids
+        and _egress_without_socket(item)
+        for item in core_records
+    )
+    global_local_not_applicable = sum(
+        item.get("post_flow") is None
+        and item.get("conn_id") in global_local_ids
+        for item in core_records
+    )
     capture_global = {
         "logical_flows": {
             "total": len(core_records),
-            "with_post_flow": sum(
-                item.get("post_flow") is not None for item in core_records
-            ),
-            "missing_post_flow": sum(
-                item.get("post_flow") is None for item in core_records
+            "with_post_flow": global_with_post,
+            "missing_post_flow": (
+                len(core_records)
+                - global_with_post
+                - global_outcome_not_applicable
+                - global_local_not_applicable
             ),
             "errors": core_error_count,
         },
     }
-    if local_core_ids:
+    if global_local_not_applicable:
         capture_global["logical_flows"][
             "not_applicable_local_endpoint"
-        ] = len(local_core_ids)
+        ] = global_local_not_applicable
+    if global_outcome_not_applicable:
+        capture_global["logical_flows"][
+            "not_applicable_outcome"
+        ] = global_outcome_not_applicable
     # Preserve the original flattened page keys for older UI readers.
     return {
         **page_quality,
@@ -965,13 +1103,23 @@ def _is_dial_failure(terminal: object) -> bool:
     return terminal.get("stage") == "dial" or terminal.get("status") == "dial_error"
 
 
+NO_SOCKET_EGRESS_OUTCOMES = frozenset({
+    "rejected", "rejected_drop", "internal_dns", "pass",
+})
+
+
+def _outcome_without_socket(outcome: object) -> bool:
+    return isinstance(outcome, str) and outcome in NO_SOCKET_EGRESS_OUTCOMES
+
+
 def _egress_without_socket(record: dict) -> bool:
+    if _outcome_without_socket(record.get("egress_outcome")):
+        return True
     egress = record.get("egress")
-    if not isinstance(egress, dict):
-        return False
-    return egress.get("outcome") in {
-        "rejected", "rejected_drop", "internal_dns", "pass",
-    }
+    return (
+        isinstance(egress, dict)
+        and _outcome_without_socket(egress.get("outcome"))
+    )
 
 
 def _warning(

@@ -132,6 +132,10 @@ sites:
 
 UI 只应用 `sites` 目标；`global.output.base_dir` 仅作为输出目录建议值预览，必须由用户在 UI 确认。文件中的 `global.mihomo`、`global.chrome` 和 `global.network` 不会覆盖 Clash Verge 运行环境。`wait` 映射为捕获持续时间，`wait_load_timeout` 映射为页面加载超时，`page_type` 决定页面目录标签；`traffic_type` 为 `tcp`、`udp` 或 `all` 时决定捕获协议，其他安全值作为兼容运行标签且协议回退为 `all`。
 
+每个子任务在 Chrome、TUN 与物理口抓包停止并确认 Chrome 进程组退出后，调用 Mihomo `POST /experimental/tracing/barrier`。返回的 `session_id`、`event_seq`、时间和输出路径写入 `raw/capture-context.json.trace_boundary`；分析器验证 JSONL 中存在匹配 marker，并只读取截止序号以内事件。marker 后的事件保留在原始 trace，`summary.json.trace_snapshot.late_event_count` 和 UI 状态会显示排除数量。缺少 `supports_trace_barrier` 的旧核心会在环境检测阶段被拒绝；历史 Session 没有 boundary 时以 `legacy_unbounded` 兼容读取。
+
+REJECT、REJECT-DROP、internal DNS 和 PASS 属于显式无出口 socket 的终态，统计为 `not_applicable_outcome`，保留代理前流、策略和终止证据，但不进入 unexpected missing。连接候选仅把 matched 的前 5 条或 unresolved 的前 10 条详细证据写入索引，匹配胜者始终保留，并通过 `candidate_count`、`candidates_truncated` 保留完整规模。 `summary.json.storage` 分解原始 PCAP、NetLog、Mihomo trace、元数据和分析产物字节数；当前 `compression=none`，避免破坏 Wireshark、重分析和旧工具直接读取原文件。
+
 加载时 Worker 仅返回规范化目标、绝对路径、警告和文件 SHA-256，不返回代理 secret 或其他 `global` 内容。开始捕获前 UI 后端会重新读取文件并比对 SHA-256、目标序号及所有规范化字段；文件若已变化，必须点击刷新并重新选择，避免预览与实际任务不一致。选择一项时走普通捕获 API；选择多项时按 YAML 原始顺序建立固定目标快照，即使 URL/domain 重复也以配置索引区分。批次最大子任务并发为 1，严格执行 capture → Chrome quiescence → analysis → checkpoint；只有上一个受管 Chrome 进程组清理完毕后才会启动下一项，不会按进程名终止用户的其他 Chrome。
 
 目标文件应放在不会随重启清理的持久目录，不要放在 `/tmp`。文件必须是 UTF-8、扩展名为 `.yaml` 或 `.yml`、不超过 1 MiB，并包含非空 `sites` 列表。字段约束如下：

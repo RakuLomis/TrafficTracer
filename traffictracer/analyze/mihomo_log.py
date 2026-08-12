@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import re
+from pathlib import Path
 
 from ..models import FlowTuple
 
@@ -134,7 +135,65 @@ class UdpConnection:
     close: UdpClose | None
 
 
-def _events(path: str):
+def trace_snapshot_info(path: str) -> dict:
+    """Return the persisted deterministic cutoff and observed late-event count."""
+    trace_path = Path(path)
+    if trace_path.parent.name == "raw":
+        context_path = trace_path.parent / "capture-context.json"
+    else:
+        name = trace_path.name.replace("mihomo_trace_", "capture_context_", 1)
+        context_path = trace_path.with_name(Path(name).with_suffix(".json").name)
+    boundary = None
+    try:
+        context = json.loads(context_path.read_text(encoding="utf-8"))
+        candidate = context.get("trace_boundary") if isinstance(context, dict) else None
+        if (
+            isinstance(candidate, dict)
+            and isinstance(candidate.get("event_seq"), int)
+            and candidate["event_seq"] > 0
+        ):
+            boundary = candidate
+    except (OSError, json.JSONDecodeError, TypeError):
+        pass
+
+    cutoff = boundary["event_seq"] if boundary else None
+    late_events = 0
+    max_event_seq = 0
+    barrier_verified = boundary is None
+    if trace_path.is_file():
+        with trace_path.open("r", encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    event = json.loads(line)
+                    seq = int(event.get("event_seq", 0) or 0)
+                except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
+                    continue
+                max_event_seq = max(max_event_seq, seq)
+                if (
+                    boundary is not None
+                    and seq == cutoff
+                    and event.get("type") == "trace_barrier"
+                    and event.get("session_id", "") == boundary.get("session_id", "")
+                ):
+                    barrier_verified = True
+                if cutoff is not None and seq > cutoff:
+                    late_events += 1
+    if not barrier_verified:
+        raise ValueError(
+            f"trace barrier marker is missing or does not match capture context: {path}"
+        )
+    return {
+        "source": "mihomo_barrier" if boundary else "legacy_unbounded",
+        "cutoff_event_seq": cutoff,
+        "barrier_ts": boundary.get("ts", "") if boundary else "",
+        "barrier_session_id": boundary.get("session_id", "") if boundary else "",
+        "late_event_count": late_events,
+        "max_observed_event_seq": max_event_seq,
+        "barrier_verified": barrier_verified,
+    }
+
+
+def _events(path: str, max_event_seq: int | None = None):
     with open(path, "r", encoding="utf-8") as stream:
         for line in stream:
             try:
@@ -142,12 +201,18 @@ def _events(path: str):
             except (json.JSONDecodeError, TypeError):
                 continue
             if isinstance(event, dict):
+                try:
+                    event_seq = int(event.get("event_seq", 0) or 0)
+                except (TypeError, ValueError):
+                    event_seq = 0
+                if max_event_seq is not None and event_seq > max_event_seq:
+                    continue
                 yield event
 
 
-def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
+def parse_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, MihomoConnection]:
     connections: dict[str, dict] = {}
-    for event in _events(path):
+    for event in _events(path, max_event_seq=max_event_seq):
         etype = event.get("type", "")
         conn_id = event.get("conn_id", "")
         if not conn_id or not etype.startswith("tcp_"):
@@ -186,9 +251,9 @@ def parse_tracing_log(path: str) -> dict[str, MihomoConnection]:
             for cid, row in connections.items()}
 
 
-def parse_udp_tracing_log(path: str) -> dict[str, UdpConnection]:
+def parse_udp_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, UdpConnection]:
     connections: dict[str, dict] = {}
-    for event in _events(path):
+    for event in _events(path, max_event_seq=max_event_seq):
         etype = event.get("type", "")
         conn_key = event.get("conn_key", "")
         if not conn_key or not etype.startswith("udp_"):

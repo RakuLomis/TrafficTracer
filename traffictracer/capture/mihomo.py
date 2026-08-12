@@ -154,6 +154,16 @@ class MihomoManager:
     def patch_tracing(self, state: dict) -> dict:
         return self._api_request("PATCH", "/experimental/tracing", state)
 
+    def trace_barrier(self) -> dict:
+        """Flush and return the durable cutoff for the active trace sink."""
+        boundary = self._api_request("POST", "/experimental/tracing/barrier")
+        required = {"session_id", "event_seq", "ts", "output"}
+        if not isinstance(boundary, dict) or not required.issubset(boundary):
+            raise RuntimeError("Mihomo returned an invalid trace barrier")
+        if not isinstance(boundary["event_seq"], int) or boundary["event_seq"] <= 0:
+            raise RuntimeError("Mihomo returned an invalid trace barrier event_seq")
+        return boundary
+
     def restore_tracing(self, state: dict) -> dict:
         patch = {
             "enabled": state.get("enabled", False),

@@ -28,6 +28,7 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
         "supports_normalized_flow",
         "supports_egress_outcome",
         "supports_session_sink_isolation",
+        "supports_trace_barrier",
     ]
 
     monkeypatch.setattr(
@@ -38,6 +39,7 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
             "supports_normalized_flow": True,
             "supports_egress_outcome": True,
             "supports_session_sink_isolation": True,
+            "supports_trace_barrier": True,
         },
     )
     assert environment.check_controller("http://127.0.0.1:9090").code == "CORE_READY"
@@ -126,6 +128,7 @@ def test_environment_report_keeps_all_checks_and_stable_fields(tmp_path, monkeyp
             "supports_normalized_flow": True,
             "supports_egress_outcome": True,
             "supports_session_sink_isolation": True,
+            "supports_trace_barrier": True,
         },
     )
     monkeypatch.setattr(

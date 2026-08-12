@@ -158,7 +158,7 @@ def test_analysis_checks_cancellation_between_parse_stages(tmp_path, monkeypatch
     )
     token = CancellationToken()
 
-    def cancel_during_mihomo(path):
+    def cancel_during_mihomo(path, **kwargs):
         token.cancel("cancel between analysis stages")
         return {}
 

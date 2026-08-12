@@ -25,6 +25,7 @@ from .mihomo_log import (
     UdpConnection,
     parse_tracing_log,
     parse_udp_tracing_log,
+    trace_snapshot_info,
 )
 from .correlator import correlate, correlate_v2, correlate_cdp_direct, CorrelationResult
 from .pcap_splitter import (
@@ -111,14 +112,20 @@ def run_analysis(
             advance(JobStage.ANALYZE_CDP, 0.1, tag)
             advance(JobStage.ANALYZE_NETLOG, 0.25, tag)
             advance(JobStage.ANALYZE_MIHOMO, 0.4, tag)
-            run_mihomo_conns = parse_tracing_log(str(trace_path)) if trace_path.exists() else {}
+            trace_snapshot = trace_snapshot_info(str(trace_path)) if trace_path.exists() else {"cutoff_event_seq": None}
+            trace_cutoff = trace_snapshot["cutoff_event_seq"]
+            run_mihomo_conns = (
+                parse_tracing_log(str(trace_path), max_event_seq=trace_cutoff)
+                if trace_path.exists()
+                else {}
+            )
             token.checkpoint()
 
             advance(JobStage.ANALYZE_CORRELATE, 0.6, tag)
             if cdp_path.exists():
                 result_v2 = _analyze_cdp_path(
                     str(cdp_path), str(netlog_path), str(trace_path),
-                    run_mihomo_conns, domain, tag,
+                    run_mihomo_conns, domain, tag, trace_cutoff,
                 )
                 if result_v2 is not None:
                     connection_results.append(result_v2)
@@ -319,6 +326,7 @@ def _analyze_cdp_path(
     mihomo_conns: dict,
     domain: str,
     tag: str,
+    trace_cutoff: int | None,
 ) -> VisitCorrelation | None:
     try:
         with open(cdp_path, "r", encoding="utf-8") as f:
@@ -349,7 +357,7 @@ def _analyze_cdp_path(
     udp_conns = None
     if os.path.exists(trace_path):
         try:
-            udp_conns = parse_udp_tracing_log(trace_path)
+            udp_conns = parse_udp_tracing_log(trace_path, max_event_seq=trace_cutoff)
             if udp_conns:
                 logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
         except Exception:
