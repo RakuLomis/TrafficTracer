@@ -3,8 +3,9 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 target=${TT_TARGET:-x86_64-unknown-linux-gnu}
-package_dir=${TT_PACKAGE_DIR:-$repo_root/dist/packages/$target}
 python_bin=${PYTHON:-python}
+product_version=$(PYTHONPATH="$repo_root" "$python_bin" -c "from traffictracer.version import COMPLETE_VERSION; print(COMPLETE_VERSION)")
+package_dir=${TT_PACKAGE_DIR:-$repo_root/dist/packages/traffictracer-complete-v$product_version-linux-x86_64}
 args=()
 
 if [[ ${TT_SMOKE_LAUNCH_UI:-0} == 1 ]]; then

@@ -192,6 +192,7 @@ def test_release_metadata_round_trip_and_tamper_detection(tmp_path):
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         (repo / name).write_text(f"{name}\n", encoding="utf-8")
     (release / "COMPONENTS").write_text("target=test\n", encoding="utf-8")
+    (release / "VERSION").write_text("version=test\n", encoding="utf-8")
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",

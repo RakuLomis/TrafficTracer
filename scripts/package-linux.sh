@@ -10,9 +10,12 @@ ui_dir="${TT_UI_DIR:-${repo_root}/components/clash-verge-rev}"
 prepare_script="${TT_PREPARE_SCRIPT:-${repo_root}/scripts/build-ui.sh}"
 pnpm_bin="${TT_PNPM_BIN:-pnpm}"
 python_bin="${PYTHON:-python}"
+product_version="$(PYTHONPATH="$repo_root" "$python_bin" -c 'from traffictracer.version import COMPLETE_VERSION; print(COMPLETE_VERSION)')"
+ui_version="$("$python_bin" -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["version"])' "$ui_dir/src-tauri/tauri.conf.json")"
+bundle_version="${ui_version}+traffictracer.${product_version}"
 release_audit_script="${TT_RELEASE_AUDIT_SCRIPT:-${repo_root}/scripts/release-audit.py}"
 tauri_target_dir="${TT_TAURI_TARGET_DIR:-${ui_dir}/target}"
-output_dir="${TT_PACKAGE_OUTPUT_DIR:-${repo_root}/dist/packages/${target}}"
+output_dir="${TT_PACKAGE_OUTPUT_DIR:-${repo_root}/dist/packages/traffictracer-complete-v${product_version}-linux-x86_64}"
 
 case "$target" in
   x86_64-unknown-linux-gnu) ;;
@@ -62,11 +65,13 @@ for asset_dir in "$ui_dir/src-tauri/icons" "$ui_dir/src-tauri/resources"; do
   fi
 done
 
-tauri_args=(tauri build --target "$target" --bundles deb,appimage)
 if [[ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
-  tauri_args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+  tauri_config="$("$python_bin" -c 'import json, sys; print(json.dumps({"version": sys.argv[1], "bundle": {"createUpdaterArtifacts": False}}))' "$bundle_version")"
   echo "Updater signing key is unset; building verified unsigned packages."
+else
+  tauri_config="$("$python_bin" -c 'import json, sys; print(json.dumps({"version": sys.argv[1]}))' "$bundle_version")"
 fi
+tauri_args=(tauri build --target "$target" --bundles deb,appimage --config "$tauri_config")
 
 (
   cd "$ui_dir"
@@ -90,14 +95,27 @@ fi
     "${debs[0]}" "${appimages[0]}"
 )
 
-cp -- "${debs[0]}" "${appimages[0]}" "$stage_dir/"
+deb_name="TrafficTracer-Complete_${product_version}_linux_x86_64.deb"
+appimage_name="TrafficTracer-Complete_${product_version}_linux_x86_64.AppImage"
+cp -- "${debs[0]}" "$stage_dir/$deb_name"
+cp -- "${appimages[0]}" "$stage_dir/$appimage_name"
 (
   cd "$stage_dir"
   sha256sum -- ./*.deb ./*.AppImage >SHA256SUMS
 )
 service_commit="$("$python_bin" -c 'import pathlib, sys, yaml; print(yaml.safe_load(pathlib.Path(sys.argv[1]).read_text())["components"]["clash_verge_service"]["commit"])' "$repo_root/complete/components.lock.yaml")"
+cat >"$stage_dir/VERSION" <<EOF
+product=TrafficTracer Complete
+version=$product_version
+platform=linux-x86_64
+target=$target
+bundle_version=$bundle_version
+EOF
+
 {
   printf 'target=%s\n' "$target"
+  printf 'product_version=%s\n' "$product_version"
+  printf 'bundle_version=%s\n' "$bundle_version"
   printf 'traffictracer=%s\n' "$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'mihomo=%s\n' "$(git -C "$repo_root/components/mihomo" rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'ui=%s\n' "$(git -C "$ui_dir" rev-parse HEAD 2>/dev/null || printf unknown)"

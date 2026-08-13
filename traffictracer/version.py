@@ -1,6 +1,6 @@
 """Version constants shared by the Complete build and protocol handshakes."""
 
-COMPLETE_VERSION = "0.1.0-dev"
+COMPLETE_VERSION = "1.0.0"
 WORKER_API_VERSION = 2
 JOB_SCHEMA_VERSION = 2
 SESSION_SCHEMA_VERSION = 2

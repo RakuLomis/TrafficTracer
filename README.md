@@ -163,7 +163,7 @@ Linux x86-64 打包入口：
 
 ```bash
 make package-linux
-sha256sum -c dist/packages/x86_64-unknown-linux-gnu/SHA256SUMS
+sha256sum -c dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/SHA256SUMS
 ```
 
 发布候选必须从干净工作树生成许可证、CycloneDX SBOM、组件来源和审计报告：

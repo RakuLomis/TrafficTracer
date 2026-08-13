@@ -77,6 +77,7 @@ KNOWN_PUBLIC_TEST_SECRET_SHA256 = frozenset(
 
 PYTHON_DISTRIBUTIONS = ("PyYAML", "websockets", "jsonschema", "PyInstaller")
 RELEASE_METADATA_FILES = (
+    "VERSION",
     "COMPONENTS",
     "LICENSE",
     "NOTICE",
@@ -373,7 +374,7 @@ def generate_sbom(
         "metadata": {
             "component": {
                 "type": "application",
-                "bom-ref": "generic:TrafficTracer@0.1.0-dev",
+                "bom-ref": "generic:TrafficTracer@{}".format(product["version"]),
                 "name": str(product["name"]),
                 "version": str(product["version"]),
                 "licenses": [{"license": {"id": "GPL-3.0-only"}}],
@@ -519,22 +520,51 @@ def audit_packages(package_dir: Path) -> tuple[list[dict[str, Any]], dict[str, s
 
 
 def verify_component_manifest(
+    repo: Path,
     package_dir: Path,
+    lock: dict[str, Any],
     revisions: dict[str, str],
 ) -> dict[str, str]:
     path = package_dir / "COMPONENTS"
     if not path.is_file():
         raise AuditFailure("COMPONENTS is missing")
     values = parse_key_values(path)
+    product_version = str(lock["product"]["version"])
+    ui_config_path = (
+        repo / "components" / "clash-verge-rev" / "src-tauri" / "tauri.conf.json"
+    )
+    ui_config = json.loads(ui_config_path.read_text(encoding="utf-8"))
+    bundle_version = "{}+traffictracer.{}".format(
+        ui_config["version"], product_version
+    )
+    version_path = package_dir / "VERSION"
+    if not version_path.is_file():
+        raise AuditFailure("VERSION is missing")
+    version_values = parse_key_values(version_path)
+    expected_version = {
+        "product": str(lock["product"]["name"]),
+        "version": product_version,
+        "platform": "linux-x86_64",
+        "target": TARGET,
+        "bundle_version": bundle_version,
+    }
+    if version_values != expected_version:
+        raise AuditFailure(
+            f"VERSION mismatch: expected {expected_version}, found {version_values}"
+        )
     expected = {
         "target": TARGET,
+        "product_version": product_version,
+        "bundle_version": bundle_version,
         "traffictracer": revisions["traffictracer"],
         "mihomo": revisions["mihomo"],
         "ui": revisions["clash_verge_rev"],
         "service": revisions["clash_verge_service"],
     }
     if values != expected:
-        raise AuditFailure(f"COMPONENTS mismatch: expected {expected}, found {values}")
+        raise AuditFailure(
+            f"COMPONENTS mismatch: expected {expected}, found {values}"
+        )
     return values
 
 
@@ -585,19 +615,22 @@ def main() -> int:
     parser.add_argument("--package-dir", type=Path)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-
     repo = args.repo.resolve()
+    lock = load_lock(repo)
+    product_version = str(lock["product"]["version"])
     package_dir = (
         args.package_dir
-        or repo / "dist" / "packages" / TARGET
+        or repo
+        / "dist"
+        / "packages"
+        / f"traffictracer-complete-v{product_version}-linux-x86_64"
     ).resolve()
     if not package_dir.is_dir():
         parser.error(f"package directory does not exist: {package_dir}")
 
-    lock = load_lock(repo)
     revisions = verify_source(repo, lock)
     artifacts, _ = audit_packages(package_dir)
-    manifest = verify_component_manifest(package_dir, revisions)
+    manifest = verify_component_manifest(repo, package_dir, lock, revisions)
     sbom = generate_sbom(repo, lock, revisions)
     if args.write:
         write_release_metadata(repo, package_dir, sbom)

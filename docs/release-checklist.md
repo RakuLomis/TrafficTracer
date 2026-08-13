@@ -41,7 +41,8 @@ rejects tracked uncommitted changes and publishes the following files together:
 
 - one Deb and one AppImage;
 - SHA256SUMS for package binaries;
-- COMPONENTS with the three exact source revisions;
+- VERSION with the product, platform, target, and bundle version;
+- COMPONENTS with the product/bundle versions and exact source revisions;
 - LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md;
 - CycloneDX 1.6 SBOM.cdx.json;
 - METADATA.sha256 for release metadata;
@@ -107,6 +108,7 @@ Release operator confirms on a clean non-root desktop account:
 
 - [x] SHA256SUMS covers both package binaries, including names with spaces.
 - [x] METADATA.sha256 covers component metadata, licenses, notices, and SBOM.
+- [x] VERSION and COMPONENTS agree with the product lock and UI bundle version.
 - [x] COMPONENTS is compared with git HEAD and pinned submodule commits.
 - [x] package smoke checks the embedded core build marker, Worker API, and
       tracing capabilities.

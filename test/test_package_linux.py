@@ -32,6 +32,9 @@ def fake_package(tmp_path: Path) -> dict[str, object]:
     icons.mkdir()
     bin_dir.mkdir()
     resources.mkdir()
+    (ui_dir / "src-tauri" / "tauri.conf.json").write_text(
+        '{"version":"2.5.2"}', encoding="utf-8"
+    )
 
     icon = icons / "icon.png"
     icon.write_bytes(b"fake icon")
@@ -99,14 +102,19 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     )
 
     output = fake_package["output"]
-    assert (output / "TrafficTracer.deb").read_text() == "deb-package"
-    assert (output / "TrafficTracer.AppImage").read_text() == "appimage-package"
+    deb = output / "TrafficTracer-Complete_1.0.0_linux_x86_64.deb"
+    appimage = output / "TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage"
+    assert deb.read_text() == "deb-package"
+    assert appimage.read_text() == "appimage-package"
     assert (output / "SHA256SUMS").read_text().count("\n") == 2
     assert f"target={TARGET}" in (output / "COMPONENTS").read_text()
+    assert "product_version=1.0.0" in (output / "COMPONENTS").read_text()
+    assert "version=1.0.0" in (output / "VERSION").read_text()
     calls = fake_package["invocations"].read_text().splitlines()
     assert calls[0] == "prepared"
     assert "tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage" in calls[1]
-    assert 'createUpdaterArtifacts":false' in calls[1]
+    assert '"version": "2.5.2+traffictracer.1.0.0"' in calls[1]
+    assert 'createUpdaterArtifacts": false' in calls[1]
     assert calls[2].startswith("verify:linux-bundle -- --target ")
     assert "Package directory:" in result.stdout
     assert fake_package["icon"].stat().st_mode & 0o777 == 0o644
@@ -155,6 +163,7 @@ assert sys.argv[3] == "--write"
 stage = Path(sys.argv[2])
 assert (stage / "SHA256SUMS").is_file()
 assert (stage / "COMPONENTS").is_file()
+assert (stage / "VERSION").is_file()
 (stage / "RELEASE-AUDIT.json").write_text('{"status":"pass"}\\n')
 """,
     )

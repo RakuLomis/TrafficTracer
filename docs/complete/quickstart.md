@@ -4,7 +4,7 @@ TrafficTracer Complete 把定制 Mihomo、TrafficTracer Worker 和 Clash Verge U
 
 ## 1. 组件与版本
 
-`complete/components.lock.yaml` 是组件和协议版本的事实来源。当前产品版本为 `0.1.0-dev`：
+`complete/components.lock.yaml` 是组件和协议版本的事实来源。当前产品版本为 `1.0.0`：
 
 | 协议 | 版本 |
 | --- | --- |
@@ -36,14 +36,14 @@ dumpcap -D
 安装 Complete Deb：
 
 ```bash
-sudo apt install ./Clash\ Verge_2.5.2_amd64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
 ```
 
 或运行 AppImage：
 
 ```bash
-chmod +x ./Clash\ Verge_2.5.2_amd64.AppImage
-./Clash\ Verge_2.5.2_amd64.AppImage
+chmod +x ./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
 ```
 
 文件名随版本变化。Complete 包必须同时包含 `verge-mihomo-tt`、`traffictracer-worker`、标准/Alpha 核心、特权服务及其安装/卸载 helper。上游 Clash Verge 包不等价。Worker API v2 与对应 UI 必须成套安装，不能只替换 Worker 或只替换 UI。
@@ -317,7 +317,7 @@ SHA-256、安装路径权限、敏感文件/secret 模式和发行元数据。�
 
 ```bash
 make package-linux
-sha256sum -c dist/packages/x86_64-unknown-linux-gnu/SHA256SUMS
+sha256sum -c dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/SHA256SUMS
 ```
 
 默认输出目录已存在时不会覆盖。为新的本地候选使用新的绝对目录，例如：
@@ -347,9 +347,10 @@ make package-linux
 流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 7 个可执行文件，最后才原子发布：
 
 ```text
-dist/packages/x86_64-unknown-linux-gnu/
-├── Clash Verge_<version>_amd64.deb
-├── Clash Verge_<version>_amd64.AppImage
+dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/
+├── TrafficTracer-Complete_<version>_linux_x86_64.deb
+├── TrafficTracer-Complete_<version>_linux_x86_64.AppImage
+├── VERSION
 ├── COMPONENTS
 ├── SHA256SUMS
 ├── LICENSE / NOTICE / THIRD_PARTY_NOTICES.md
@@ -370,7 +371,7 @@ TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/rc-2" make release-linux
 
 ```bash
 cd /absolute/path/to/TrafficTracer
-sudo apt install "$PWD/dist/packages/target-config-v2/Clash Verge_2.5.2_amd64.deb"
+sudo apt install "$PWD/dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/TrafficTracer-Complete_1.0.0_linux_x86_64.deb"
 ```
 
 升级后保留原有用户配置，但仍应确认核心选择为 `verge-mihomo-tt`、服务 socket 为 `/run/clash-verge-service/service.sock`，并重新执行流量追踪环境检测。不要从可能被重启清理的 `/tmp` 路径安装。
