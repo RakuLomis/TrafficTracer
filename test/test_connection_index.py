@@ -178,6 +178,26 @@ def test_exact_pre_flow_accepts_incomparable_monotonic_and_utc_clocks():
     assert decision.selected_native_id == "utc"
     assert "time_unavailable" in decision.candidates[0].evidence
 
+def test_tick_offset_utc_time_is_compared_with_mihomo_wall_clock():
+    candidate = MihomoConnection(
+        "utc",
+        TcpConnect(
+            "2026-08-13T02:32:00.667Z", "utc",
+            "10.0.0.1:1", "9.9.9.9:443", "cdn.example.net",
+        ),
+        None,
+        None,
+    )
+    decision = rank_connection_candidates(
+        _transport(first_observed_utc=1786588321.233),
+        {"utc": candidate},
+    )
+    assert decision.status == "matched"
+    assert decision.method == "endpoint_time"
+    assert decision.candidates[0].time_delta_ms == 566
+    assert decision.candidates[0].time_source == "netlog_tick_offset_to_utc"
+
+
 
 def test_unique_exact_pre_flow_survives_clock_alignment_drift():
     key = "udp|198.18.0.1:44000|198.18.0.9:443"

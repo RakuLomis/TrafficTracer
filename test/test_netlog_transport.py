@@ -126,6 +126,8 @@ def test_different_urls_on_one_transport_are_merged_by_transport_source():
     assert connections[0].netlog_source_id == 300
     assert connections[0].request_ids == ["1.1", "1.2"]
     assert connections[0].first_observed == 100.0
+    assert connections[0].first_observed_utc == 1329000100.0
+    assert connections[0].last_observed_utc == 1329000100.1
 
 
 def test_trace_no_match():

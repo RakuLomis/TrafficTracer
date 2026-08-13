@@ -13,6 +13,7 @@ from traffictracer.models import CorrelatedFlowV2, FlowTuple, VisitCorrelation
 from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideResult
 from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
+from traffictracer.analyze.outcomes import post_flow_disposition, terminal_error_class
 from traffictracer.analyze.request_resolver import resolve_visit_requests
 from traffictracer.analyze.request_observation import (
     flow_targets_loopback,
@@ -70,6 +71,11 @@ def persist_connection_artifacts(
             request_ids_by_connection.setdefault(connection_id, set()).add(
                 request["request_id"]
             )
+    local_connection_ids = {
+        request["connection_id"] for request in requests
+        if request.get("connection_id")
+        and request.get("network_observation") == "local_endpoint"
+    }
     for connection in connections:
         connection["request_ids"] = sorted(
             request_ids_by_connection.get(connection["connection_id"], set())
@@ -85,6 +91,9 @@ def persist_connection_artifacts(
         urls = sorted(urls_by_connection.get(connection["connection_id"], set()))
         connection["urls"] = urls
         connection["primary_url"] = urls[0] if urls else None
+        _annotate_connection_semantics(
+            connection, connection["connection_id"] in local_connection_ids,
+        )
     for record in [*connections, *requests]:
         validate_flow_v2(record)
     connections.sort(key=lambda item: item["connection_id"])
@@ -108,6 +117,22 @@ def persist_connection_artifacts(
     })
     reconcile_pcap_attribution(output, requests, pcap_results or [])
     return ConnectionArtifacts(connection_path, request_path, generation_id)
+
+
+def _annotate_connection_semantics(record: dict, local_endpoint: bool) -> None:
+    if local_endpoint:
+        scope, evidence = "local_internal", ["request_network_observation"]
+    elif record.get("request_ids") or record.get("urls"):
+        scope, evidence = "page_attributed", ["request_connection_lineage"]
+    elif record.get("netlog_source_id") is not None:
+        scope, evidence = "browser_background", ["netlog_transport"]
+    else:
+        scope, evidence = "capture_unattributed", ["mihomo_trace_only"]
+    record["attribution_scope"] = scope
+    record["attribution_evidence"] = evidence
+    record["post_flow_disposition"] = post_flow_disposition(
+        record, local_endpoint=local_endpoint,
+    )
 
 
 def _merge_connection_records(records: list[dict]) -> list[dict]:
@@ -145,6 +170,8 @@ def _connection_record(
             "connection_id": item["connection_id"],
             "score": item["score"],
             "evidence": item["evidence"],
+            "time_delta_ms": item.get("time_delta_ms"),
+            "time_source": item.get("time_source", "unavailable"),
         }
         for item in flow.match_candidates
     ]
@@ -177,6 +204,18 @@ def _connection_record(
             or [flow.match_reason or "no_ranked_candidate"]
         ),
     }
+    time_candidate = next(
+        (item for item in all_candidates
+         if item["connection_id"] == flow.stable_connection_id),
+        all_candidates[0] if all_candidates else None,
+    )
+    if time_candidate is not None:
+        match["time_evidence"] = {
+            "available": time_candidate["time_delta_ms"] is not None,
+            "delta_ms": time_candidate["time_delta_ms"],
+            "source": time_candidate["time_source"],
+        }
+
     if flow.match_status in {"ambiguous", "unmatched"}:
         match["unmatched_reason"] = flow.match_reason or (
             "multiple_candidates" if flow.match_status == "ambiguous" else "no_candidate"
@@ -197,6 +236,8 @@ def _connection_record(
         "timing": {
             "first_observed": flow.first_observed,
             "last_observed": flow.last_observed,
+            "first_observed_utc": flow.first_observed_utc,
+            "last_observed_utc": flow.last_observed_utc,
         },
         "pre_flow": _flow_payload(flow.pre_flow, "pre_proxy"),
         "post_flow": _flow_payload(post_flow, "post_proxy") if post_flow else None,
@@ -220,8 +261,20 @@ def _connection_record(
     }
     if flow.terminal is not None:
         terminal = asdict(flow.terminal)
-        if flow.terminal.status.endswith("error"):
-            terminal["error_class"] = _terminal_error_class(flow)
+        if not terminal["error_class"]:
+            terminal["error_class"], terminal["error_class_source"] = (
+                terminal_error_class(
+                    status=flow.terminal.status, stage=flow.terminal.stage,
+                    error=flow.terminal.error,
+                )
+            )
+        terminal["error_class"] = _family_specific_error_class(
+            terminal.get("error_class", ""),
+            terminal.get("error_class_source", "unavailable"),
+            flow.pre_flow,
+        )
+        if not terminal["error_class"]:
+            terminal.pop("error_class")
         record["terminal"] = terminal
     if flow.netlog_source_id is not None:
         record["netlog_source_id"] = flow.netlog_source_id
@@ -232,24 +285,19 @@ def _connection_record(
     return record
 
 
-def _terminal_error_class(flow: CorrelatedFlowV2) -> str:
-    assert flow.terminal is not None
-    message = flow.terminal.error.lower()
-    family = ""
-    if flow.pre_flow is not None and flow.pre_flow.dst_ip:
-        try:
-            family = "ipv6" if ipaddress.ip_address(flow.pre_flow.dst_ip).version == 6 else "ipv4"
-        except ValueError:
-            family = ""
-    if "timeout" in message or "timed out" in message:
-        return f"{family}_timeout" if family else "network_timeout"
-    if any(token in message for token in (
-        "network is unreachable", "no route to host", "unreachable",
-    )):
-        return f"{family}_unreachable" if family else "network_unreachable"
-    if flow.terminal.stage == "dial" or flow.terminal.status == "dial_error":
-        return "dial_error"
-    return "transport_error"
+def _family_specific_error_class(
+    error_class: str, source: str, pre_flow: FlowTuple | None,
+) -> str:
+    if source != "legacy_inferred" or error_class not in {
+        "timeout", "network_unreachable",
+    } or pre_flow is None or not pre_flow.dst_ip:
+        return error_class
+    try:
+        family = "ipv6" if ipaddress.ip_address(pre_flow.dst_ip).version == 6 else "ipv4"
+    except ValueError:
+        return error_class
+    suffix = "timeout" if error_class == "timeout" else "unreachable"
+    return f"{family}_{suffix}"
 
 
 def _annotate_outer_connection_reuse(records: list[dict]) -> None:

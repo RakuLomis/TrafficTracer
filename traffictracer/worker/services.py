@@ -695,6 +695,8 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
         "warning_count": len(manifest.warnings),
         "quality_state": None,
         "capture_global_quality_state": None,
+        "analysis_integrity_state": None,
+        "network_outcome_state": None,
         "coverage": None,
     }
     if manifest.started_at is not None:
@@ -730,6 +732,16 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
                 payload["capture_global_quality_state"] = summary.get(
                     "capture_global_quality_state"
                 )
+                integrity = summary.get("analysis_integrity", {})
+                if isinstance(integrity, dict):
+                    page_integrity = integrity.get("page_attributed", {})
+                    if isinstance(page_integrity, dict):
+                        payload["analysis_integrity_state"] = page_integrity.get("state")
+                network = summary.get("network_outcome", {})
+                if isinstance(network, dict):
+                    page_network = network.get("page_attributed", {})
+                    if isinstance(page_network, dict):
+                        payload["network_outcome_state"] = page_network.get("state")
                 coverage = summary.get("coverage")
                 if isinstance(coverage, dict):
                     page = coverage.get("page_attributed")

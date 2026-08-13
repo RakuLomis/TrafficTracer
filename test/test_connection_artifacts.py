@@ -147,6 +147,10 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
         "with_post_flow": 0,
         "shared": 0,
         "missing_post_flow": 0,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
     }
     assert pcap_index["coverage"]["unmatched_reasons"] == {
         "multiple_candidates": 1,
@@ -283,7 +287,10 @@ def test_local_endpoint_keeps_connection_without_becoming_network(tmp_path):
     assert connection["urls"] == [request.url]
     assert connection["pre_flow"]["dst_port"] == 14017
     assert connection["post_flow"] is None
-    assert connection["terminal"]["error_class"] == "dial_error"
+    assert connection["terminal"]["error_class"] == "connection_refused"
+    assert connection["terminal"]["error_class_source"] == "legacy_inferred"
+    assert connection["attribution_scope"] == "local_internal"
+    assert connection["post_flow_disposition"] == "local_not_applicable"
 
 
 def test_incomplete_reject_post_flow_is_not_serialized_as_five_tuple(tmp_path):

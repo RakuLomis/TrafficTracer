@@ -29,6 +29,10 @@ def test_empty_unmatched_udp_stays_in_transport_not_logical_flow_scope():
         "with_post_flow": 1,
         "shared": 1,
         "missing_post_flow": 0,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
     }
     assert coverage["page_attributed"]["unmatched_reasons"] == {
         "multiple_candidates": 1,

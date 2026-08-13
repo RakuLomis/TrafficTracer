@@ -76,6 +76,8 @@ class TransportConnection:
     network: str = ""
     attempted_protocols: list[str] = field(default_factory=list)
     application_protocol: str = "unknown"
+    first_observed_utc: float | None = None
+    last_observed_utc: float | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,8 @@ class FlowTerminal:
     bytes_up: int = 0
     bytes_down: int = 0
     duration_ms: int = 0
+    error_class: str = ""
+    error_class_source: str = "unavailable"
 
 
 @dataclass
@@ -123,6 +127,8 @@ class CorrelatedFlowV2:
     attempted_protocols: list[str] = field(default_factory=list)
     first_observed: float | None = None
     last_observed: float | None = None
+    first_observed_utc: float | None = None
+    last_observed_utc: float | None = None
 
 
 @dataclass

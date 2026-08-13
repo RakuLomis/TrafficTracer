@@ -171,6 +171,8 @@ def correlate_v2(
             netlog_source_id=tc.netlog_source_id,
             first_observed=tc.first_observed,
             last_observed=tc.last_observed,
+            first_observed_utc=tc.first_observed_utc,
+            last_observed_utc=tc.last_observed_utc,
             terminal=_terminal_from_close(mconn.close if mconn else None),
             outer_conn_id=(
                 mconn.proxy_dial.outer_conn_id
@@ -210,6 +212,8 @@ def correlate_v2(
                     "native_id": candidate.native_id,
                     "score": candidate.score,
                     "evidence": list(candidate.evidence),
+                    "time_delta_ms": candidate.time_delta_ms,
+                    "time_source": candidate.time_source,
                 }
                 for candidate in decision.candidates
             ],
@@ -414,6 +418,8 @@ def _terminal_from_close(close) -> FlowTerminal | None:
         status=close.status,
         stage=close.stage,
         error=close.error,
+        error_class=close.error_class,
+        error_class_source=close.error_class_source,
         bytes_up=close.bytes_up,
         bytes_down=close.bytes_down,
         duration_ms=close.duration_ms,

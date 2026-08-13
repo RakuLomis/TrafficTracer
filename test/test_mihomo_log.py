@@ -15,7 +15,7 @@ def test_parse_tracing_log():
     content = """\
 {"ts":"2025-07-05T10:00:00Z","type":"tcp_connect","conn_id":"conn-1","src":"127.0.0.1:55555","dst":"127.0.0.1:7890","host":"www.example.com"}
 {"ts":"2025-07-05T10:00:01Z","type":"tcp_proxy_dial","conn_id":"conn-1","proxy":"Proxy","proxy_type":"ss","proxy_addr":"1.2.3.4:443","out_src":"192.168.1.100:41234"}
-{"ts":"2025-07-05T10:00:10Z","type":"tcp_close","conn_id":"conn-1","bytes_up":1024,"bytes_down":4096,"duration_ms":9000}
+{"ts":"2025-07-05T10:00:10Z","type":"tcp_close","conn_id":"conn-1","bytes_up":1024,"bytes_down":4096,"duration_ms":9000,"status":"dial_error","stage":"dial","error_class":"connection_refused","error":"opaque"}
 {"ts":"2025-07-05T10:00:00Z","type":"tcp_connect","conn_id":"conn-2","src":"127.0.0.1:55556","dst":"127.0.0.1:7890","host":"cdn.example.com"}
 """
     with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
@@ -35,6 +35,8 @@ def test_parse_tracing_log():
         assert c1.close is not None
         assert c1.close.bytes_up == 1024
         assert c1.close.bytes_down == 4096
+        assert c1.close.error_class == "connection_refused"
+        assert c1.close.error_class_source == "core_explicit"
 
         c2 = conns["conn-2"]
         assert c2.connect is not None
@@ -118,6 +120,8 @@ def test_trace_barrier_cutoff_excludes_late_events(tmp_path):
     assert snapshot["source"] == "mihomo_barrier"
     assert snapshot["cutoff_event_seq"] == 3
     assert snapshot["late_event_count"] == 1
+    assert snapshot["late_event_types"] == {"tcp_close": 1}
+    assert snapshot["max_late_delay_ms"] == 0.0
     assert snapshot["max_observed_event_seq"] == 4
     assert snapshot["barrier_verified"] is True
 

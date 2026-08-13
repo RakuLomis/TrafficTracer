@@ -4,6 +4,7 @@ import json
 
 from traffictracer.analyze.artifacts import (
     _local_connection_ids,
+    _analysis_integrity_state,
     _mapping_error_class,
     _mapping_targets_loopback,
     _quality_warnings,
@@ -92,28 +93,32 @@ def test_flow_index_and_summary_keep_duplicates_shared_and_null_post(tmp_path):
     assert by_id["t3"]["shared"] is True
     assert summary["total_flows"] == 3
     assert summary["shared_flows"] == 2
-    assert summary["missing_post_flows"] == 1
+    assert summary["missing_post_flows"] == 0
     assert summary["duplicate_pre_flow_keys"] == 1
     assert summary["error_flows"] == 1
     assert [warning["code"] for warning in summary["warnings"]] == [
         "DUPLICATE_PRE_FLOW",
         "SHARED_OUTER_FLOW",
-        "POST_FLOW_UNAVAILABLE",
+        "EGRESS_FAILED_BEFORE_SOCKET",
         "FLOW_ERRORS",
     ]
     assert summary["coverage_source"] == "core_only"
     assert summary["coverage"] == layered_coverage([], [], index["items"])
     assert summary["quality_state"] == "passed"
-    assert summary["capture_global_quality_state"] == "degraded"
+    assert summary["capture_global_quality_state"] == "passed"
     assert all(
         warning["scope"] == "capture_global"
         and warning["affects_page_quality"] is False
         for warning in summary["warnings"]
     )
     assert summary["quality"]["capture_global"]["logical_flows"] == {
-        "total": 3, "with_post_flow": 2, "missing_post_flow": 1,
-        "errors": 1,
+        "total": 3, "with_post_flow": 2, "shared": 2,
+        "missing_post_flow": 0, "explicit_no_socket": 0,
+        "failed_before_socket": 1, "local_not_applicable": 0,
+        "unexpected_missing": 0, "errors": 1,
     }
+    assert summary["analysis_integrity"]["capture_global"]["state"] == "passed"
+    assert summary["network_outcome"]["capture_global"]["state"] == "partial_failure"
     assert summary["quality"]["pcap_extraction"]["requested"] is False
 
 
@@ -188,6 +193,10 @@ def test_layered_coverage_conserves_each_denominator_for_partial_trace():
         "with_post_flow": 2,
         "shared": 1,
         "missing_post_flow": 2,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 2,
     }
     assert coverage["unmatched_reasons"] == {
         "missing_post_flow": 2,
@@ -290,7 +299,7 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
     assert codes == [
         "REQUEST_ATTRIBUTION_UNMATCHED",
         "TRANSPORT_UNMATCHED",
-        "EGRESS_DIAL_FAILED",
+        "EGRESS_FAILED_BEFORE_SOCKET",
         "PCAP_PRE_EMPTY",
         "PCAP_POST_UNAVAILABLE",
     ]
@@ -298,13 +307,41 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
     assert summary["capture_global_quality_state"] == "passed"
     assert all(
         warning["scope"] == "page_attributed"
-        and warning["affects_page_quality"] is True
         for warning in summary["warnings"]
     )
+    network_warning = next(
+        warning for warning in summary["warnings"]
+        if warning["code"] == "EGRESS_FAILED_BEFORE_SOCKET"
+    )
+    assert network_warning["severity"] == "info"
+    assert network_warning["affects_page_quality"] is False
+    assert summary["analysis_integrity"]["page_attributed"]["state"] == "degraded"
+    assert summary["network_outcome"]["page_attributed"]["state"] == "failed"
     assert summary["quality"]["egress_establishment"] == {
         "total": 1, "established": 0, "failed_before_socket": 1,
         "unavailable": 0,
     }
+
+
+def test_observed_network_failure_does_not_degrade_analysis_integrity():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": None,
+        "terminal": {
+            "status": "resolve_error", "stage": "resolve",
+            "error_class": "dns_resolution",
+        },
+    }
+    warnings = _quality_warnings(
+        [], [connection], {"split_mode": "none", "connections": []},
+    )
+    assert [(item["code"], item["severity"]) for item in warnings] == [
+        ("EGRESS_FAILED_BEFORE_SOCKET", "info"),
+    ]
+    assert _analysis_integrity_state(
+        {"status": "passed"}, warnings, scope="page_attributed",
+    ) == "passed"
 
 
 def test_rejected_egress_is_not_missing_socket_quality_failure():
@@ -362,6 +399,10 @@ def test_rejected_egress_is_conserved_as_not_applicable_in_layered_coverage():
         "with_post_flow": 0,
         "shared": 0,
         "missing_post_flow": 0,
+        "explicit_no_socket": 1,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
         "not_applicable_outcome": 1,
     }
     assert coverage["capture_global"]["core_logical_flows"] == {
@@ -369,6 +410,10 @@ def test_rejected_egress_is_conserved_as_not_applicable_in_layered_coverage():
         "with_post_flow": 0,
         "shared": 0,
         "missing_post_flow": 0,
+        "explicit_no_socket": 1,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
         "not_applicable_outcome": 1,
     }
     assert coverage["page_attributed"]["unmatched_reasons"] == {}
@@ -454,6 +499,10 @@ def test_empty_layered_coverage_has_three_zero_denominators():
         "with_post_flow": 0,
         "shared": 0,
         "missing_post_flow": 0,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
     }
 
 
@@ -549,7 +598,7 @@ def test_capture_global_error_classifies_local_proxy_timeout_and_dns():
         "dns", "", base, None, "resolve_error", "could not find ip",
     )
     assert _mapping_targets_loopback(local) is True
-    assert _mapping_error_class(proxy_timeout) == "proxy_node_timeout"
+    assert _mapping_error_class(proxy_timeout) == "timeout"
     assert _mapping_error_class(dns) == "dns_resolution"
 
 

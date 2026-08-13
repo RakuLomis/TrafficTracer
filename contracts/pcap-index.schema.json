@@ -80,7 +80,11 @@
         "shared": { "type": "integer", "minimum": 0 },
         "missing_post_flow": { "type": "integer", "minimum": 0 },
         "not_applicable_local_endpoint": { "type": "integer", "minimum": 0 },
-        "not_applicable_outcome": { "type": "integer", "minimum": 0 }
+        "not_applicable_outcome": { "type": "integer", "minimum": 0 },
+        "explicit_no_socket": { "type": "integer", "minimum": 0 },
+        "failed_before_socket": { "type": "integer", "minimum": 0 },
+        "local_not_applicable": { "type": "integer", "minimum": 0 },
+        "unexpected_missing": { "type": "integer", "minimum": 0 }
       }
     },
     "reasonCounts": {
@@ -102,7 +106,8 @@
       "required": ["core_logical_flows", "unmatched_reasons"],
       "properties": {
         "core_logical_flows": { "$ref": "#/$defs/coreCoverage" },
-        "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" }
+        "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" },
+        "attribution_scopes": { "$ref": "#/$defs/reasonCounts" }
       }
     },
     "coverage": {

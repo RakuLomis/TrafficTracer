@@ -44,7 +44,11 @@
     "outer_conn_id": { "type": "string" },
     "egress_outcome": {
       "enum": ["direct", "proxy", "rejected", "rejected_drop", "internal_dns", "pass", "compatible", "unknown"]
-    }
+    },
+    "terminal": { "oneOf": [{ "$ref": "#/$defs/terminal" }, { "type": "null" }] },
+    "attribution_scope": { "enum": ["page_attributed", "browser_background", "capture_unattributed", "local_internal"] },
+    "attribution_evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "post_flow_disposition": { "enum": ["with_post_flow", "explicit_no_socket", "failed_before_socket", "local_not_applicable", "unexpected_missing"] }
   },
   "$defs": {
     "uuid": {
@@ -73,6 +77,17 @@
         "source": { "type": "string", "minLength": 1 },
         "scope": { "enum": ["pre_proxy", "post_proxy"] },
         "shared": { "type": "boolean" }
+      }
+    },
+    "terminal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "stage", "error", "error_class", "error_class_source"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "stage": { "type": "string" },
+        "error": { "type": "string" },
+        "error_class": { "type": "string" },
+        "error_class_source": { "enum": ["core_explicit", "legacy_inferred", "unavailable"] }
       }
     },
     "match": {

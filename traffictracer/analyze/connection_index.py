@@ -20,6 +20,8 @@ class ConnectionCandidate:
     method: str
     score: float
     evidence: tuple[str, ...]
+    time_delta_ms: int | None = None
+    time_source: str = "unavailable"
 
 
 @dataclass(frozen=True)
@@ -88,7 +90,17 @@ def rank_connection_candidates(
         if connect is None:
             continue
         evidence: list[str] = []
-        time_delta = _time_delta(connection.first_observed, connect.ts)
+        observed_time = (
+            connection.first_observed_utc
+            if connection.first_observed_utc is not None
+            else connection.first_observed
+        )
+        time_delta = _time_delta(observed_time, connect.ts)
+        time_source = (
+            "netlog_tick_offset_to_utc"
+            if time_delta is not None and connection.first_observed_utc is not None
+            else "same_clock" if time_delta is not None else "unavailable"
+        )
         method = "none"
         score = 0.0
         pre = connect.pre_flow
@@ -144,7 +156,11 @@ def rank_connection_candidates(
                 score = 0.4
                 evidence.extend(("destination_host", "time_unavailable"))
         if score:
-            scored.append(ConnectionCandidate(native_id, method, score, tuple(evidence)))
+            scored.append(ConnectionCandidate(
+                native_id, method, score, tuple(evidence),
+                round(time_delta * 1000) if time_delta is not None else None,
+                time_source,
+            ))
 
     ranked = tuple(sorted(scored, key=lambda item: (-item.score, item.native_id)))
     if not ranked:

@@ -17,6 +17,9 @@ class FlowMapping:
     post_flow: FlowTuple | None
     status: str
     error: str = ""
+    stage: str = ""
+    error_class: str = ""
+    error_class_source: str = "unavailable"
     egress_outcome: str = ""
 
 
@@ -85,6 +88,9 @@ def _tcp_mapping(conn: MihomoConnection) -> FlowMapping | None:
         post_flow=dial.post_flow if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
+        stage=close.stage if close else "",
+        error_class=close.error_class if close else "",
+        error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
     )
 
@@ -102,5 +108,8 @@ def _udp_mapping(conn: UdpConnection) -> FlowMapping | None:
         post_flow=dial.post_flow if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
+        stage=close.stage if close else "",
+        error_class=close.error_class if close else "",
+        error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
     )

@@ -535,6 +535,8 @@ def test_session_list_is_summary_paginated_and_bounded(tmp_path):
         "warning_count",
         "quality_state",
         "capture_global_quality_state",
+        "analysis_integrity_state",
+        "network_outcome_state",
     }
     assert "artifacts" not in first["sessions"][0]
     assert {

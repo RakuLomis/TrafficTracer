@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import re
 from pathlib import Path
 
 from ..models import FlowTuple
+from .outcomes import terminal_error_class
 
 _ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
 
@@ -72,6 +75,8 @@ class TcpClose:
     status: str = ""
     stage: str = ""
     error: str = ""
+    error_class: str = ""
+    error_class_source: str = "unavailable"
     event_seq: int = 0
 
 
@@ -124,6 +129,8 @@ class UdpClose:
     status: str = ""
     stage: str = ""
     error: str = ""
+    error_class: str = ""
+    error_class_source: str = "unavailable"
     event_seq: int = 0
 
 
@@ -159,6 +166,9 @@ def trace_snapshot_info(path: str) -> dict:
     cutoff = boundary["event_seq"] if boundary else None
     late_events = 0
     max_event_seq = 0
+    late_event_types: Counter[str] = Counter()
+    max_late_delay_ms = 0.0
+    barrier_time = _parse_timestamp(boundary.get("ts", "")) if boundary else None
     barrier_verified = boundary is None
     if trace_path.is_file():
         with trace_path.open("r", encoding="utf-8") as stream:
@@ -178,6 +188,13 @@ def trace_snapshot_info(path: str) -> dict:
                     barrier_verified = True
                 if cutoff is not None and seq > cutoff:
                     late_events += 1
+                    late_event_types[str(event.get("type", "unknown"))] += 1
+                    event_time = _parse_timestamp(str(event.get("ts", "")))
+                    if barrier_time is not None and event_time is not None:
+                        max_late_delay_ms = max(
+                            max_late_delay_ms,
+                            (event_time - barrier_time).total_seconds() * 1000,
+                        )
     if not barrier_verified:
         raise ValueError(
             f"trace barrier marker is missing or does not match capture context: {path}"
@@ -188,9 +205,20 @@ def trace_snapshot_info(path: str) -> dict:
         "barrier_ts": boundary.get("ts", "") if boundary else "",
         "barrier_session_id": boundary.get("session_id", "") if boundary else "",
         "late_event_count": late_events,
+        "late_event_types": dict(sorted(late_event_types.items())),
+        "max_late_delay_ms": round(max_late_delay_ms, 3),
         "max_observed_event_seq": max_event_seq,
         "barrier_verified": barrier_verified,
     }
+
+
+def _parse_timestamp(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _events(path: str, max_event_seq: int | None = None):
@@ -245,7 +273,15 @@ def parse_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, 
                 bytes_down=int(event.get("bytes_down", 0) or 0),
                 duration_ms=int(event.get("duration_ms", 0) or 0),
                 status=event.get("status", ""), stage=event.get("stage", ""),
-                error=event.get("error", ""), event_seq=int(event.get("event_seq", 0) or 0),
+                error=event.get("error", ""),
+                error_class=terminal_error_class(
+                    status=event.get("status", ""), stage=event.get("stage", ""),
+                    error=event.get("error", ""), explicit=event.get("error_class", ""),
+                )[0],
+                error_class_source=terminal_error_class(
+                    status=event.get("status", ""), stage=event.get("stage", ""),
+                    error=event.get("error", ""), explicit=event.get("error_class", ""),
+                )[1], event_seq=int(event.get("event_seq", 0) or 0),
             )
     return {cid: MihomoConnection(cid, row["connect"], row["proxy_dial"], row["close"])
             for cid, row in connections.items()}
@@ -283,7 +319,14 @@ def parse_udp_tracing_log(path: str, max_event_seq: int | None = None) -> dict[s
                 **common, bytes_up=int(event.get("bytes_up", 0) or 0), bytes_down=int(event.get("bytes_down", 0) or 0),
                 duration_ms=int(event.get("duration_ms", 0) or 0), status=event.get("status", ""),
                 stage=event.get("stage", ""), error=event.get("error", ""),
-                event_seq=int(event.get("event_seq", 0) or 0),
+                error_class=terminal_error_class(
+                    status=event.get("status", ""), stage=event.get("stage", ""),
+                    error=event.get("error", ""), explicit=event.get("error_class", ""),
+                )[0],
+                error_class_source=terminal_error_class(
+                    status=event.get("status", ""), stage=event.get("stage", ""),
+                    error=event.get("error", ""), explicit=event.get("error_class", ""),
+                )[1], event_seq=int(event.get("event_seq", 0) or 0),
             )
     return {key: UdpConnection(key, row["connect"], row["proxy_dial"], row["close"])
             for key, row in connections.items()}

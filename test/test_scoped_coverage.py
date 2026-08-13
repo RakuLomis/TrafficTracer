@@ -23,6 +23,10 @@ def test_background_core_flows_do_not_inflate_page_scope():
         "with_post_flow": 1,
         "shared": 0,
         "missing_post_flow": 0,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 0,
     }
     assert coverage["page_attributed"]["unmatched_reasons"] == {}
     assert coverage["capture_global"]["core_logical_flows"] == {
@@ -30,6 +34,10 @@ def test_background_core_flows_do_not_inflate_page_scope():
         "with_post_flow": 1,
         "shared": 1,
         "missing_post_flow": 2,
+        "explicit_no_socket": 0,
+        "failed_before_socket": 0,
+        "local_not_applicable": 0,
+        "unexpected_missing": 2,
     }
     assert coverage["capture_global"]["unmatched_reasons"] == {
         "missing_post_flow": 2,

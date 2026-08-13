@@ -34,7 +34,9 @@ def trace_transport(
     with open(fp, "r", encoding="utf-8") as f:
         raw = json.load(f)
 
-    constants = NetLogConstants(raw.get("constants") or {})
+    raw_constants = raw.get("constants") or {}
+    constants = NetLogConstants(raw_constants)
+    time_tick_offset = _time_tick_offset_seconds(raw_constants)
     events = raw.get("events") or []
     entries = process_events(events, constants)
     children_index = _build_children_index(entries)
@@ -94,6 +96,16 @@ def trace_transport(
             (_request_end(item) for item in matched_requests),
             default=None,
         )
+        first_observed_utc = (
+            time_tick_offset + first_observed
+            if time_tick_offset is not None and first_observed is not None
+            else None
+        )
+        last_observed_utc = (
+            time_tick_offset + last_observed
+            if time_tick_offset is not None and last_observed is not None
+            else None
+        )
         transport_source_id = observation["transport_source_id"]
         existing = connections_by_source.get(transport_source_id)
         if existing is not None:
@@ -112,6 +124,18 @@ def trace_transport(
                     if existing.last_observed is not None
                     else last_observed
                 )
+            if first_observed_utc is not None:
+                existing.first_observed_utc = (
+                    min(existing.first_observed_utc, first_observed_utc)
+                    if existing.first_observed_utc is not None
+                    else first_observed_utc
+                )
+            if last_observed_utc is not None:
+                existing.last_observed_utc = (
+                    max(existing.last_observed_utc, last_observed_utc)
+                    if existing.last_observed_utc is not None
+                    else last_observed_utc
+                )
             continue
 
         ft = observation["five_tuple"]
@@ -126,6 +150,8 @@ def trace_transport(
             request_ids=list(matched_request_ids),
             first_observed=first_observed,
             last_observed=last_observed,
+            first_observed_utc=first_observed_utc,
+            last_observed_utc=last_observed_utc,
             network=ft.network or "",
             attempted_protocols=list(ft.attempted_protocols),
             application_protocol=_application_protocol(observation["chain"], ft),
@@ -135,6 +161,15 @@ def trace_transport(
     logger.info("Traced %d transport connections for %d CDP requests",
                 len(connections), len(requests))
     return connections
+
+
+def _time_tick_offset_seconds(constants: dict) -> float | None:
+    raw = constants.get("timeTickOffset")
+    try:
+        milliseconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return milliseconds / 1000.0 if milliseconds > 0 else None
 
 
 def _request_end(request: AttributedRequest) -> float:
