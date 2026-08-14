@@ -19,6 +19,10 @@ from traffictracer.jobs.models import (
     JobState,
     ProgressEvent,
 )
+from traffictracer.jobs.packet_split import (
+    PacketSplitGroupResult,
+    PacketSplitGroupSpec,
+)
 from traffictracer.jobs.progress import ProgressReporter
 from traffictracer.utils import logger
 from traffictracer.version import WORKER_API_VERSION
@@ -27,11 +31,11 @@ from .dispatcher import WorkerMethodError
 
 
 class RunnableJob(Protocol):
-    def run(self) -> CaptureJobResult | BatchJobResult: ...
+    def run(self) -> CaptureJobResult | BatchJobResult | PacketSplitGroupResult: ...
 
 
 JobFactory = Callable[
-    [CaptureJobSpec | AnalysisJobSpec | BatchJobSpec, ProgressReporter, CancellationToken],
+    [CaptureJobSpec | AnalysisJobSpec | BatchJobSpec | PacketSplitGroupSpec, ProgressReporter, CancellationToken],
     RunnableJob,
 ]
 NotificationCallback = Callable[[dict[str, Any]], None]
@@ -76,10 +80,12 @@ class JobManager:
         analysis_factory: JobFactory,
         notify: NotificationCallback,
         batch_factory: JobFactory | None = None,
+        packet_split_factory: JobFactory | None = None,
     ) -> None:
         self._capture_factory = capture_factory
         self._analysis_factory = analysis_factory
         self._batch_factory = batch_factory
+        self._packet_split_factory = packet_split_factory
         self._notify = notify
         self._lock = Lock()
         self._jobs: dict[str, _ManagedJob] = {}
@@ -89,6 +95,7 @@ class JobManager:
         return {
             "job.start": self.start_capture,
             "analysis.start": self.start_analysis,
+            "packet_split.start": self.start_packet_split,
             "job.cancel": self.cancel,
             "job.status": self.status,
         }
@@ -100,6 +107,20 @@ class JobManager:
     def start_analysis(self, params: dict[str, Any]) -> dict[str, Any]:
         payload = _job_payload(params)
         return self._start(AnalysisJobSpec.from_dict(payload), self._analysis_factory)
+
+    def start_packet_split(
+        self, params: dict[str, Any], *, resume: bool = False
+    ) -> dict[str, Any]:
+        if self._packet_split_factory is None:
+            raise WorkerMethodError(
+                "METHOD_NOT_FOUND", "Packet split group Jobs are unavailable."
+            )
+        spec = PacketSplitGroupSpec.from_dict(_job_payload(params))
+        return self._start(
+            spec,
+            self._packet_split_factory,
+            allow_terminal_reuse=resume,
+        )
 
     def start_batch(self, params: dict[str, Any], *, resume: bool = False) -> dict[str, Any]:
         if self._batch_factory is None:
@@ -169,7 +190,7 @@ class JobManager:
 
     def _start(
         self,
-        spec: CaptureJobSpec | AnalysisJobSpec | BatchJobSpec,
+        spec: CaptureJobSpec | AnalysisJobSpec | BatchJobSpec | PacketSplitGroupSpec,
         factory: JobFactory,
         *,
         allow_terminal_reuse: bool = False,

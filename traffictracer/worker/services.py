@@ -10,6 +10,7 @@ from typing import Any
 
 from traffictracer.analyze.flow_index import flow_key
 from traffictracer.analyze.job import AnalysisJob
+from traffictracer.analyze.packet_split_status import inspect_packet_split
 from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSessionContext
 from traffictracer.capture.mihomo import MihomoManager
 from traffictracer.config import ConfigValidationError, load_target_config
@@ -29,6 +30,10 @@ from traffictracer.jobs.models import (
     JobState,
 )
 from traffictracer.jobs.errors import exception_message
+from traffictracer.jobs.packet_split import (
+    PacketSplitGroupSpec,
+    SerialPacketSplitJob,
+)
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import ProgressReporter, ProgressWindow
 from traffictracer.layout import group_directory_name
@@ -67,6 +72,7 @@ class WorkerServices:
             capture_factory=self._capture_factory,
             analysis_factory=self._analysis_factory,
             batch_factory=self._batch_factory,
+            packet_split_factory=self._packet_split_factory,
             notify=notify,
         )
 
@@ -78,6 +84,7 @@ class WorkerServices:
             "session.list": self.session_list,
             "session.scope.resolve": self.session_scope_resolve,
             "session.scope.list": self.session_scope_list,
+            "session.scope.packet_split.preview": self.session_scope_packet_split_preview,
             "session.get": self.session_get,
             "session.delete": self.session_delete,
             "session.cleanup.preview": self.session_cleanup_preview,
@@ -87,6 +94,7 @@ class WorkerServices:
             "batch.cancel": self.batch_cancel,
             "batch.list": self.batch_list,
             "batch.resume": self.batch_resume,
+            "packet_split.resume": self.packet_split_resume,
             "worker.shutdown": self.shutdown,
         })
         return handlers
@@ -189,6 +197,45 @@ class WorkerServices:
             "scope": scope.to_dict(),
             **_session_page(scan, offset=offset, limit=limit),
         }
+
+    def session_scope_packet_split_preview(self, params: dict[str, Any]) -> dict[str, Any]:
+        if set(params) != {"scope_id"} or not isinstance(params.get("scope_id"), str):
+            raise WorkerMethodError(
+                "INVALID_PARAMS",
+                "packet split preview requires only a string scope_id.",
+            )
+        try:
+            scope = self.store.resolve_scope_id(params["scope_id"])
+            if scope.kind != "capture_group":
+                raise ValueError("packet splitting requires a timestamp capture group")
+            scan = self.store.scan_scope(scope.scope_id)
+        except (OSError, TypeError, ValueError, SessionStoreError) as exc:
+            raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
+        sessions = []
+        counts: dict[str, int] = {}
+        for manifest in scan.sessions:
+            inspection = inspect_packet_split(manifest)
+            counts[inspection.status.value] = counts.get(inspection.status.value, 0) + 1
+            sessions.append({
+                "session_id": manifest.session_id,
+                "url": manifest.target.url,
+                **inspection.to_dict(),
+            })
+        return {
+            "scope": scope.to_dict(),
+            "total": len(sessions),
+            "counts": counts,
+            "missing_only": sum(item["runnable_missing"] for item in sessions),
+            "repair_incomplete": sum(item["runnable_repair"] for item in sessions),
+            "sessions": sessions,
+            "corrupt": [
+                {"session_dir": item.session_dir, "message": item.message}
+                for item in scan.corrupt
+            ],
+        }
+
+    def packet_split_resume(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self.jobs.start_packet_split(params, resume=True)
 
     def session_get(self, params: dict[str, Any]) -> dict[str, Any]:
         return self._manifest(params).to_dict()
@@ -469,6 +516,22 @@ class WorkerServices:
             )
         return AnalysisJob(spec, progress=progress, cancellation=cancellation)
 
+    def _packet_split_factory(
+        self,
+        spec,
+        progress: ProgressReporter,
+        cancellation: CancellationToken,
+    ):
+        assert isinstance(spec, PacketSplitGroupSpec)
+        self._require_output_root(spec.output_root)
+        return SerialPacketSplitJob(
+            spec,
+            store=self.store,
+            analysis_factory=self._analysis_factory,
+            progress=progress,
+            cancellation=cancellation,
+        )
+
     def _batch_factory(
         self,
         spec,
@@ -698,6 +761,7 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
         "analysis_integrity_state": None,
         "network_outcome_state": None,
         "coverage": None,
+        "packet_split": inspect_packet_split(manifest).to_dict(),
     }
     if manifest.started_at is not None:
         payload["started_at"] = (

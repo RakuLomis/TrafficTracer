@@ -187,6 +187,8 @@ Analysis validates all serialized contracts. Typical classes are:
 
 The terminal Session error includes a stable code and stage. Preserve the full Session, especially `raw/`, before re-analysis. A new analysis generation should be created instead of editing canonical output manually.
 
+For a timestamp-group packet split, use **Split missing** for untouched Standard Sessions and **Repair incomplete** only for `partial` or `stale` items. Inspect `packet-split-manifest.json` for the last child error and final status. Do not create placeholder split directories or copy indexes between Sessions. After interruption, restart the group operation and let it rescan published evidence.
+
 ## Capture completed but quality is degraded
 
 This can be correct. Common reasons include:

@@ -172,6 +172,18 @@ The default layout is:
 
 Open a Session to inspect its state, target, warnings, artifacts, request attribution, canonical connections, egress outcomes, packet evidence, and coverage metrics. Old schema-v1 Sessions remain readable.
 
+### Split a complete Standard capture group
+
+Select the timestamp folder in **Sessions**. The header reports how many page Sessions are complete, still unsplit, or need repair.
+
+- **Split missing** processes only completed Standard Sessions whose two managed raw PCAP files are available and whose current analysis generation has no per-connection split.
+- **Repair incomplete** processes only `partial` or `stale` splits. It does not rewrite a valid completed split.
+- The Worker processes page Sessions strictly one at a time. Closing the UI does not stop the Worker Job; reopen Sessions to restore its progress display. Use **Cancel** for an orderly stop.
+
+Progress is persisted atomically as `<capture-timestamp>/packet-split-manifest.json`. Before every child analysis, the Worker rechecks the published Session manifest and PCAP index, so resuming or starting the operation again does not duplicate completed output. A failed page is recorded and the remaining eligible pages continue.
+
+The split keeps the existing timestamp/domain/page layout. Flow PCAPs remain inside each page Session and retain connection IDs, request IDs, URLs, pre/post roles, and generation provenance; the operation never merges unrelated page captures.
+
 ## 10. Query a flow
 
 Enter a pre-proxy five-tuple consisting of protocol, source IP, source port, destination IP, and destination port. The query returns every matching logical flow in the selected Session scope.

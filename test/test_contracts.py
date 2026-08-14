@@ -130,6 +130,7 @@ def test_unknown_contract_has_a_deterministic_error():
         "flow",
         "flow_v2",
         "job",
+        "packet_split_manifest",
         "pcap_index",
         "session",
         "session_v2",

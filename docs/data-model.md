@@ -195,6 +195,12 @@ TrafficTracer retains ambiguous requests and candidates rather than selecting a 
 
 `Standard` mode keeps both raw PCAP files and all canonical indexes but does not immediately duplicate packets into one pre/post file pair per connection. The UI can request packet verification later, creating a new analysis generation.
 
+A timestamp-group split is still a sequence of per-Session analyses, not one merged capture. Completion is authoritative only when the Session and published evidence agree: the Session is completed schema v2; the PCAP index validates and names the same Session; its split mode is `unique_connections`; its generation matches the manifest artifact; and every successful side is a regular in-Session file registered in that generation. No requested side may remain `not_requested`.
+
+The UI exposes `unsplit`, `complete`, `complete_empty`, `partial`, `stale`, `raw_missing`, and `ineligible`. `complete_empty` is a successful terminal result with no eligible logical connections. `partial` means at least one side reported an extraction failure. `stale` means published metadata, generation, or files disagree. Merely finding an `analysis/pcap/` directory never proves completion.
+
+`packet-split-manifest.json` is an operational checkpoint for group progress and cancellation. The per-Session manifest plus PCAP index remain the source of truth for idempotency, so recovery always rescans actual published evidence.
+
 `Full` mode performs per-connection extraction during analysis. It is useful when downstream tools require ready-to-open filters, but it consumes more storage and does not make shared transports one-to-one.
 
 ## Coverage and integrity

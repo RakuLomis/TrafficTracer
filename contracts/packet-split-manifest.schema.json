@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/packet-split-manifest.schema.json",
+  "title": "TrafficTracer capture-group packet split manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "job_id", "scope_id", "policy", "state", "created_at", "updated_at", "sessions", "corrupt"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "job_id": { "type": "string", "format": "uuid" },
+    "scope_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9]{3}$" },
+    "policy": { "enum": ["missing_only", "repair_incomplete"] },
+    "state": { "enum": ["running", "completed", "failed", "cancelled", "interrupted"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "corrupt": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_dir", "message"],
+        "properties": {
+          "session_dir": { "type": "string", "pattern": "^/" },
+          "message": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "session_dir", "url", "initial_status", "state", "final_status", "error"],
+        "properties": {
+          "session_id": { "type": "string", "format": "uuid" },
+          "session_dir": { "type": "string", "pattern": "^/" },
+          "url": { "type": "string", "pattern": "^https?://" },
+          "initial_status": { "$ref": "#/$defs/splitStatus" },
+          "state": { "enum": ["pending", "running", "completed", "failed", "cancelled", "skipped"] },
+          "final_status": { "oneOf": [{ "$ref": "#/$defs/splitStatus" }, { "type": "null" }] },
+          "error": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["code", "message"],
+                "properties": {
+                  "code": { "type": "string", "minLength": 1 },
+                  "message": { "type": "string", "minLength": 1 }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "splitStatus": {
+      "enum": ["unsplit", "complete", "complete_empty", "partial", "stale", "raw_missing", "ineligible"]
+    }
+  }
+}

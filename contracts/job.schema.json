@@ -6,7 +6,8 @@
   "oneOf": [
     { "$ref": "#/$defs/captureJobSpec" },
     { "$ref": "#/$defs/analysisJobSpec" },
-    { "$ref": "#/$defs/batchJobSpec" }
+    { "$ref": "#/$defs/batchJobSpec" },
+    { "$ref": "#/$defs/packetSplitGroupJobSpec" }
   ],
   "$defs": {
     "jobId": {
@@ -193,6 +194,19 @@
         "controller": { "$ref": "#/$defs/controller" },
         "options": { "$ref": "#/$defs/captureOptions" },
         "fail_fast": { "type": "boolean" }
+      }
+    },
+    "packetSplitGroupJobSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "job_id", "scope_id", "output_root", "policy"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "kind": { "const": "packet_split_group" },
+        "job_id": { "$ref": "#/$defs/jobId" },
+        "scope_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9]{3}$" },
+        "output_root": { "$ref": "#/$defs/absolutePath" },
+        "policy": { "enum": ["missing_only", "repair_incomplete"] }
       }
     },
     "targetSource": {
