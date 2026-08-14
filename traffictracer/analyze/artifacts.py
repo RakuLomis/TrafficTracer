@@ -144,6 +144,9 @@ def persist_analysis_artifacts(
         "trace_snapshot": trace_snapshot,
         "storage": _storage_summary(session, results),
     }
+    playback = _playback_summary(session)
+    if playback is not None:
+        summary_payload["playback"] = playback
     summary_payload["coverage"] = layered_coverage(
         request_records,
         connection_records,
@@ -1187,6 +1190,14 @@ def _target_url(session: Path) -> str:
     context = _read_index(session / "raw" / "capture-context.json")
     target = context.get("target")
     return target.get("url", "") if isinstance(target, dict) else ""
+
+
+def _playback_summary(session: Path) -> dict | None:
+    context = _read_index(session / "raw" / "capture-context.json")
+    playback = context.get("playback")
+    if not isinstance(playback, dict):
+        return None
+    return playback
 
 
 def _target_document_non_network(records: list[dict], target_url: str) -> int:

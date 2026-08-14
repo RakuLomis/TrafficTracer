@@ -213,6 +213,7 @@ class SerialBatchJob:
             wait_load_timeout=target.wait_load_timeout,
             run_label=target.run_label,
             page_type=target.page_type,
+            playback=target.playback,
             capture_group=capture_group,
             target_source=TargetSource(
                 mode="config",

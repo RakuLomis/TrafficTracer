@@ -116,6 +116,10 @@ class CaptureJob:
             "output_root": self.spec.output_root,
             "cache_mode": self.spec.options.cache_mode,
         }
+        if self.spec.playback is not None:
+            capture_context["playback_policy"] = (
+                self.spec.playback.to_dict()
+            )
         write_json_atomic(paths["capture_context"], capture_context)
         self._record(paths["capture_context"])
 
@@ -181,10 +185,41 @@ class CaptureJob:
                 collector.connect()
                 collector.setup()
                 self.cancellation.checkpoint()
-                collector.navigate(
-                    self.spec.url, load_timeout=self.runtime.wait_load_timeout
-                )
-                collector.collect(self.spec.duration_seconds)
+                if self.spec.playback is None:
+                    collector.navigate(
+                        self.spec.url,
+                        load_timeout=self.runtime.wait_load_timeout,
+                    )
+                    collector.collect(self.spec.duration_seconds)
+                else:
+                    collector.navigate(
+                        self.spec.url,
+                        load_timeout=self.runtime.wait_load_timeout,
+                        wait_for_load=False,
+                    )
+
+                    def playback_progress(status: dict[str, Any]) -> None:
+                        duration = max(1.0, self.spec.duration_seconds)
+                        elapsed = float(status.get("elapsed_seconds", 0.0))
+                        self.progress.emit(
+                            JobState.CAPTURING,
+                            JobStage.CAPTURE_BROWSER,
+                            min(0.85, 0.4 + 0.45 * elapsed / duration),
+                            (
+                                f"{status.get('phase', 'preparation')} "
+                                f"{elapsed:.1f}/{duration:.0f}s; primary "
+                                f"{status.get('primary_content_seconds', 0):.1f}/"
+                                f"{status.get('desired_primary_seconds', 0)}s"
+                            ),
+                        )
+
+                    playback_result = collector.collect_playback(
+                        self.spec.duration_seconds,
+                        self.spec.playback,
+                        playback_progress,
+                    )
+                    capture_context["playback"] = playback_result
+                    write_json_atomic(paths["capture_context"], capture_context)
                 self.cancellation.checkpoint()
                 collector.stop_collecting()
                 write_json_atomic(paths["cdp"], collector.get_structured_data())

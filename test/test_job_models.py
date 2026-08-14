@@ -18,6 +18,7 @@ from traffictracer.jobs.models import (
     ProgressEvent,
     TargetSource,
 )
+from traffictracer.playback import PlaybackPolicy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,6 +90,45 @@ def test_capture_options_reject_unknown_pcap_split_mode():
 def test_capture_options_reject_unknown_cache_mode():
     with pytest.raises(ValueError, match="cache_mode"):
         CaptureJobOptions(cache_mode="stale")
+
+
+def test_capture_job_round_trips_optional_playback_policy():
+    payload = _fixture()
+    payload["url"] = "https://www.youtube.com/watch?v=example"
+    payload["domain"] = "youtube.com"
+    payload["duration_seconds"] = 35
+    payload["playback"] = {
+        "provider": "youtube",
+        "ad_policy": "click_visible_skip",
+        "desired_primary_seconds": 25,
+    }
+    spec = CaptureJobSpec.from_dict(payload)
+    assert spec.playback == PlaybackPolicy(
+        "youtube", "click_visible_skip", 25,
+    )
+    assert spec.to_dict() == payload
+
+
+def test_playback_policy_requires_cdp_and_fits_capture_window():
+    common = dict(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        url="https://www.youtube.com/watch?v=example",
+        domain="youtube.com",
+        duration_seconds=35,
+        network="all",
+        interfaces=CaptureInterfaces("Meta", "eth0"),
+        output_root="/tmp/traffictracer",
+        chrome_binary="/usr/bin/chromium",
+        controller=ControllerSpec("unix:///tmp/mihomo.sock"),
+        playback=PlaybackPolicy("youtube", desired_primary_seconds=25),
+    )
+    with pytest.raises(ValueError, match="requires CDP"):
+        CaptureJobSpec(
+            **common,
+            options=CaptureJobOptions(collect_cdp=False),
+        )
+    with pytest.raises(ValueError, match="cannot exceed"):
+        CaptureJobSpec(**{**common, "duration_seconds": 20})
 
 
 def test_capture_job_serializes_config_target_provenance():

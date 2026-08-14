@@ -38,6 +38,34 @@ Use one entry for each page visit. Multiple entries for the same domain are vali
 
 Unknown global settings are not imported into a UI target preview. The UI owns runtime core, controller, interfaces, Chrome, storage, and cache-mode choices.
 
+## Bounded YouTube playback
+
+YouTube video targets can request best-effort playback observation:
+
+```yaml
+- domain: youtube.com
+  url: https://www.youtube.com/watch?v=VIDEO_ID
+  page_type: youtube-video-play-1
+  wait: 35
+  traffic_type: all
+  playback:
+    provider: youtube
+    ad_policy: click_visible_skip
+    desired_primary_seconds: 25
+```
+
+`wait` remains the fixed capture window and starts when TrafficTracer issues the
+navigation command. It is not extended when an advertisement runs. The Worker
+observes YouTube player state, clicks a visible and enabled Skip control when
+one is offered, and records preparation, advertisement, primary-content, and
+other phase durations. All traffic remains in the raw evidence, including ads.
+
+`desired_primary_seconds` is a quality goal, not a second timeout. If less than
+25 seconds of advancing primary video is observed within the 35-second window,
+the capture still completes and its playback quality is marked `degraded`,
+`unavailable`, or `unknown`. Playback requires CDP collection and is accepted
+only for `youtube.com` subdomains or `youtu.be` URLs.
+
 ## Page-type normalization
 
 Explicit `page_type` is authoritative. It must match:

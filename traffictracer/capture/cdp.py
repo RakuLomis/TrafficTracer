@@ -10,7 +10,12 @@ import websockets
 from websockets.exceptions import ConnectionClosed
 
 from ..jobs.cancellation import CancellationToken
+from ..playback import PlaybackPolicy
 from ..utils import logger
+from .playback import (
+    observe_youtube_playback,
+    youtube_observation_expression,
+)
 
 
 class CDPCollector:
@@ -43,6 +48,9 @@ class CDPCollector:
         self._enable_tasks: set[asyncio.Task] = set()
         self._warnings: list[dict] = []
         self._navigation: dict = {}
+        self._page_session = ""
+        self._navigation_started_at: float | None = None
+        self._playback: dict | None = None
 
     async def connect(self, retries: int = 15, delay: float = 0.5) -> None:
         for attempt in range(retries):
@@ -294,6 +302,8 @@ class CDPCollector:
                 )
             if target_type in {"page", "iframe"}:
                 await self.send("Page.enable", session_id=session_id)
+            if target_type == "page":
+                await self.send("Runtime.enable", session_id=session_id)
             self._enabled_sessions.add(session_id)
         except Exception as e:
             logger.warning(
@@ -313,7 +323,13 @@ class CDPCollector:
             await self._cancellable_sleep(0.05)
         return ""
 
-    async def navigate(self, url: str, load_timeout: float = 30.0) -> None:
+    async def navigate(
+        self,
+        url: str,
+        load_timeout: float = 30.0,
+        *,
+        wait_for_load: bool = True,
+    ) -> None:
         self._checkpoint()
         self._visit_url = url
         self._collecting = True
@@ -331,11 +347,13 @@ class CDPCollector:
             )
 
         await self._enable_session(page_session, "page")
+        self._page_session = page_session
         load_event = asyncio.Event()
         navigate_command_timed_out = False
         self._navigation = {"url": url, "status": "started"}
         self._load_events[page_session] = load_event
         try:
+            self._navigation_started_at = asyncio.get_running_loop().time()
             try:
                 await self.send(
                     "Page.navigate",
@@ -351,6 +369,11 @@ class CDPCollector:
                 self._warnings.append(warning)
                 self._navigation["status"] = "command_timeout"
                 logger.warning("%s for %s", warning["message"], url)
+            if not wait_for_load:
+                if not navigate_command_timed_out:
+                    self._navigation["status"] = "command_completed"
+                logger.info("Navigation to %s started; observing fixed window", url)
+                return
             loop = asyncio.get_running_loop()
             deadline = loop.time() + load_timeout
             while not load_event.is_set() and loop.time() < deadline:
@@ -384,6 +407,55 @@ class CDPCollector:
 
     async def collect(self, seconds: float) -> None:
         await self._cancellable_sleep(seconds)
+
+    async def collect_playback(
+        self,
+        seconds: float,
+        policy: PlaybackPolicy,
+        progress=None,
+    ) -> dict:
+        if policy.provider != "youtube":
+            raise ValueError("unsupported playback provider")
+        if not self._page_session or self._navigation_started_at is None:
+            raise RuntimeError("playback collection requires a navigation target")
+
+        async def evaluate(allow_click: bool) -> dict:
+            remaining = (
+                self._navigation_started_at + seconds
+                - asyncio.get_running_loop().time()
+            )
+            if remaining <= 0:
+                return {}
+            result = await self.send(
+                "Runtime.evaluate",
+                {
+                    "expression": youtube_observation_expression(allow_click),
+                    "returnByValue": True,
+                    "awaitPromise": False,
+                },
+                timeout=min(2.0, max(0.1, remaining)),
+                session_id=self._page_session,
+            )
+            if result.get("exceptionDetails"):
+                raise RuntimeError("YouTube playback observation failed")
+            remote = result.get("result", {})
+            value = remote.get("value")
+            if not isinstance(value, dict):
+                raise RuntimeError(
+                    "YouTube playback observation returned no object"
+                )
+            return value
+
+        self._playback = await observe_youtube_playback(
+            policy,
+            seconds,
+            evaluate=evaluate,
+            started_at=self._navigation_started_at,
+            clock=asyncio.get_running_loop().time,
+            checkpoint=self._checkpoint,
+            progress=progress,
+        )
+        return dict(self._playback)
 
     def _checkpoint(self) -> None:
         cancellation = getattr(self, "_cancellation", None)
@@ -438,7 +510,7 @@ class CDPCollector:
             entry["target_type"] = target_info.get("type", "unknown")
             merged_requests.append(entry)
 
-        return {
+        data = {
             "visit_url": self._visit_url,
             "targets": [
                 {"target_id": tid, **info}
@@ -454,6 +526,10 @@ class CDPCollector:
                 "warnings": list(getattr(self, "_warnings", [])),
             },
         }
+        playback = getattr(self, "_playback", None)
+        if playback is not None:
+            data["metadata"]["playback"] = dict(playback)
+        return data
 
     async def close_browser(self) -> None:
         try:
@@ -522,12 +598,31 @@ class SyncCDPCollector:
     def setup(self) -> None:
         self._run(self._collector.setup(), timeout=15)
 
-    def navigate(self, url: str, load_timeout: float = 30.0) -> None:
-        self._run(self._collector.navigate(url, load_timeout),
+    def navigate(
+        self,
+        url: str,
+        load_timeout: float = 30.0,
+        *,
+        wait_for_load: bool = True,
+    ) -> None:
+        self._run(self._collector.navigate(
+            url, load_timeout, wait_for_load=wait_for_load,
+        ),
                   timeout=load_timeout + 15)
 
     def collect(self, seconds: float) -> None:
         self._run(self._collector.collect(seconds), timeout=seconds + 10)
+
+    def collect_playback(
+        self,
+        seconds: float,
+        policy: PlaybackPolicy,
+        progress=None,
+    ) -> dict:
+        return self._run(
+            self._collector.collect_playback(seconds, policy, progress),
+            timeout=seconds + 15,
+        )
 
     def stop_collecting(self) -> None:
         self._collector.stop_collecting()

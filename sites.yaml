@@ -42,9 +42,13 @@ sites:
 
   - domain: youtube.com
     url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
-    wait: 15
+    wait: 35
     traffic_type: all
     page_type: youtube-video-play-1
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
 
   - domain: google.com
     url: "https://www.google.com/"

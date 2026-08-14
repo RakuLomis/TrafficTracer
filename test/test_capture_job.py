@@ -361,6 +361,104 @@ def test_cdp_cancellation_closes_browser_before_terminating_process(tmp_path, mo
     assert progress[-1].state is JobState.CANCELLED
 
 
+def test_youtube_playback_uses_one_fixed_window_and_persists_quality(
+    tmp_path, monkeypatch,
+):
+    from dataclasses import replace
+    import traffictracer.capture.job as module
+    from traffictracer.playback import PlaybackPolicy
+
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+    job.spec = replace(
+        job.spec,
+        url="https://www.youtube.com/watch?v=example",
+        domain="youtube.com",
+        duration_seconds=35,
+        playback=PlaybackPolicy(
+            "youtube",
+            "click_visible_skip",
+            25,
+        ),
+        options=replace(job.spec.options, collect_cdp=True),
+    )
+    job.runtime = replace(job.runtime, enable_cdp=True)
+    playback_result = {
+        "schema_version": 1,
+        "provider": "youtube",
+        "ad_policy": "click_visible_skip",
+        "observation_window_seconds": 35,
+        "observed_total_seconds": 35,
+        "desired_primary_seconds": 25,
+        "primary_content_seconds": 25.2,
+        "primary_goal_met": True,
+        "quality": "good",
+        "reason": None,
+        "phase_seconds": {
+            "preparation": 5,
+            "advertisement": 4.8,
+            "primary_content": 25.2,
+            "other": 0,
+        },
+        "skip_attempts": 1,
+        "automation_available": True,
+        "evaluation_errors": 0,
+        "end_reason": "observation_window_elapsed",
+        "events": [],
+    }
+
+    class PlaybackCollector:
+        def __init__(self, **kwargs):
+            pass
+
+        def connect(self):
+            events.append("cdp:connect")
+
+        def setup(self):
+            events.append("cdp:setup")
+
+        def navigate(self, url, load_timeout, *, wait_for_load=True):
+            assert wait_for_load is False
+            events.append("cdp:navigate-fixed")
+
+        def collect_playback(self, seconds, policy, callback):
+            assert seconds == 35
+            assert policy.desired_primary_seconds == 25
+            callback({
+                "elapsed_seconds": 35,
+                "phase": "primary_content",
+                "primary_content_seconds": 25.2,
+                "desired_primary_seconds": 25,
+            })
+            events.append("cdp:collect-playback")
+            return playback_result
+
+        def stop_collecting(self):
+            events.append("cdp:stop")
+
+        def get_structured_data(self):
+            return {
+                "requests": [],
+                "metadata": {"playback": playback_result},
+            }
+
+        def close_browser(self):
+            events.append("cdp:Browser.close")
+
+        def close(self):
+            events.append("cdp:close")
+
+    monkeypatch.setattr(module, "SyncCDPCollector", PlaybackCollector)
+    result = job.run()
+    assert result.state is JobState.COMPLETED
+    assert "cdp:collect-playback" in events
+    context_path = next((tmp_path / "logs").glob("capture_context_*.json"))
+    context = json.loads(context_path.read_text(encoding="utf-8"))
+    assert context["playback_policy"]["desired_primary_seconds"] == 25
+    assert context["playback"]["primary_goal_met"] is True
+    assert registry.closed
+
+
 def test_restore_failure_keeps_journal_for_worker_recovery(tmp_path, monkeypatch):
     events = []
     job, registry, progress = _job(

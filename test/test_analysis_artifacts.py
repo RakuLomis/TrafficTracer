@@ -659,3 +659,15 @@ def test_storage_summary_counts_only_capture_inputs(tmp_path):
         "analysis_result_bytes_before_summary": 17,
         "compression": "none",
     }
+
+
+def test_summary_surfaces_bounded_playback_quality(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    playback = {"provider": "youtube", "quality": "degraded"}
+    (raw / "capture-context.json").write_text(
+        json.dumps({"playback": playback}), encoding="utf-8"
+    )
+    artifacts = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
+    assert summary["playback"] == playback

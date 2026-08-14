@@ -12,6 +12,7 @@ from uuid import UUID
 
 from traffictracer.config import TargetConfigPreview
 from traffictracer.contracts import validate_batch_manifest, validate_job
+from traffictracer.playback import PlaybackPolicy
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import BATCH_MANIFEST_SCHEMA_VERSION, JOB_SCHEMA_VERSION
 
@@ -62,9 +63,10 @@ class BatchTarget:
     run_label: str
     wait_load_timeout: int
     page_type: str = "capture"
+    playback: PlaybackPolicy | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "index": self.index,
             "url": self.url,
             "domain": self.domain,
@@ -74,6 +76,9 @@ class BatchTarget:
             "wait_load_timeout": self.wait_load_timeout,
             "page_type": self.page_type,
         }
+        if self.playback is not None:
+            payload["playback"] = self.playback.to_dict()
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "BatchTarget":
@@ -86,6 +91,7 @@ class BatchTarget:
             run_label=payload["run_label"],
             wait_load_timeout=payload["wait_load_timeout"],
             page_type=payload.get("page_type", payload["run_label"].lower().replace("_", "-")),
+            playback=PlaybackPolicy.from_dict(payload.get("playback")),
         )
 
 
@@ -119,6 +125,7 @@ class BatchJobSpec:
                 target.run_label,
                 target.wait_load_timeout,
                 target.page_type,
+                target.playback,
             )
             for target in self.targets
         ]
@@ -126,6 +133,17 @@ class BatchJobSpec:
             raise ValueError("capture group targets must not contain duplicates")
         if not self.options.analyze_after_capture:
             raise ValueError("capture group requires analyze_after_capture")
+        for target in self.targets:
+            if target.playback is None:
+                continue
+            if not self.options.collect_cdp:
+                raise ValueError(
+                    "batch playback observation requires CDP collection"
+                )
+            if target.playback.desired_primary_seconds > target.duration_seconds:
+                raise ValueError(
+                    "playback desired_primary_seconds cannot exceed duration_seconds"
+                )
 
     @classmethod
     def from_preview(

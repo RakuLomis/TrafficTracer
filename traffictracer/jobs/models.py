@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from traffictracer.contracts import validate_job
+from traffictracer.playback import PlaybackPolicy
 from traffictracer.version import JOB_SCHEMA_VERSION
 
 
@@ -134,9 +135,20 @@ class CaptureJobSpec:
     target_source: TargetSource = field(default_factory=TargetSource)
     page_type: str = "capture"
     capture_group: str = ""
+    playback: PlaybackPolicy | None = None
 
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="capture", init=False)
+
+    def __post_init__(self) -> None:
+        if self.playback is None:
+            return
+        if not self.options.collect_cdp:
+            raise ValueError("playback observation requires CDP collection")
+        if self.playback.desired_primary_seconds > self.duration_seconds:
+            raise ValueError(
+                "playback desired_primary_seconds cannot exceed duration_seconds"
+            )
 
     def to_dict(self, *, validate: bool = True) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -158,6 +170,8 @@ class CaptureJobSpec:
             "page_type": self.page_type,
             "capture_group": self.capture_group,
         }
+        if self.playback is not None:
+            payload["playback"] = self.playback.to_dict()
         if validate:
             validate_job(payload)
         return payload
@@ -205,6 +219,7 @@ class CaptureJobSpec:
             target_source=TargetSource.from_dict(data.get("target_source")),
             page_type=data.get("page_type", data.get("run_label", "capture")).lower().replace("_", "-"),
             capture_group=data.get("capture_group", ""),
+            playback=PlaybackPolicy.from_dict(data.get("playback")),
         )
 
 

@@ -3,6 +3,7 @@
 import sys
 import os
 import tempfile
+import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.config import (
@@ -129,6 +130,71 @@ def test_load_target_config_requires_absolute_path(tmp_path, monkeypatch):
         assert exc.field_path == "config_path"
     else:
         raise AssertionError("relative target config path was accepted")
+
+
+def test_target_config_normalizes_youtube_playback_policy(tmp_path):
+    path = tmp_path / "sites.yaml"
+    path.write_text(
+        """
+sites:
+  - domain: youtube.com
+    url: https://www.youtube.com/watch?v=example
+    page_type: video-play
+    wait: 35
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+""",
+        encoding="utf-8",
+    )
+    (target,) = load_target_config(path).to_dict()["targets"]
+    assert target["duration_seconds"] == 35
+    assert target["playback"] == {
+        "provider": "youtube",
+        "ad_policy": "click_visible_skip",
+        "desired_primary_seconds": 25,
+    }
+
+
+def test_target_config_rejects_playback_goal_longer_than_wait(tmp_path):
+    path = tmp_path / "sites.yaml"
+    path.write_text(
+        """
+sites:
+  - domain: youtube.com
+    url: https://www.youtube.com/watch?v=example
+    wait: 20
+    playback:
+      provider: youtube
+      desired_primary_seconds: 25
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigValidationError) as raised:
+        load_target_config(path)
+    assert raised.value.field_path == (
+        "sites[0].playback.desired_primary_seconds"
+    )
+
+
+def test_target_config_rejects_youtube_policy_on_other_host(tmp_path):
+    path = tmp_path / "sites.yaml"
+    path.write_text(
+        """
+sites:
+  - domain: example.com
+    url: https://example.com/video
+    wait: 35
+    playback:
+      provider: youtube
+      desired_primary_seconds: 25
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigValidationError) as raised:
+        load_target_config(path)
+    assert raised.value.field_path == "sites[0].playback.provider"
 
 
 if __name__ == "__main__":

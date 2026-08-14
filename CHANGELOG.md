@@ -4,6 +4,13 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+### Added
+
+- Added optional bounded YouTube playback observation for YAML targets, with a
+  fixed capture window, visible Skip-control interaction, preserved ad traffic,
+  primary-content duration goals, and quality metadata in capture and analysis
+  artifacts.
+
 ### Documentation
 
 - Reduced the root README to the product overview and first-run QuickStart.

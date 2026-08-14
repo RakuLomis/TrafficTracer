@@ -27,6 +27,14 @@ sites:
     traffic_type: all
     wait_load_timeout: 30
   - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=VIDEO_ID"
+    wait: 35
+    traffic_type: all
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+  - domain: youtube.com
     url: "https://www.youtube.com"
     wait: 15
     traffic_type: tcp

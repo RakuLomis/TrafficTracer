@@ -91,6 +91,10 @@ Important fields include:
 - connection resolution and unmatched reason;
 - attribution evidence and timing.
 
+For playback-enabled targets, `raw/capture-context.json` and
+`analysis/summary.json` also preserve the fixed observation window, phase
+durations, visible-skip attempts, primary-content duration, and quality result.
+
 `network_observation` can be:
 
 - `network`;

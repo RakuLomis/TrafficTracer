@@ -11,6 +11,7 @@ import yaml
 
 from traffictracer.contracts import validate_target_config
 from traffictracer.layout import normalize_page_types
+from traffictracer.playback import PlaybackPolicy
 
 
 TARGET_CONFIG_SCHEMA_VERSION = 1
@@ -76,6 +77,7 @@ class SiteConfig:
     traffic_type: str = "all"
     wait_load_timeout: int = 30
     page_type: str | None = None
+    playback: PlaybackPolicy | None = None
 
 
 @dataclass
@@ -94,9 +96,10 @@ class TargetConfigEntry:
     run_label: str
     wait_load_timeout: int
     page_type: str
+    playback: PlaybackPolicy | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "index": self.index,
             "domain": self.domain,
             "url": self.url,
@@ -106,6 +109,9 @@ class TargetConfigEntry:
             "wait_load_timeout": self.wait_load_timeout,
             "page_type": self.page_type,
         }
+        if self.playback is not None:
+            payload["playback"] = self.playback.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,7 @@ def load_config(path: str) -> Config:
             traffic_type=s.get("traffic_type", "all"),
             wait_load_timeout=s.get("wait_load_timeout", 30),
             page_type=s.get("page_type"),
+            playback=PlaybackPolicy.from_dict(s.get("playback")),
         ))
 
     if not sites:
@@ -262,6 +269,12 @@ def load_target_config(path: str | Path) -> TargetConfigPreview:
         page_type = site.get("page_type")
         if page_type is not None and not isinstance(page_type, str):
             raise ConfigValidationError(f"{field}.page_type", "must be a string")
+        playback = _parse_playback_policy(
+            site.get("playback"),
+            field=f"{field}.playback",
+            duration_seconds=duration,
+            hostname=parsed.hostname or "",
+        )
         normalized_sites.append((site, traffic_type))
         targets.append(
             TargetConfigEntry(
@@ -273,6 +286,7 @@ def load_target_config(path: str | Path) -> TargetConfigPreview:
                 run_label=traffic_type,
                 wait_load_timeout=load_timeout,
                 page_type="",
+                playback=playback,
             )
         )
 
@@ -321,6 +335,57 @@ def _bounded_integer(value: object, field: str, minimum: int, maximum: int) -> i
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise ConfigValidationError(field, f"must be an integer between {minimum} and {maximum}")
     return value
+
+
+def _parse_playback_policy(
+    value: object,
+    *,
+    field: str,
+    duration_seconds: int,
+    hostname: str,
+) -> PlaybackPolicy | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigValidationError(field, "must be a mapping")
+    unknown = sorted(
+        set(value) - {
+            "provider",
+            "ad_policy",
+            "desired_primary_seconds",
+        }
+    )
+    if unknown:
+        raise ConfigValidationError(
+            field, "contains unsupported fields: " + ", ".join(unknown),
+        )
+    provider = value.get("provider")
+    if provider != "youtube":
+        raise ConfigValidationError(
+            f"{field}.provider", "must be youtube",
+        )
+    normalized_host = hostname.lower().rstrip(".")
+    if not (
+        normalized_host == "youtube.com"
+        or normalized_host.endswith(".youtube.com")
+        or normalized_host == "youtu.be"
+    ):
+        raise ConfigValidationError(
+            f"{field}.provider",
+            "youtube playback requires a youtube.com or youtu.be URL",
+        )
+    ad_policy = value.get("ad_policy", "click_visible_skip")
+    if ad_policy != "click_visible_skip":
+        raise ConfigValidationError(
+            f"{field}.ad_policy", "must be click_visible_skip",
+        )
+    desired = _bounded_integer(
+        value.get("desired_primary_seconds", 25),
+        f"{field}.desired_primary_seconds",
+        1,
+        duration_seconds,
+    )
+    return PlaybackPolicy(provider, ad_policy, desired)
 
 
 def _valid_domain(domain: str) -> bool:
