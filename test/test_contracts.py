@@ -117,6 +117,56 @@ def test_validation_error_never_echoes_secret_values():
     assert caught.value.path == ("controller", "secret")
 
 
+def test_job_error_uses_batch_kind_branch_for_invalid_optional_playback():
+    payload = _fixture("job-valid-batch.json")
+    payload["targets"][0]["playback"] = None
+
+    with pytest.raises(ValidationError) as caught:
+        validate_job(payload)
+
+    assert caught.value.path == ("targets", 0, "playback")
+    assert caught.value.rule == "type"
+
+
+def test_job_error_uses_capture_kind_branch():
+    payload = _fixture("job-valid.json")
+    payload["url"] = "not-a-url"
+
+    with pytest.raises(ValidationError) as caught:
+        validate_job(payload)
+
+    assert caught.value.path == ("url",)
+    assert caught.value.rule == "pattern"
+
+
+def test_job_error_uses_packet_split_kind_branch():
+    payload = {
+        "schema_version": 2,
+        "kind": "packet_split_group",
+        "job_id": "123e4567-e89b-42d3-a456-426614174000",
+        "scope_id": "20260814-120000-000",
+        "output_root": "/tmp/sessions",
+        "policy": "unsupported",
+    }
+
+    with pytest.raises(ValidationError) as caught:
+        validate_job(payload)
+
+    assert caught.value.path == ("policy",)
+    assert caught.value.rule == "enum"
+
+
+def test_unknown_job_kind_still_reports_the_discriminator():
+    payload = _fixture("job-valid-batch.json")
+    payload["kind"] = "unknown"
+
+    with pytest.raises(ValidationError) as caught:
+        validate_job(payload)
+
+    assert caught.value.path == ("kind",)
+    assert caught.value.rule == "const"
+
+
 def test_validators_are_cached_but_loaded_schemas_are_defensive_copies():
     assert get_validator("worker-api") is get_validator("worker_api")
     first = load_schema("job")

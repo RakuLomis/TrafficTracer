@@ -214,12 +214,42 @@ def _leaf_error(error: Any) -> Iterator[Any]:
         for child in error.context:
             branch = str(next(iter(child.schema_path), ""))
             branches.setdefault(branch, []).append(child)
+        discriminated = _discriminated_branch(error, branches)
+        if discriminated is not None:
+            yield from _leaf_errors(discriminated)
+            return
         candidates = [list(_leaf_errors(children)) for children in branches.values()]
         best = min(candidates, key=lambda items: (len(items), _error_sort_key(items)))
         yield from best
         return
 
     yield from _leaf_errors(list(error.context))
+
+
+def _discriminated_branch(
+    error: Any,
+    branches: Mapping[str, list[Any]],
+) -> list[Any] | None:
+    """Return the branch selected by a string ``kind`` discriminator."""
+    if not isinstance(error.instance, Mapping):
+        return None
+    kind = error.instance.get("kind")
+    if not isinstance(kind, str):
+        return None
+
+    kind_path = tuple(error.absolute_path) + ("kind",)
+    candidates = []
+    saw_mismatch = False
+    for children in branches.values():
+        mismatch = any(
+            child.validator == "const"
+            and tuple(child.absolute_path) == kind_path
+            for child in children
+        )
+        saw_mismatch = saw_mismatch or mismatch
+        if not mismatch:
+            candidates.append(children)
+    return candidates[0] if saw_mismatch and len(candidates) == 1 else None
 
 
 def _error_sort_key(errors: list[Any]) -> tuple[str, ...]:
