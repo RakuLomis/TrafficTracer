@@ -23,6 +23,7 @@ ACTIVE_DOCS = (
     ROOT / "docs" / "development.md",
     ROOT / "docs" / "operations.md",
     ROOT / "docs" / "release-checklist.md",
+    ROOT / "docs" / "releases" / "v1.0.1.md",
     ROOT / "docs" / "releases" / "v1.0.0.md",
     ROOT / "docs" / "standalone-tools.md",
     ROOT / "test" / "e2e" / "tun" / "README.md",

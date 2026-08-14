@@ -105,6 +105,7 @@ def persist_analysis_artifacts(
         },
         "items": items,
     }
+    playback = _playback_summary(session)
     summary_payload = {
         "schema_version": FLOW_SCHEMA_VERSION,
         "session_id": session_id,
@@ -144,9 +145,9 @@ def persist_analysis_artifacts(
         "trace_snapshot": trace_snapshot,
         "storage": _storage_summary(session, results),
     }
-    playback = _playback_summary(session)
     if playback is not None:
         summary_payload["playback"] = playback
+        summary_payload["scenario_outcome"] = _playback_scenario_outcome(playback)
     summary_payload["coverage"] = layered_coverage(
         request_records,
         connection_records,
@@ -1198,6 +1199,25 @@ def _playback_summary(session: Path) -> dict | None:
     if not isinstance(playback, dict):
         return None
     return playback
+
+
+def _playback_scenario_outcome(playback: dict) -> dict:
+    goal_met = playback.get("primary_goal_met") is True
+    quality = playback.get("quality")
+    if goal_met:
+        state = "passed"
+    elif quality in {"degraded", "unavailable"}:
+        state = "degraded"
+    else:
+        state = "indeterminate"
+    return {
+        "kind": "youtube_playback",
+        "state": state,
+        "reason": playback.get("reason"),
+        "primary_goal_met": goal_met,
+        "primary_content_seconds": playback.get("primary_content_seconds", 0),
+        "desired_primary_seconds": playback.get("desired_primary_seconds", 0),
+    }
 
 
 def _target_document_non_network(records: list[dict], target_url: str) -> int:

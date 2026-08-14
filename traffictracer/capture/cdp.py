@@ -419,7 +419,7 @@ class CDPCollector:
         if not self._page_session or self._navigation_started_at is None:
             raise RuntimeError("playback collection requires a navigation target")
 
-        async def evaluate(allow_click: bool) -> dict:
+        async def evaluate(allow_click: bool, allow_play: bool) -> dict:
             remaining = (
                 self._navigation_started_at + seconds
                 - asyncio.get_running_loop().time()
@@ -429,7 +429,9 @@ class CDPCollector:
             result = await self.send(
                 "Runtime.evaluate",
                 {
-                    "expression": youtube_observation_expression(allow_click),
+                    "expression": youtube_observation_expression(
+                        allow_click, allow_play,
+                    ),
                     "returnByValue": True,
                     "awaitPromise": False,
                 },

@@ -1,15 +1,15 @@
 # TrafficTracer Complete UI Guide
 
-TrafficTracer Complete 1.0.0 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
+TrafficTracer Complete 1.0.1 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
 
 ## 1. Verify the release
 
 The release directory contains one Deb, one AppImage, checksums, component provenance, license notices, an SBOM, and an audit report:
 
 ```text
-traffictracer-complete-v1.0.0-linux-x86_64/
-├── TrafficTracer-Complete_1.0.0_linux_x86_64.deb
-├── TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+traffictracer-complete-v1.0.1-linux-x86_64/
+├── TrafficTracer-Complete_1.0.1_linux_x86_64.deb
+├── TrafficTracer-Complete_1.0.1_linux_x86_64.AppImage
 ├── SHA256SUMS
 ├── VERSION
 ├── COMPONENTS
@@ -24,11 +24,11 @@ traffictracer-complete-v1.0.0-linux-x86_64/
 Verify the package checksums:
 
 ```bash
-cd /path/to/traffictracer-complete-v1.0.0-linux-x86_64
+cd /path/to/traffictracer-complete-v1.0.1-linux-x86_64
 sha256sum -c SHA256SUMS
 ```
 
-`VERSION` identifies TrafficTracer Complete 1.0.0. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
+`VERSION` identifies TrafficTracer Complete 1.0.1. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
 
 ## 2. Install prerequisites
 
@@ -48,16 +48,16 @@ Some distributions grant capture access through the `wireshark` group instead of
 Install the Deb:
 
 ```bash
-sudo apt install ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.1_linux_x86_64.deb
 ```
 
-The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.0`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
+The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.1`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
 
 To avoid installing system files, use the AppImage:
 
 ```bash
-chmod +x TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+chmod +x TrafficTracer-Complete_1.0.1_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.1_linux_x86_64.AppImage
 ```
 
 Do not install from `/tmp` if the path may disappear after a reboot. For `apt`, include `./` or an absolute path; otherwise the filename is interpreted as a package name.
@@ -200,7 +200,7 @@ See [Sessions and correlation data](../data-model.md) for the full semantics.
 
 ## 11. Protocol versions
 
-`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.0 uses:
+`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.1 uses:
 
 | Contract | Version |
 | --- | ---: |

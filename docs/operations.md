@@ -223,8 +223,8 @@ TrafficTracer classifies known reject and failure outcomes so they remain valid 
 These commands are different:
 
 ```bash
-sudo apt install ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
-sudo dpkg -i ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.1_linux_x86_64.deb
+sudo dpkg -i ./TrafficTracer-Complete_1.0.1_linux_x86_64.deb
 ```
 
 `apt install` resolves dependencies; `dpkg -i` only installs the local package and may leave dependencies unresolved. Without `./` or an absolute path, `apt` searches package repositories and reports that it cannot locate the package.

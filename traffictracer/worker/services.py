@@ -760,6 +760,7 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
         "capture_global_quality_state": None,
         "analysis_integrity_state": None,
         "network_outcome_state": None,
+        "scenario_outcome_state": None,
         "coverage": None,
         "packet_split": inspect_packet_split(manifest).to_dict(),
     }
@@ -806,6 +807,9 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
                     page_network = network.get("page_attributed", {})
                     if isinstance(page_network, dict):
                         payload["network_outcome_state"] = page_network.get("state")
+                scenario = summary.get("scenario_outcome", {})
+                if isinstance(scenario, dict):
+                    payload["scenario_outcome_state"] = scenario.get("state")
                 coverage = summary.get("coverage")
                 if isinstance(coverage, dict):
                     page = coverage.get("page_attributed")

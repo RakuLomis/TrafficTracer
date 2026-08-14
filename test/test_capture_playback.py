@@ -18,8 +18,9 @@ def test_youtube_expression_only_switches_internal_click_flag():
     enabled = youtube_observation_expression(True)
     assert "__ALLOW_CLICK__" not in disabled
     assert "__ALLOW_CLICK__" not in enabled
-    assert "if (false && adShowing" in disabled
-    assert "if (true && adShowing" in enabled
+    assert "__ALLOW_PLAY__" not in disabled
+    assert "if (false && skipButton)" in disabled
+    assert "if (true && skipButton)" in enabled
     assert "desired_primary_seconds" not in enabled
 
 
@@ -72,7 +73,7 @@ def test_fixed_window_keeps_ad_and_primary_durations():
             },
         ]
 
-        async def evaluate(allow_click):
+        async def evaluate(allow_click, _allow_play):
             index = min(int(now[0] / 0.5), len(observations) - 1)
             result = dict(observations[index])
             if result.get("skip_clicked"):
@@ -96,7 +97,7 @@ def test_fixed_window_keeps_ad_and_primary_durations():
     assert result["observed_total_seconds"] == 3
     assert result["phase_seconds"]["advertisement"] > 0
     assert result["phase_seconds"]["primary_content"] >= 1
-    assert result["skip_attempts"] == 1
+    assert result["skip_attempts"] == 0
     assert result["primary_goal_met"] is True
     assert result["quality"] == "good"
     assert progress[-1]["elapsed_seconds"] == 3
@@ -106,7 +107,7 @@ def test_observation_failure_is_quality_unknown_not_capture_error():
     async def scenario():
         now = [0.0]
 
-        async def evaluate(_allow_click):
+        async def evaluate(_allow_click, _allow_play):
             now[0] += 0.5
             raise RuntimeError("page context unavailable")
 
@@ -126,3 +127,51 @@ def test_observation_failure_is_quality_unknown_not_capture_error():
     assert result["reason"] == "PLAYBACK_STATE_UNKNOWN"
     assert result["automation_available"] is False
     assert result["evaluation_errors"] == 2
+
+
+def test_visible_skip_does_not_require_ad_class_and_player_api_can_confirm_playback():
+    expression = youtube_observation_expression(True, True)
+    assert "if (true && skipButton)" in expression
+    assert "getPlayerState" in expression
+    assert "player.playVideo" in expression
+
+
+def test_interactions_wait_for_initial_five_seconds_and_diagnostics_are_bounded():
+    async def scenario():
+        now = [0.0]
+        interaction_flags = []
+
+        async def evaluate(allow_click, allow_play):
+            interaction_flags.append((now[0], allow_click, allow_play))
+            now[0] += 0.5
+            return {
+                "player_present": True,
+                "video_present": True,
+                "ad_showing": now[0] < 6,
+                "skip_visible": now[0] < 6,
+                "skip_clicked": allow_click and now[0] < 6,
+                "play_requested": allow_play and now[0] >= 6,
+                "player_state": 1 if now[0] >= 6 else 2,
+                "video_paused": now[0] < 6,
+                "video_ready_state": 4,
+                "video_current_time": max(0, now[0] - 6),
+                "video_candidate_count": 1,
+            }
+
+        result = await observe_youtube_playback(
+            PlaybackPolicy("youtube", desired_primary_seconds=1),
+            8,
+            evaluate=evaluate,
+            started_at=0,
+            clock=lambda: now[0],
+            checkpoint=lambda: None,
+            poll_interval=0,
+        )
+        return result, interaction_flags
+
+    result, flags = asyncio.run(scenario())
+    assert all(not click and not play for at, click, play in flags if at < 5)
+    assert result["skip_attempts"] >= 1
+    assert result["primary_goal_met"] is True
+    assert result["diagnostics"]["counts"]["samples"] == len(flags)
+    assert "video_current_time" not in result["diagnostics"]["last_observation"]

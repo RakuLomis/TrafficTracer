@@ -225,3 +225,13 @@ A single overall percentage would hide important distinctions. For example, all 
 `correlation.json` and older schema-v1 views are compatibility projections. New consumers should use the v2 request and connection indexes plus the PCAP index. Consistency checks verify that legacy projections do not contradict canonical data.
 
 Old schema-v1 Sessions remain readable and can be re-analyzed when their raw artifacts are available. Re-analysis never changes the recorded target provenance or raw capture files.
+
+
+## Scenario outcome
+
+A configured browser scenario is evaluated separately from flow integrity.
+YouTube playback Sessions include scenario_outcome in analysis/summary.json
+with passed, degraded, or indeterminate state, the bounded primary-content
+duration, the configured goal, and a machine-readable reason. A degraded
+scenario does not invalidate otherwise consistent request, connection, flow, or
+PCAP indexes.

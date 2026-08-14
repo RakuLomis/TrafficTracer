@@ -4,12 +4,24 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.1] - 2026-08-14
+
 ### Added
 
 - Added optional bounded YouTube playback observation for YAML targets, with a
   fixed capture window, visible Skip-control interaction, preserved ad traffic,
-  primary-content duration goals, and quality metadata in capture and analysis
-  artifacts.
+  primary-content duration goals, YouTube Player API and active-video
+  detection, bounded interaction diagnostics, and explicit scenario outcomes.
+- Added a TrafficTracer UI heartbeat and a tray action that reloads only the
+  WebView while leaving Mihomo and active capture work running.
+
+### Fixed
+
+- Stopped terminal batches and missing packet-split Jobs from retaining
+  high-frequency polling state across application restarts.
+- Prevented packet-split previews from running while a capture batch is active.
+- Separated playback scenario success from analysis integrity and network
+  outcome so a failed playback goal cannot be hidden by valid flow correlation.
 
 ### Documentation
 

@@ -9,7 +9,7 @@ from typing import Any
 from traffictracer.playback import PlaybackPolicy
 
 
-ObservationEvaluator = Callable[[bool], Awaitable[Mapping[str, Any]]]
+ObservationEvaluator = Callable[[bool, bool], Awaitable[Mapping[str, Any]]]
 PlaybackProgress = Callable[[dict[str, Any]], None]
 
 
@@ -23,7 +23,16 @@ _YOUTUBE_OBSERVATION_TEMPLATE = r"""
       Number(style.opacity || 1) > 0 && rect.width > 0 && rect.height > 0;
   };
   const player = document.querySelector('#movie_player');
-  const video = document.querySelector('video');
+  const videos = Array.from(
+    player ? player.querySelectorAll('video') : document.querySelectorAll('video')
+  );
+  const video = videos
+    .filter(visible)
+    .sort((left, right) => {
+      const a = left.getBoundingClientRect();
+      const b = right.getBoundingClientRect();
+      return (b.width * b.height) - (a.width * a.height);
+    })[0] || videos[0] || null;
   const adOverlay = Array.from(document.querySelectorAll(
     '.ytp-ad-player-overlay, .video-ads.ytp-ad-module'
   )).some(visible);
@@ -46,17 +55,49 @@ _YOUTUBE_OBSERVATION_TEMPLATE = r"""
   const skipButton = [...selectorCandidates, ...semanticCandidates]
     .find((element) => visible(element) && !element.disabled) || null;
   let skipClicked = false;
-  if (__ALLOW_CLICK__ && adShowing && skipButton) {
+  if (__ALLOW_CLICK__ && skipButton) {
     skipButton.click();
     skipClicked = true;
+  }
+  let playerState = null;
+  let playerTime = null;
+  let playerDuration = null;
+  try {
+    playerState = player && typeof player.getPlayerState === 'function'
+      ? Number(player.getPlayerState()) : null;
+    playerTime = player && typeof player.getCurrentTime === 'function'
+      ? Number(player.getCurrentTime()) : null;
+    playerDuration = player && typeof player.getDuration === 'function'
+      ? Number(player.getDuration()) : null;
+  } catch (_) {}
+  let playRequested = false;
+  if (
+    __ALLOW_PLAY__ && !adShowing && !skipButton &&
+    playerState !== 1 && (!video || video.paused)
+  ) {
+    try {
+      if (player && typeof player.playVideo === 'function') {
+        player.playVideo();
+        playRequested = true;
+      } else if (video && video.paused && typeof video.play === 'function') {
+        const pending = video.play();
+        if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+        playRequested = true;
+      }
+    } catch (_) {}
   }
   return {
     href: String(window.location.href || ''),
     player_present: Boolean(player),
     video_present: Boolean(video),
-    ad_showing: adShowing,
+    ad_showing: adShowing || Boolean(skipButton),
     skip_visible: Boolean(skipButton),
     skip_clicked: skipClicked,
+    play_requested: playRequested,
+    player_state: Number.isFinite(playerState) ? playerState : null,
+    player_current_time: Number.isFinite(playerTime) ? playerTime : null,
+    player_duration: Number.isFinite(playerDuration) ? playerDuration : null,
+    video_candidate_count: videos.length,
     video_current_time: video ? Number(video.currentTime || 0) : 0,
     video_paused: video ? Boolean(video.paused) : true,
     video_ready_state: video ? Number(video.readyState || 0) : 0
@@ -65,11 +106,15 @@ _YOUTUBE_OBSERVATION_TEMPLATE = r"""
 """
 
 
-def youtube_observation_expression(allow_click: bool) -> str:
+def youtube_observation_expression(
+    allow_click: bool, allow_play: bool = False,
+) -> str:
     """Return a fixed internal expression; no YAML value enters JavaScript."""
 
-    return _YOUTUBE_OBSERVATION_TEMPLATE.replace(
-        "__ALLOW_CLICK__", "true" if allow_click else "false",
+    return (
+        _YOUTUBE_OBSERVATION_TEMPLATE
+        .replace("__ALLOW_CLICK__", "true" if allow_click else "false")
+        .replace("__ALLOW_PLAY__", "true" if allow_play else "false")
     )
 
 
@@ -92,10 +137,24 @@ async def observe_youtube_playback(
     last_phase = "preparation"
     phase_started_at = 0.0
     last_skip_at = float("-inf")
+    last_play_at = float("-inf")
     skip_attempts = 0
+    play_attempts = 0
     successful_samples = 0
     evaluation_errors = 0
     primary_started_at: float | None = None
+    diagnostic_counts = {
+        "samples": 0,
+        "player_present": 0,
+        "video_present": 0,
+        "ad_showing": 0,
+        "skip_visible": 0,
+        "playing": 0,
+        "paused": 0,
+        "ready": 0,
+        "advancing": 0,
+    }
+    last_observation: dict[str, Any] = {}
     phase_seconds = {
         "preparation": 0.0,
         "advertisement": 0.0,
@@ -112,13 +171,20 @@ async def observe_youtube_playback(
         before_evaluate = clock()
         if before_evaluate >= deadline:
             break
+        elapsed_before = max(0.0, before_evaluate - started_at)
+        interaction_ready = elapsed_before >= min(5.0, duration_seconds)
         allow_click = (
             policy.ad_policy == "click_visible_skip"
+            and interaction_ready
             and before_evaluate - last_skip_at >= 1.0
+        )
+        allow_play = (
+            interaction_ready and play_attempts < 3
+            and before_evaluate - last_play_at >= 2.0
         )
         observation: Mapping[str, Any] | None = None
         try:
-            observation = await evaluate(allow_click)
+            observation = await evaluate(allow_click, allow_play)
             successful_samples += 1
         except Exception:
             evaluation_errors += 1
@@ -141,6 +207,7 @@ async def observe_youtube_playback(
             except (TypeError, ValueError):
                 ready_state = 0
             ad_showing = observation.get("ad_showing") is True
+            player_playing = observation.get("player_state") == 1
             advancing = (
                 current_video_time is not None
                 and last_video_time is not None
@@ -152,7 +219,7 @@ async def observe_youtube_playback(
                 and observation.get("video_present") is True
                 and observation.get("video_paused") is False
                 and ready_state >= 2
-                and advancing
+                and (advancing or player_playing)
             )
             if ad_showing:
                 phase = "advertisement"
@@ -169,6 +236,36 @@ async def observe_youtube_playback(
                     ),
                     "event": "skip_clicked",
                 })
+            if observation.get("play_requested") is True:
+                play_attempts += 1
+                last_play_at = sampled_at
+                events.append({
+                    "elapsed_seconds": round(
+                        max(0.0, sampled_at - started_at), 3,
+                    ),
+                    "event": "play_requested",
+                })
+            diagnostic_counts["samples"] += 1
+            for key in (
+                "player_present", "video_present", "ad_showing", "skip_visible",
+            ):
+                if observation.get(key) is True:
+                    diagnostic_counts[key] += 1
+            diagnostic_counts[
+                "playing" if observation.get("video_paused") is False else "paused"
+            ] += 1
+            if ready_state >= 2:
+                diagnostic_counts["ready"] += 1
+            if advancing:
+                diagnostic_counts["advancing"] += 1
+            last_observation = {
+                key: observation.get(key)
+                for key in (
+                    "player_present", "video_present", "ad_showing",
+                    "skip_visible", "video_paused", "video_ready_state",
+                    "player_state", "video_candidate_count",
+                )
+            }
             if current_video_time is not None:
                 last_video_time = current_video_time
 
@@ -196,6 +293,7 @@ async def observe_youtube_playback(
                     policy.desired_primary_seconds
                 ),
                 "skip_attempts": skip_attempts,
+                "play_attempts": play_attempts,
             })
         last_sample_at = sampled_at
         remaining = deadline - clock()
@@ -249,6 +347,10 @@ async def observe_youtube_playback(
         "evaluation_errors": evaluation_errors,
         "end_reason": "observation_window_elapsed",
         "events": events,
+        "diagnostics": {
+            "counts": diagnostic_counts,
+            "last_observation": last_observation,
+        },
     }
 
 
