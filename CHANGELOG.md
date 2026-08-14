@@ -2,6 +2,13 @@
 
 All notable TrafficTracer Complete changes are recorded here.
 
+## Unreleased
+
+### Documentation
+
+- Reduced the root README to the product overview and first-run QuickStart.
+- Reorganized maintained documentation into focused English user, architecture, data, operations, development, and compatibility-tool guides.
+
 ## [1.0.0] - 2026-08-13
 
 First Linux x86-64 release of the integrated TrafficTracer workflow.
@@ -20,3 +27,5 @@ First Linux x86-64 release of the integrated TrafficTracer workflow.
 - The public packages may be unsigned when no Tauri updater signing key is configured; checksums and release audit metadata remain mandatory.
 
 ### Compatibility
+
+- The bundle retains Clash Verge's package identity for in-place upgrades and configuration reuse while using a TrafficTracer-specific bundle version and release asset names.

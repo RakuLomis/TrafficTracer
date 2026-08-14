@@ -1,13 +1,197 @@
-# TrafficTracer Complete QuickStart
+# TrafficTracer Complete UI Guide
 
-TrafficTracer Complete 把定制 Mihomo、TrafficTracer Worker 和 Clash Verge UI 固定在一个仓库中。本文档以 Linux x86-64 为已验证目标，不依赖同级 sibling 仓库，也不需要手工复制二进制。
+TrafficTracer Complete 1.0.0 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
 
-## 1. 组件与版本
+## 1. Verify the release
 
-`complete/components.lock.yaml` 是组件和协议版本的事实来源。当前产品版本为 `1.0.0`：
+The release directory contains one Deb, one AppImage, checksums, component provenance, license notices, an SBOM, and an audit report:
 
-| 协议 | 版本 |
-| --- | --- |
+```text
+traffictracer-complete-v1.0.0-linux-x86_64/
+├── TrafficTracer-Complete_1.0.0_linux_x86_64.deb
+├── TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+├── SHA256SUMS
+├── VERSION
+├── COMPONENTS
+├── SBOM.cdx.json
+├── RELEASE-AUDIT.json
+├── METADATA.sha256
+├── LICENSE
+├── NOTICE
+└── THIRD_PARTY_NOTICES.md
+```
+
+Verify the package checksums:
+
+```bash
+cd /path/to/traffictracer-complete-v1.0.0-linux-x86_64
+sha256sum -c SHA256SUMS
+```
+
+`VERSION` identifies TrafficTracer Complete 1.0.0. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
+
+## 2. Install prerequisites
+
+TrafficTracer needs Chrome or Chromium and the Wireshark command-line capture tools. On Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install tshark
+sudo setcap cap_net_raw,cap_net_admin=eip "$(command -v dumpcap)"
+dumpcap -D
+```
+
+Some distributions grant capture access through the `wireshark` group instead of file capabilities. Follow the package prompt and sign in again after changing group membership.
+
+## 3. Install or run the application
+
+Install the Deb:
+
+```bash
+sudo apt install ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
+```
+
+The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.0`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
+
+To avoid installing system files, use the AppImage:
+
+```bash
+chmod +x TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
+```
+
+Do not install from `/tmp` if the path may disappear after a reboot. For `apt`, include `./` or an absolute path; otherwise the filename is interpreted as a package name.
+
+## 4. Configure Mihomo
+
+1. Open **Profiles** and import a valid Mihomo YAML profile.
+2. Activate that profile.
+3. Open **Settings → Clash Core** and select `verge-mihomo-tt`.
+4. Open **Proxies**, run the latency test, and choose a node or policy group.
+5. Enable system proxy if applications should use the proxy explicitly.
+6. Enable TUN if the experiment must intercept system traffic transparently.
+
+TrafficTracer owns tracing only while a capture job is active. There is no independent tracing toggle in Settings.
+
+## 5. Install and verify the TUN service
+
+TUN changes require the bundled Clash Verge service. Install it from the application when prompted. On Linux, the UI and service communicate through:
+
+```text
+/run/clash-verge-service/service.sock
+```
+
+Authentication is expected during service installation. An `IPC path not ready` message means the installer finished but the application did not observe a ready socket within the allowed handshake. See [Operations and troubleshooting](../operations.md#service-and-ipc) before retrying.
+
+The runtime TUN device is normally `Meta`. The Traffic Tracer form may be left empty to use the runtime/default device. A value displayed elsewhere in the profile is configuration input, not proof that the interface currently exists. Environment Check resolves the effective interface before capture.
+
+## 6. Prepare a capture
+
+Open **Traffic Tracer** and configure:
+
+- **Session output directory**: an absolute, writable directory owned by the desktop user;
+- **TUN interface**: empty for runtime/default discovery, or the exact active device;
+- **Physical interface**: the egress interface carrying proxy traffic;
+- **Chrome executable**: an absolute path when automatic discovery is insufficient;
+- **Analysis storage**: `Standard` for raw PCAP plus indexes, or `Full` to also export per-connection PCAP files immediately;
+- **Cache mode**: `Cold` for isolated repeatable captures, or `Warm` only when cache reuse is part of the experiment.
+
+Find the physical interface with:
+
+```bash
+ip route show default
+```
+
+Run **Environment Check**. Capture cannot start while a blocking diagnostic exists. The check covers the selected core, controller, tracing capability, service, TUN state, both interfaces, Chrome, packet-capture permissions, and output-directory access.
+
+## 7. Select targets
+
+### Manual target
+
+Enter one absolute HTTP or HTTPS URL and its domain. The manual values are one target only.
+
+### YAML target list
+
+Select an absolute `.yaml` or `.yml` file. TrafficTracer reads only safe target fields from its `sites` list, displays a normalized preview, and lets you select a subset. The URL and domain inputs remain available for manual mode; they do not override entries selected from the YAML preview.
+
+```yaml
+sites:
+  - domain: example.com
+    url: https://example.com/
+    page_type: main-page
+    wait: 10
+    wait_load_timeout: 30
+    traffic_type: all
+
+  - domain: example.com
+    url: https://example.com/video/1
+    page_type: video-play1
+    wait: 20
+    wait_load_timeout: 45
+    traffic_type: all
+```
+
+Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. A capture group can be cancelled, and interrupted or failed groups retain enough state to resume from the exact target.
+
+See [Target configuration](../configuration.md) for normalization and limits.
+
+## 8. Run the capture
+
+Start capture only after Environment Check passes. During a job, controls that could invalidate evidence are locked, including core, profile, tracing, service, TUN, and system-proxy changes.
+
+Each target follows this lifecycle:
+
+1. create a versioned Session;
+2. snapshot the effective runtime context;
+3. enable Mihomo tracing for the Session;
+4. capture the TUN and physical interfaces;
+5. launch managed Chrome with CDP and NetLog collection;
+6. navigate and observe for the configured duration;
+7. stop managed processes in a bounded order;
+8. finalize raw evidence;
+9. run correlation and consistency analysis;
+10. publish canonical indexes and update the Session manifest.
+
+A completed job can still have `degraded` page quality. Job state reports whether orchestration completed; quality reports whether the captured evidence represents a usable network observation.
+
+## 9. Browse Sessions
+
+While capture is active, the UI automatically selects the current timestamped capture-group directory. When no capture is active, historical Sessions are not mixed into one root-level list. Select a specific timestamp directory to inspect it.
+
+The default layout is:
+
+```text
+<session-root>/
+└── <capture-timestamp>/
+    └── <domain>/
+        └── <page-type>__<readable-url>/
+            ├── session.json
+            ├── raw/
+            └── analysis/
+```
+
+Open a Session to inspect its state, target, warnings, artifacts, request attribution, canonical connections, egress outcomes, packet evidence, and coverage metrics. Old schema-v1 Sessions remain readable.
+
+## 10. Query a flow
+
+Enter a pre-proxy five-tuple consisting of protocol, source IP, source port, destination IP, and destination port. The query returns every matching logical flow in the selected Session scope.
+
+Interpret the result as follows:
+
+- `post_flow` contains the observed physical-side five-tuple when an outbound socket was established;
+- `post_flow=null` is valid for reject, failure-before-socket, and local/not-applicable outcomes;
+- `post_flow.shared=true` means multiple logical flows reuse one outer transport and the relation is not one-to-one;
+- `attribution_scope` separates page-attributed, browser-background, capture-unattributed, and local-internal traffic;
+- URLs are attached through the request index and may be many-to-one with a connection.
+
+See [Sessions and correlation data](../data-model.md) for the full semantics.
+
+## 11. Protocol versions
+
+`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.0 uses:
+
+| Contract | Version |
+| --- | ---: |
 | Worker JSONL API | 2 |
 | Job schema | 2 |
 | Session manifest | 2 |
@@ -19,383 +203,12 @@ TrafficTracer Complete 把定制 Mihomo、TrafficTracer Worker 和 Clash Verge U
 | Mihomo tracing API | 1 |
 | Mihomo event schema | 1 |
 
-构建和启动时会校验固定的 submodule 提交；不要在 Complete 构建中用任意 sibling checkout 替换它们。
-
-## 2. 使用安装包
-
-需要 Chrome/Chromium 以及 Wireshark CLI：
-
-```bash
-sudo apt-get install tshark
-sudo setcap cap_net_raw,cap_net_admin=eip "$(command -v dumpcap)"
-dumpcap -D
-```
-
-若发行版使用 `wireshark` 用户组，请按软件包提示添加当前用户并重新登录。
-
-安装 Complete Deb：
-
-```bash
-sudo apt install ./TrafficTracer-Complete_1.0.0_linux_x86_64.deb
-```
-
-或运行 AppImage：
-
-```bash
-chmod +x ./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.0_linux_x86_64.AppImage
-```
-
-文件名随版本变化。Complete 包必须同时包含 `verge-mihomo-tt`、`traffictracer-worker`、标准/Alpha 核心、特权服务及其安装/卸载 helper。上游 Clash Verge 包不等价。Worker API v2 与对应 UI 必须成套安装，不能只替换 Worker 或只替换 UI。
-
-## 3. 从源码开发
-
-```bash
-git clone --branch Complete --recurse-submodules \
-  git@github.com:RakuLomis/TrafficTracer.git
-cd TrafficTracer
-make bootstrap
-```
-
-准备工具链和依赖：
-
-```bash
-python -m pip install -r requirements.txt -r requirements-build.txt
-corepack enable
-cd components/clash-verge-rev
-pnpm install --frozen-lockfile
-cd ../..
-make check-toolchain
-```
-
-`make check-toolchain` 检查 Python 3.12+、Go、Rust/Cargo、pnpm、PyInstaller、Chrome、tshark 和 dumpcap。
-
-建议先运行源码和跨组件合同测试：
-
-```bash
-make test-python
-make test-contracts
-```
-
-只编译核心与 Worker、注入开发 sidecar，但不启动第二个 Clash Verge：
-
-```bash
-make prepare-dev
-```
-
-产物位于：
-
-```text
-dist/core/verge-mihomo-tt-x86_64-unknown-linux-gnu
-dist/worker/traffictracer-worker-x86_64-unknown-linux-gnu
-components/clash-verge-rev/src-tauri/sidecar/
-```
-
-启动开发 UI：
-
-```bash
-make dev
-```
-
-该命令会执行与 `make prepare-dev` 相同的重建和校验，然后启动 Tauri 开发 UI。不要让它与已安装的 Clash Verge 同时运行并争用控制器/socket；若当前 Clash Verge 正在提供网络，应先使用 `make prepare-dev` 或构建安装包，等到可接受的网络维护窗口再从 UI 正常退出旧实例后启动开发版。不要用强制 kill 作为常规切换方式。
-
-如果当前 checkout 含有尚未提交的开发改动，`make prepare-dev` 和 `make package-linux` 可以生成本地测试构建，但 `COMPONENTS` 中记录的是当前提交而不是未提交 diff，不能作为正式发布包。正式候选必须先提交 UI 子模块改动、更新根仓库 gitlink/组件锁并保持受跟踪工作树干净。
-
-## 4. UI 全流程
-
-1. 在“订阅/Profiles”导入并激活 Mihomo YAML。
-2. 在“设置 → Clash 设置 → Clash Core”选择 `verge-mihomo-tt`。
-3. 在“代理/Proxies”执行延迟测试并选择节点/策略组。
-4. 按需开启系统代理。
-5. 安装 Clash Verge 服务并开启 TUN。
-6. 打开“流量追踪”，选择“手工输入”并填写单目标，或选择“YAML 配置”加载 `sites.yaml` 后全选/选择子集；再填写 TUN/物理接口、Chrome 绝对路径和输出绝对目录。
-7. 点击“检测环境”，关闭所有阻断项。
-   “Analysis storage”默认选择 `Standard`：保留双侧原始 PCAP、完整 URL/连接索引和关联证据，但不立即复制每连接 pre/post PCAP；需要直接生成这些派生文件时选择 `Full`。
-8. 点击“开始捕获”。所选目标组成一个 Capture group，并强制每项完成分析后才进入下一项。
-9. Capture group 卡片展示当前 N/total、阶段、页面 Session 和错误；可请求取消，failed/interrupted 状态可从准确目标继续。
-10. 捕获运行时“会话”自动选中本次时间戳目录并只显示该 Capture group；空闲时默认不显示历史内容，可点击“选择文件夹”打开当前输出根目录下的历史时间戳目录，再查看状态、警告、产物或“重新分析”。
-11. 在“规范化流”输入代理前五元组，查询全部 Session。
-
-诊断覆盖 TT 核心能力、控制器、TUN 服务、两个接口、捕获工具/权限、浏览器和存储空间。捕获期间核心、配置、tracing、TUN、系统代理与服务控制会锁定，避免运行时状态漂移。
-
-目标 YAML 兼容独立版的 `sites` 列表，例如：
-
-```yaml
-sites:
-  - domain: example.com
-    url: https://example.com/
-    wait: 15
-    traffic_type: all
-    page_type: main-page
-    wait_load_timeout: 30
-```
-
-UI 只应用 `sites` 目标；`global.output.base_dir` 仅作为输出目录建议值预览，必须由用户在 UI 确认。文件中的 `global.mihomo`、`global.chrome` 和 `global.network` 不会覆盖 Clash Verge 运行环境。`wait` 映射为捕获持续时间，`wait_load_timeout` 映射为页面加载超时，`page_type` 决定页面目录标签；`traffic_type` 为 `tcp`、`udp` 或 `all` 时决定捕获协议，其他安全值作为兼容运行标签且协议回退为 `all`。
-
-每个子任务在 Chrome、TUN 与物理口抓包停止并确认 Chrome 进程组退出后，调用 Mihomo `POST /experimental/tracing/barrier`。返回的 `session_id`、`event_seq`、时间和输出路径写入 `raw/capture-context.json.trace_boundary`；分析器验证 JSONL 中存在匹配 marker，并只读取截止序号以内事件。marker 后的事件保留在原始 trace，`summary.json.trace_snapshot.late_event_count` 和 UI 状态会显示排除数量。缺少 `supports_trace_barrier` 的旧核心会在环境检测阶段被拒绝；历史 Session 没有 boundary 时以 `legacy_unbounded` 兼容读取。
-
-REJECT、REJECT-DROP、internal DNS 和 PASS 属于显式无出口 socket 的终态，统计为 `not_applicable_outcome`，保留代理前流、策略和终止证据，但不进入 unexpected missing。连接候选仅把 matched 的前 5 条或 unresolved 的前 10 条详细证据写入索引，匹配胜者始终保留，并通过 `candidate_count`、`candidates_truncated` 保留完整规模。 `summary.json.storage` 分解原始 PCAP、NetLog、Mihomo trace、元数据和分析产物字节数；当前 `compression=none`，避免破坏 Wireshark、重分析和旧工具直接读取原文件。
-
-加载时 Worker 仅返回规范化目标、绝对路径、警告和文件 SHA-256，不返回代理 secret 或其他 `global` 内容。开始捕获前 UI 后端会重新读取文件并比对 SHA-256、目标序号及所有规范化字段；文件若已变化，必须点击刷新并重新选择，避免预览与实际任务不一致。选择一项时走普通捕获 API；选择多项时按 YAML 原始顺序建立固定目标快照，即使 URL/domain 重复也以配置索引区分。批次最大子任务并发为 1，严格执行 capture → Chrome quiescence → analysis → checkpoint；只有上一个受管 Chrome 进程组清理完毕后才会启动下一项，不会按进程名终止用户的其他 Chrome。
-
-目标文件应放在不会随重启清理的持久目录，不要放在 `/tmp`。文件必须是 UTF-8、扩展名为 `.yaml` 或 `.yml`、不超过 1 MiB，并包含非空 `sites` 列表。字段约束如下：
-
-| 字段 | 约束/默认值 |
-| --- | --- |
-| `domain` | 必填，有效 DNS 名称 |
-| `url` | 必填，绝对 `http://` 或 `https://` URL |
-| `wait` | 1–86400 的整数，默认 10 秒 |
-| `wait_load_timeout` | 1–3600 的整数，默认 30 秒 |
-| `traffic_type` | 默认 `all`；1–64 位字母、数字、点、下划线或连字符，首位必须是字母或数字 |
-| `page_type` | 推荐显式填写；小写字母、数字和连字符，配置内唯一；旧 YAML 会从 `traffic_type` 稳定推导 |
-
-### P0 工作区与 TUN 约定
-
-TrafficTracer 页面是 Complete 捕获功能的唯一入口；“设置 → Clash 设置”中不再提供单独的 tracing 开关。开始任务时由 Complete 自动开启 Mihomo tracing，任务完成、取消或失败后自动恢复，避免两个入口争用同一状态。
-
-“会话输出目录”是 Worker 的工作区根目录，不再固定为应用数据目录。它必须是绝对路径；环境检测会创建目录、检查写权限并将其规范化。切换目录后再次点击“检测环境”：
-
-- Worker 处于空闲状态时会优雅切换到新工作区；
-- 有捕获或分析任务运行时返回 `SESSION_ROOT_BUSY`，不会中断任务；
-- 切换失败时会尝试恢复原工作区；
-- 切换不会搬移旧 Session，新旧目录中的历史记录彼此独立。
-
-TUN 的配置名、自动默认名和实际捕获接口是三个不同概念：Linux 的 TUN `device` 留空时由 Mihomo 自动使用 `Meta`；显式填写时使用填写值。环境检测展示配置值、自动默认值和当前实际捕获接口。若系统中只发现一个 TUN 候选会自动选中；发现多个候选时必须人工选择，避免把 `Meta`、`Meta0` 等接口猜错。每次捕获还会把最终使用的 TUN/物理接口写入页面 Session 的 `raw/capture-context.json` 并登记为 artifact，供后续审计和关联分析使用。
-
-Linux 可用以下命令辅助选择接口：
-
-```bash
-ip route show default
-ip -brief link
-```
-
-## 5. 服务权限与 IPC
-
-Linux 安装服务时会出现管理员授权，例如：
-
-```text
-/usr/bin/sh -c /usr/bin/clash-verge-service-install
-```
-
-确认 helper 与当前 Clash Verge 主程序同目录后授权。两个 socket 用途不同：
-
-| 路径 | 用途 |
-| --- | --- |
-| `/run/clash-verge-service/service.sock` | Linux Clash Verge 特权服务 IPC（service v2.6.1） |
-| `/tmp/verge/verge-mihomo.sock` | Mihomo 控制器 IPC |
-
-Complete 将 service 客户端、service 发行包和协议固定为 v2.6.1（协议 2.2）。出现 `IPC path not ready` 时，不要停止当前正在提供网络的 Clash Verge；先只读检查：
-
-```bash
-ls -l /usr/bin/clash-verge-service*
-pgrep -af 'clash-verge-service|clash-verge'
-systemctl status clash-verge-service --no-pager
-ls -l /run/clash-verge-service/service.sock
-```
-
-如果 `/run/clash-verge-service/service.sock` 已存在且服务为 active，而 UI 仍在检查 `/tmp/verge/clash-verge-service.sock`，运行的是旧 UI 客户端；应安装同一 Complete 构建中的 UI 与 service，不要反复重装健康服务。只有实际 socket 缺失或 UI 明确报告协议不兼容时，才在可接受的网络维护窗口内使用“修复/重新安装服务”。不要同时手工启动 helper 和点击 UI 安装，也不要删除正在使用的 socket。
-
-## 6. Session、恢复与取消
-
-一次启动在输出根目录创建一个时间戳 Capture group，每个目标页面是独立 Session。manifest 记录状态、组件版本、接口、警告、错误和 artifact，是 UI/Worker 的事实来源：
-
-```text
-<output-root>/<YYYYMMDD-HHMMSS-mmm>/
-└── <domain>/
-    └── <page_type>__<readable-target-url>/
-        ├── raw/
-        └── analysis/
-            └── pcap/
-                └── <ordinal>__<readable-request-url>/
-                    ├── mapping.json
-                    ├── pre.pcap
-                    ├── post.pcap
-                    └── alternative-01-udp-pre.pcap  # 仅有包的备选 transport
-```
-
-“会话”始终以一个时间戳目录为浏览作用域：活动捕获自动选择当前 Capture group，任务结束后自动选择会清空；用户手动选择的目录会保留到切换输出根目录或点击“清除选择”。不能选择输出根目录本身、domain/page 子目录、隐藏运行目录、外部目录或软链接。旧版直属 `<timestamp>_<session-id>` 目录作为单 Session 作用域兼容。`.chrome-profiles` 中 Chrome 扩展的 `manifest.json` 不属于 TrafficTracer Session，不会参与损坏检测。
-
-- “取消任务”会触发协作式取消、终止受管子进程并恢复 Mihomo tracing；
-- 关闭 TrafficTracer 页面不会取消后台任务；
-- Capture group 不依赖页面持续打开，刷新后会从 Worker manifest 恢复进度；
-- Capture group 默认 fail-fast；修复故障后可从失败项继续，已完成项不会重跑；
-- 应用/Worker 异常退出后，下次启动会把未完成 Session 恢复为 `interrupted`；
-- 恢复警告不会阻止读取历史 Session；
-- 分析失败保留原始 trace、CDP、NetLog 和 pcap，可从 UI 重新分析；
-- 任务运行时不要移动或修改 Session 目录。
-- 不要在 Capture group 中途修改目标 YAML；继续操作会校验启动时 SHA，拒绝静默使用变化后的文件。
-
-如果 Worker 显示 unavailable 或 API mismatch，安装版应重装同一 Complete 包；开发版运行 `make prepare-dev` 后重启 UI。
-
-## 7. Flow 查询语义
-
-查询键是规范化代理前五元组：协议、源 IP/端口、目的 IP/端口。一个五元组可能跨时间复用，所以结果可以是零条、一条或多条逻辑流。
-
-- `matched`：明确关联；
-- `ambiguous`：多个候选，需要结合时间和浏览器请求；
-- `unmatched`：证据不足；
-- `post_flow.shared=true`：多个逻辑流共享外层连接，不是一对一 NAT；
-- `post_flow=null`：没有观测到完整拨号结果，不会用 `pre_flow` 伪造。
-
-连接详情中的 `sharing` 会进一步区分请求复用、post-flow 共享和外层连接复用；
-`egress` 根据 Mihomo trace 的策略组与本 Session 的 `proxy-info.json` 快照展示
-`direct/proxy/unknown`、完整选择链和最终节点。该快照是可审计证据，但如果捕获
-期间外部程序改变了组选择，它不等同于逐事件路由历史。
-
-启用拆分时，`analysis/pcap` 按规范网络资源生成目录。完整 URL 始终保留在
-request index；transport race 只按同源同路径建立候选集，不包含站点或 query
-参数特例。只有空 transport 对应唯一一个 packet-backed、完整关联候选时才切换
-canonical connection；其余候选和完整 query 继续保存在 `mapping.json` 与
-connection/request index 中。
-
-HTTP/2/keep-alive 的后续请求可能没有新的 NetLog transport occurrence。若该请求
-收到响应且 CDP 标记连接复用，分析器依次使用正数 `connectionId`、response
-endpoint、request/response/completion 时间和 transport 生命周期消歧。只有证据
-唯一时才以 `cdp_connection_reuse` 回填；证据并列、多候选、无响应或
-`connectionId=0` 始终保持未关联。
-
-浏览器 coverage 中 `non_network` 表示 CDP 明确报告 disk cache、Service Worker、
-prefetch，或收到响应但 `connectionId=0` 的浏览器内部响应。这些请求没有可捕获的
-独立五元组，不计为抓包缺失；它们仍保留 URL、request ID 与分类证据。旧 Session
-没有这些 CDP 标志时保持兼容，不会凭空伪造缓存来源。
-若带 cache 标记的请求同时拥有 NetLog socket 证据，则真实 transport 优先，该请求
-仍归类为 `network`。
-
-HTTP/3 请求通过 QUIC session 的 `self_address/peer_address` 或下游 UDP socket
-恢复五元组，并直接与 Mihomo UDP trace 关联。HTTP/2 已确认的 TCP socket 优先于
-dependency graph 中复用的 UDP/DoH 旁支；解析通道不能覆盖页面业务端点。完整
-五元组唯一时允许在 Chrome 单调时钟与 Mihomo UTC 存在偏差的情况下关联；存在多个
-同分候选时仍显示 ambiguous。
-
-访问本机服务的请求显示为 `local_endpoint`。它们保留代理前五元组和连接终态，
-但不需要代理后五元组。UI 的 Egress/PCAP 分母按适用连接计算，并单独显示
-`local N/A`。原始字段分别是
-`egress_establishment.not_applicable_local_endpoint`、
-`pcap_extraction.applicable` 和 `pcap_extraction.post_not_applicable`；这些请求不会
-进入代理拨号失败或 post-PCAP 缺失告警。
-`no_response` 表示 Chrome 没有报告响应；`request_cancelled` 和 `request_failed`
-分别表示 CDP 明确报告取消或加载失败；`response_endpoint_missing` 表示收到响应但
-没有可用于绑定的 endpoint；`response_transport_unbound` 表示 endpoint 存在但仍
-缺少唯一 transport。这些原因不会被合并成一种关联失败。
-
-UI 中 `Page flows` 只描述当前页面关联的 transport pipeline；
-`Capture-global core flows` 是同一捕获窗口内全部 Mihomo 流量，可能包含后台 TUN
-连接，只用于全局诊断。页面连接失败会按 hostname 与稳定 `error_class` 聚合。
-新构建还会把三个组件的完整 Git commit 写入 Worker hello 和 Session manifest；
-旧 Session 的 `unknown` 只表示当时的构建未嵌入版本元数据。
-
-### 分析存储档位
-
-- `Standard`（UI 默认，`pcap_split_mode=none`）：保留 `raw/tun.pcap`、`raw/phys.pcap`、NetLog、CDP、Mihomo trace，以及 request/connection/PCAP 索引；不生成重复的每连接 PCAP。原始证据和 URL → connection → pre/post 五元组关系不丢失，可在以后以 `Full` 重新分析。
-- `Full`（`pcap_split_mode=unique_connections`）：除上述文件外，立即生成每个规范连接的 pre/post 派生 PCAP，便于直接交付 Wireshark 或外部脚本，空间占用更高。
-
-旧 UI/旧任务未携带该字段时仍按 `Full` 处理，避免升级后静默改变既有行为。切换档位不会删除已有文件；当前版本不自动清理历史派生 PCAP。
-
-### 浏览器缓存策略与按需包验证
-
-- `Cold`（UI 默认）：每个 Session 使用独立 profile；导航前禁用 HTTP cache、绕过 Service Worker，Chrome 完全退出后清理该临时 profile。
-- `Warm`：复用同一 domain/page type 的 profile，只用于明确需要研究缓存命中的实验。旧任务未记录 `cache_mode` 时按 `Warm` 解释。
-- Standard 结果中的 `pcap_extraction.requested=false` 仅表示没有生成派生连接 PCAP，双侧 `raw/*.pcap` 仍保留。Session 详情中的 `Verify packet evidence (Full)` 可按需重新分析。
-- 若目标 Document 全部来自 disk cache、Service Worker、prefetch 或浏览器内部来源，页面质量为 `degraded` 并报告 `TARGET_DOCUMENT_NON_NETWORK`；这类结果不再视为有效网络可达性样本。
-
-## 8. Linux 打包
-
-开发测试可使用 `make package-linux`。该入口会先重建核心和 Worker、注入并核对 sidecar，再调用 Tauri；不要直接从 UI 子仓库运行裸 `pnpm tauri build`。正式发布候选必须从三个仓库均无已
-跟踪改动的工作树执行：
-
-```bash
-make release-linux
-make test-package-linux
-make audit-release
-```
-
-release-linux 会生成 CycloneDX 1.6 SBOM，校验组件提交、Deb/AppImage
-SHA-256、安装路径权限、敏感文件/secret 模式和发行元数据。逐项人工签字要求见
-[Release Checklist](../release-checklist.md)。
-
-首次打包：
-
-```bash
-make package-linux
-sha256sum -c dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/SHA256SUMS
-```
-
-默认输出目录已存在时不会覆盖。为新的本地候选使用新的绝对目录，例如：
-
-```bash
-cd /absolute/path/to/TrafficTracer
-TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/target-config-v2" make package-linux
-sha256sum -c dist/packages/target-config-v2/SHA256SUMS
-```
-
-默认 `TT_PREBUILD_FORCE=1`，每次打包都会刷新 Clash Verge 的上游 Mihomo、规则数据和
-service 资源。只有官方下载端点暂时不可用、并且 `src-tauri/sidecar` 与 resources 已由
-最近一次成功且经过校验的构建准备完成时，才可显式复用这些资源：
-
-```bash
-TT_PREBUILD_FORCE=0 \
-TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/offline-retry" \
-make package-linux
-```
-
-该模式仍会重新构建 TrafficTracer 核心与 Worker，并执行组件锁、sidecar 一致性和包布局
-验证；它不会下载缺失资源，因此缺少任何上游文件时会失败。正式发布恢复网络后仍应使用
-默认强制刷新模式。
-
-这里的 `$PWD` 必须是 TrafficTracer `Complete` 仓库根目录；如果命令在 `~` 中执行，它会错误地指向 `$HOME/dist/...`。
-
-流水线重新构建核心/Worker，调用 Tauri 生成 Deb/AppImage，解包验证 7 个可执行文件，最后才原子发布：
-
-```text
-dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/
-├── TrafficTracer-Complete_<version>_linux_x86_64.deb
-├── TrafficTracer-Complete_<version>_linux_x86_64.AppImage
-├── VERSION
-├── COMPONENTS
-├── SHA256SUMS
-├── LICENSE / NOTICE / THIRD_PARTY_NOTICES.md
-├── SBOM.cdx.json
-├── RELEASE-AUDIT.json
-└── METADATA.sha256
-```
-
-正式候选的默认输出已存在时同样拒绝覆盖；为新候选指定新目录：
-
-```bash
-TT_PACKAGE_OUTPUT_DIR="$PWD/dist/packages/rc-2" make release-linux
-```
-
-未配置 `TAURI_SIGNING_PRIVATE_KEY` 时生成经过布局验证的 unsigned 包；发布 updater artifact 时必须配置私钥。任一构建、验证或校验步骤失败，最终输出目录不会创建。
-
-安装或升级本地 Deb 会替换系统中的 Clash Verge 文件，但不会让已经运行的旧进程自动变成新版本。先完成构建和校验；到维护窗口后从旧 UI 正常退出，再安装并启动新包：
-
-```bash
-cd /absolute/path/to/TrafficTracer
-sudo apt install "$PWD/dist/packages/traffictracer-complete-v1.0.0-linux-x86_64/TrafficTracer-Complete_1.0.0_linux_x86_64.deb"
-```
-
-升级后保留原有用户配置，但仍应确认核心选择为 `verge-mihomo-tt`、服务 socket 为 `/run/clash-verge-service/service.sock`，并重新执行流量追踪环境检测。不要从可能被重启清理的 `/tmp` 路径安装。
-
-## 9. 验证
-
-```bash
-python -m pytest -q
-python -m compileall -q traffictracer traffictracer_worker.py
-make test-contracts
-```
-
-安装包验收至少包括：导入配置、选择 TT 核心、节点测速/选择、系统代理/TUN、环境诊断、UI 捕获/自动分析、Session artifact，以及已知代理前五元组的 Flow 查询。
-
-## 10. 当前非目标
-
-最小完整版本当前不承诺：
-
-- Windows、macOS 或 Linux 非 x86-64 的可安装 Complete 包；
-- 解密 TLS/QUIC 应用载荷；
-- 每个代理前五元组都必然存在独占代理后五元组；
-- 将 shared 外层连接解释为一对一 NAT；
-- 每条 Flow 独立 pcap 的 schema 保证；
-- 多个并发捕获任务；
-- 用上游 Clash Verge、标准 Mihomo 或任意版本组件替换固定组件后仍兼容。
-
-独立 Python CLI 仍保留用于自动化、研究和兼容场景，但不是 Complete UI 常规操作的前置步骤。
+Do not replace only the Worker, UI, or Mihomo sidecar. The component lock and startup handshake require a compatible set.
+
+## 12. Next references
+
+- [Architecture](../architecture.md)
+- [Target configuration](../configuration.md)
+- [Sessions and correlation data](../data-model.md)
+- [Operations and troubleshooting](../operations.md)
+- [Development and releases](../development.md)
