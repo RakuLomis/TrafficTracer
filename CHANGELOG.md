@@ -4,6 +4,22 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.3] - 2026-08-15
+
+### Fixed
+
+- Updated Home Current Node delay checks reactively without requiring route
+  navigation to reveal completed results.
+- Waited for per-node and group delay checks to settle before the final refresh.
+- Supported multiple delay subscribers with owner-scoped cleanup so Home,
+  Proxies, and chain-mode consumers do not replace one another.
+
+### Validation
+
+- Added DelayManager multi-subscriber regression coverage and validated the
+  complete frontend, Node packaging tests, type checks, lint, and production
+  Web build.
+
 ## [1.0.2] - 2026-08-15
 
 ### Fixed
