@@ -10,6 +10,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from traffictracer.capture.cdp import CDPCollector
+from traffictracer.playback import PlaybackPolicy
 
 
 class FakeWS:
@@ -479,3 +480,69 @@ def test_redirect_occurrences_keep_distinct_response_evidence():
         "198.51.100.7",
         "198.51.100.8",
     ]
+
+
+def test_playback_interaction_dispatches_cdp_mouse_sequence_to_page_session():
+    async def scenario():
+        collector = _make_collector_with_ws(FakeWS())
+        collector._page_session = "PAGE-SESSION"
+        collector._navigation_started_at = asyncio.get_running_loop().time()
+        sent = []
+
+        async def send(method, params=None, timeout=10, session_id=""):
+            sent.append((method, params, session_id))
+            return {}
+
+        async def observe(policy, seconds, **kwargs):
+            assert policy.provider == "youtube"
+            assert seconds == 35
+            assert await kwargs["interact"](
+                "skip", {"center_x": 442.0, "center_y": 315.0},
+            ) is True
+            return {"primary_content_observed": True}
+
+        collector.send = send
+        with patch(
+            "traffictracer.capture.cdp.observe_youtube_playback", observe,
+        ):
+            result = await collector.collect_playback(
+                35, PlaybackPolicy("youtube"),
+            )
+        assert result["primary_content_observed"] is True
+        assert [item[0] for item in sent] == [
+            "Input.dispatchMouseEvent",
+            "Input.dispatchMouseEvent",
+            "Input.dispatchMouseEvent",
+        ]
+        assert [item[1]["type"] for item in sent] == [
+            "mouseMoved", "mousePressed", "mouseReleased",
+        ]
+        assert all(item[2] == "PAGE-SESSION" for item in sent)
+        assert sent[1][1]["button"] == "left"
+        assert sent[2][1]["clickCount"] == 1
+
+    asyncio.run(scenario())
+
+
+def test_playback_interaction_rejects_non_finite_coordinates():
+    async def scenario():
+        collector = _make_collector_with_ws(FakeWS())
+        collector._page_session = "PAGE-SESSION"
+        collector._navigation_started_at = asyncio.get_running_loop().time()
+
+        async def observe(_policy, _seconds, **kwargs):
+            await kwargs["interact"](
+                "play", {"center_x": float("nan"), "center_y": 2},
+            )
+            return {}
+
+        with patch(
+            "traffictracer.capture.cdp.observe_youtube_playback", observe,
+        ):
+            with pytest.raises(ValueError, match="must be finite"):
+                await collector.collect_playback(
+                    35,
+                    PlaybackPolicy("youtube"),
+                )
+
+    asyncio.run(scenario())

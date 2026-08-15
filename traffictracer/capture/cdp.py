@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import urllib.request
 
 import websockets
@@ -419,7 +420,7 @@ class CDPCollector:
         if not self._page_session or self._navigation_started_at is None:
             raise RuntimeError("playback collection requires a navigation target")
 
-        async def evaluate(allow_click: bool, allow_play: bool) -> dict:
+        async def evaluate() -> dict:
             remaining = (
                 self._navigation_started_at + seconds
                 - asyncio.get_running_loop().time()
@@ -429,9 +430,7 @@ class CDPCollector:
             result = await self.send(
                 "Runtime.evaluate",
                 {
-                    "expression": youtube_observation_expression(
-                        allow_click, allow_play,
-                    ),
+                    "expression": youtube_observation_expression(),
                     "returnByValue": True,
                     "awaitPromise": False,
                 },
@@ -448,10 +447,46 @@ class CDPCollector:
                 )
             return value
 
+        async def interact(action: str, rect) -> bool:
+            if action not in {"skip", "play"}:
+                raise ValueError("unsupported playback interaction")
+            try:
+                x = float(rect["center_x"])
+                y = float(rect["center_y"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("invalid playback interaction rectangle") from error
+            if not math.isfinite(x) or not math.isfinite(y):
+                raise ValueError("playback interaction coordinates must be finite")
+            for event in (
+                {"type": "mouseMoved", "x": x, "y": y},
+                {
+                    "type": "mousePressed", "x": x, "y": y,
+                    "button": "left", "clickCount": 1,
+                },
+                {
+                    "type": "mouseReleased", "x": x, "y": y,
+                    "button": "left", "clickCount": 1,
+                },
+            ):
+                remaining = (
+                    self._navigation_started_at + seconds
+                    - asyncio.get_running_loop().time()
+                )
+                if remaining <= 0:
+                    return False
+                await self.send(
+                    "Input.dispatchMouseEvent",
+                    event,
+                    timeout=min(1.0, max(0.1, remaining)),
+                    session_id=self._page_session,
+                )
+            return True
+
         self._playback = await observe_youtube_playback(
             policy,
             seconds,
             evaluate=evaluate,
+            interact=interact,
             started_at=self._navigation_started_at,
             clock=asyncio.get_running_loop().time,
             checkpoint=self._checkpoint,

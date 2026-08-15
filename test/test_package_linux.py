@@ -102,18 +102,18 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     )
 
     output = fake_package["output"]
-    deb = output / "TrafficTracer-Complete_1.0.1_linux_x86_64.deb"
-    appimage = output / "TrafficTracer-Complete_1.0.1_linux_x86_64.AppImage"
+    deb = output / "TrafficTracer-Complete_1.0.2_linux_x86_64.deb"
+    appimage = output / "TrafficTracer-Complete_1.0.2_linux_x86_64.AppImage"
     assert deb.read_text() == "deb-package"
     assert appimage.read_text() == "appimage-package"
     assert (output / "SHA256SUMS").read_text().count("\n") == 2
     assert f"target={TARGET}" in (output / "COMPONENTS").read_text()
-    assert "product_version=1.0.1" in (output / "COMPONENTS").read_text()
-    assert "version=1.0.1" in (output / "VERSION").read_text()
+    assert "product_version=1.0.2" in (output / "COMPONENTS").read_text()
+    assert "version=1.0.2" in (output / "VERSION").read_text()
     calls = fake_package["invocations"].read_text().splitlines()
     assert calls[0] == "prepared"
     assert "tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage" in calls[1]
-    assert '"version": "2.5.2+traffictracer.1.0.1"' in calls[1]
+    assert '"version": "2.5.2+traffictracer.1.0.2"' in calls[1]
     assert 'createUpdaterArtifacts": false' in calls[1]
     assert calls[2].startswith("verify:linux-bundle -- --target ")
     assert "Package directory:" in result.stdout

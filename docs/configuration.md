@@ -55,16 +55,25 @@ YouTube video targets can request best-effort playback observation:
 ```
 
 `wait` remains the fixed capture window and starts when TrafficTracer issues the
-navigation command. It is not extended when an advertisement runs. The Worker
-observes YouTube player state, clicks a visible and enabled Skip control when
-one is offered, and records preparation, advertisement, primary-content, and
-other phase durations. All traffic remains in the raw evidence, including ads.
+navigation command. It is never extended or shortened because of an
+advertisement. After a five-second preparation guard, the Worker uses scoped,
+visible YouTube player controls and coordinate-based CDP mouse events to start
+playback or click an offered Skip control. An unskippable ad is allowed to end
+normally. All traffic remains in the raw evidence, including ads.
 
-`desired_primary_seconds` is a quality goal, not a second timeout. If less than
-25 seconds of advancing primary video is observed within the 35-second window,
-the capture still completes and its playback quality is marked `degraded`,
-`unavailable`, or `unknown`. Playback requires CDP collection and is accepted
-only for `youtube.com` subdomains or `youtu.be` URLs.
+Primary content is confirmed only when a ready, unpaused, non-ad video advances
+across consecutive observations. A player state that says "playing" while its
+media time is stalled is not sufficient. `primary_content_observed` is therefore
+the main scenario result. `desired_primary_seconds` is a quality goal, not a
+second timeout: primary playback below the target is `degraded`, while a window
+with no confirmed primary playback is `unavailable`. Neither condition changes
+the completed state of the capture job itself.
+
+The playback evidence also distinguishes no ad, an ad with no Skip control, a
+Skip attempt, and a confirmed Skip followed by advancing primary content. A run
+where no ad is served is valid and is not reported as an automation failure.
+Playback requires CDP collection and is accepted only for `youtube.com`
+subdomains or `youtu.be` URLs.
 
 ## Page-type normalization
 

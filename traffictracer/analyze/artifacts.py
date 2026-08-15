@@ -1203,20 +1203,39 @@ def _playback_summary(session: Path) -> dict | None:
 
 def _playback_scenario_outcome(playback: dict) -> dict:
     goal_met = playback.get("primary_goal_met") is True
+    primary_seconds = playback.get("primary_content_seconds", 0)
+    observed_value = playback.get("primary_content_observed")
+    primary_observed = (
+        observed_value
+        if isinstance(observed_value, bool)
+        else (
+            goal_met
+            or (
+                isinstance(primary_seconds, (int, float))
+                and primary_seconds > 0
+            )
+        )
+    )
     quality = playback.get("quality")
     if goal_met:
         state = "passed"
-    elif quality in {"degraded", "unavailable"}:
+    elif primary_observed:
         state = "degraded"
+    elif quality == "unavailable":
+        state = "failed"
     else:
         state = "indeterminate"
     return {
         "kind": "youtube_playback",
         "state": state,
         "reason": playback.get("reason"),
+        "primary_content_observed": primary_observed,
         "primary_goal_met": goal_met,
-        "primary_content_seconds": playback.get("primary_content_seconds", 0),
+        "primary_content_seconds": primary_seconds,
         "desired_primary_seconds": playback.get("desired_primary_seconds", 0),
+        "ad_observed": playback.get("ad_observed"),
+        "skippable_ad_observed": playback.get("skippable_ad_observed"),
+        "skip_confirmed": playback.get("skip_confirmed"),
     }
 
 

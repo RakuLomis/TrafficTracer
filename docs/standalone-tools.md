@@ -83,6 +83,38 @@ python netlog_parser.py log.zip
 
 It can print connection chains, DNS resolver cache entries, and HTTP/2 or QUIC reuse information. It does not have Mihomo post-proxy evidence by itself and therefore cannot produce the Complete pre-proxy to post-proxy pipeline.
 
+## Test YouTube ad skipping
+
+`scripts/test-youtube-ad-skip.py` launches an isolated headed Chrome profile,
+opens one YouTube watch URL through CDP, and tests the ad Skip control with
+trusted coordinate-based CDP mouse events. It never searches for or terminates
+an existing Chrome process.
+
+```bash
+PYTHONPATH=. python scripts/test-youtube-ad-skip.py \
+  'https://www.youtube.com/watch?v=VIDEO_ID' \
+  --output /tmp/youtube-ad-skip-result.json
+```
+
+Run the built-in three-case suite with a new temporary Chrome profile and CDP
+port for every case:
+
+```bash
+PYTHONPATH=. python scripts/test-youtube-ad-skip.py \
+  --suite \
+  --output /tmp/youtube-ad-skip-suite.json
+```
+
+The test passes only after it clicks a detected Skip control, observes the ad
+clear promptly, and sees primary video time advance in consecutive observations.
+If no skippable ad appears, the result is `inconclusive` rather than a false
+success. By default it attempts at most three Skip clicks and two Play clicks,
+keeps the browser visible for eight seconds after the result, and then closes
+only the Chrome instance it launched. The script prints a machine-readable
+`RESULT` line. Exit status 0 means passed, 2 means failed, and 3 means
+inconclusive. Use `--help` to adjust the observation window and bounded attempt
+limits.
+
 ## Worker protocol process
 
 `traffictracer_worker.py` exposes Worker API v2 over newline-delimited JSON for the Tauri backend and integration tests. It is normally launched from the package sidecar, not manually by users.

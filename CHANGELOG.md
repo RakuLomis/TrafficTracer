@@ -4,6 +4,22 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.2] - 2026-08-15
+
+### Fixed
+
+- Replaced page-script Play and Skip activation with scoped, coordinate-based
+  CDP mouse events while retaining a fixed capture window.
+- Confirmed primary YouTube playback only from consecutive media-time advances,
+  preventing a stalled player state from being reported as useful video.
+- Distinguished no-ad, unskippable-ad, attempted-Skip, confirmed-Skip, and
+  missing-primary outcomes in analysis artifacts and the desktop UI.
+
+### Added
+
+- Added an isolated temporary-profile YouTube interaction harness for repeatable
+  headed-browser diagnostics without touching existing browser processes.
+
 ## [1.0.1] - 2026-08-14
 
 ### Added

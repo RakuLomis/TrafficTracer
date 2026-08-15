@@ -684,7 +684,37 @@ def test_summary_surfaces_bounded_playback_quality(tmp_path):
         "kind": "youtube_playback",
         "state": "degraded",
         "reason": "PRIMARY_DURATION_BELOW_TARGET",
+        "primary_content_observed": True,
         "primary_goal_met": False,
         "primary_content_seconds": 12,
         "desired_primary_seconds": 25,
+        "ad_observed": None,
+        "skippable_ad_observed": None,
+        "skip_confirmed": None,
     }
+
+
+def test_playback_scenario_fails_only_when_primary_is_not_observed(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    playback = {
+        "provider": "youtube",
+        "quality": "unavailable",
+        "reason": "PRIMARY_CONTENT_NOT_OBSERVED",
+        "primary_content_observed": False,
+        "primary_goal_met": False,
+        "primary_content_seconds": 0,
+        "desired_primary_seconds": 25,
+        "ad_observed": True,
+        "skippable_ad_observed": False,
+        "skip_confirmed": False,
+    }
+    (raw / "capture-context.json").write_text(
+        json.dumps({"playback": playback}), encoding="utf-8"
+    )
+    artifacts = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    summary = json.loads(artifacts.summary.read_text(encoding="utf-8"))
+    assert summary["quality_state"] == "passed"
+    assert summary["scenario_outcome"]["state"] == "failed"
+    assert summary["scenario_outcome"]["primary_content_observed"] is False
+    assert summary["scenario_outcome"]["ad_observed"] is True
