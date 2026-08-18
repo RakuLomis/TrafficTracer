@@ -4,6 +4,31 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.4] - 2026-08-18
+
+### Fixed
+
+- Preserved every CDP redirect occurrence as a distinct, stable request while
+  retaining the redirect-chain relationship and URL attribution.
+- Backfilled occurrence metadata when reanalyzing legacy captures and replaced
+  false duplicate-request consistency failures with occurrence-aware checks.
+- Made resumed site batches skip completed targets, retry failed targets, and
+  continue to later targets instead of stopping at the first network failure.
+- Defaulted UI-created and resumed serial batches to non-fail-fast execution so
+  one inaccessible site no longer aborts a broad capture campaign.
+
+### Added
+
+- Expanded and normalized the default site catalog for broader static, portal,
+  SPA, media, real-time, and infrastructure capture coverage.
+
+### Validation
+
+- Passed all 522 TrafficTracer Python tests and the targeted Clash Verge UI
+  tests and type checks.
+- Reanalyzed the captured Stack Overflow redirect case successfully, retaining
+  both 307-to-403 and 302-to-200 request occurrences.
+
 ## [1.0.3] - 2026-08-15
 
 ### Fixed
