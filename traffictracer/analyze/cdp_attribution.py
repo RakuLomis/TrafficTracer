@@ -19,6 +19,8 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
 
     raw_requests = data.get("requests", [])
     result: list[AttributedRequest] = []
+    occurrence_counts: dict[tuple[str, str], int] = {}
+    previous_by_chain: dict[tuple[str, str], dict] = {}
 
     for raw in raw_requests:
         url = raw.get("url", "")
@@ -26,6 +28,25 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
         # standalone HTTP transport and cannot satisfy the flow-v2 contract.
         if not isinstance(url, str) or not url.startswith(("http://", "https://")):
             continue
+        chain_key = (
+            str(raw.get("target_id", "")),
+            str(raw.get("request_id", "")),
+        )
+        fallback_index = occurrence_counts.get(chain_key, 0)
+        redirect_index = raw.get("redirect_index", fallback_index)
+        if not isinstance(redirect_index, int) or redirect_index < 0:
+            redirect_index = fallback_index
+        occurrence_counts[chain_key] = max(fallback_index, redirect_index) + 1
+        previous = previous_by_chain.get(chain_key)
+        redirect_from_url = raw.get("redirect_from_url") or ""
+        redirect_status = raw.get("redirect_status") or 0
+        if redirect_index > 0 and previous is not None:
+            redirect_from_url = redirect_from_url or previous.get("url", "")
+            previous_status = previous.get("response_status", 0)
+            if not redirect_status and isinstance(previous_status, int):
+                if 300 <= previous_status <= 399:
+                    redirect_status = previous_status
+        previous_by_chain[chain_key] = raw
 
         result.append(AttributedRequest(
             request_id=raw.get("request_id", ""),
@@ -50,6 +71,9 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
             failed=raw.get("failed", False),
             canceled=raw.get("canceled", False),
             failure_reason=raw.get("failure_reason", ""),
+            redirect_index=redirect_index,
+            redirect_from_url=redirect_from_url,
+            redirect_status=redirect_status,
         ))
 
     logger.info("Parsed %d attributed requests from CDP data", len(result))

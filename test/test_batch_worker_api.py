@@ -131,6 +131,7 @@ def test_worker_restart_marks_running_child_interrupted_and_resume_reuses_snapsh
     completed = restarted.batches.get(payload["job_id"])
     assert completed.state is BatchState.COMPLETED
     assert completed.resume.attempt == 1
+    assert completed.fail_fast is False
 
 
 def test_batch_cancel_is_idempotent_and_does_not_start_next_child(

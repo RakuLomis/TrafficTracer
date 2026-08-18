@@ -305,6 +305,20 @@ class BatchManifest:
         manifest.to_dict()
         return manifest
 
+    def with_resume_policy(
+        self,
+        *,
+        fail_fast: bool,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        if self.state not in {BatchState.FAILED, BatchState.INTERRUPTED}:
+            raise ValueError("resume policy requires a failed or interrupted batch")
+        return replace(
+            self,
+            fail_fast=fail_fast,
+            updated_at=_utc(now),
+        )
+
     def begin(self, *, now: datetime | None = None) -> "BatchManifest":
         if self.state not in {
             BatchState.CREATED,
@@ -321,12 +335,23 @@ class BatchManifest:
                 attempt=resume.attempt + 1,
                 resumed_at=timestamp,
             )
-        if self.state is BatchState.FAILED and resume.next_index < len(children):
+        if self.state is BatchState.FAILED:
             mutable = list(children)
-            mutable[resume.next_index] = replace(
-                mutable[resume.next_index],
-                state=BatchChildState.INTERRUPTED,
-            )
+            failed_positions = [
+                index
+                for index, child in enumerate(mutable)
+                if child.state is BatchChildState.FAILED
+            ]
+            for index in failed_positions:
+                mutable[index] = replace(
+                    mutable[index],
+                    state=BatchChildState.INTERRUPTED,
+                )
+            if failed_positions:
+                resume = replace(
+                    resume,
+                    next_index=min(failed_positions),
+                )
             children = tuple(mutable)
         return replace(
             self,
@@ -335,6 +360,23 @@ class BatchManifest:
             updated_at=timestamp,
             resume=resume,
             children=children,
+        )
+
+    def skip_completed(self, *, now: datetime | None = None) -> "BatchManifest":
+        if self.state is not BatchState.RUNNING or self.current_index is not None:
+            raise ValueError("completed children can only be skipped while idle")
+        next_index = self.resume.next_index
+        while (
+            next_index < len(self.children)
+            and self.children[next_index].state is BatchChildState.COMPLETED
+        ):
+            next_index += 1
+        if next_index == self.resume.next_index:
+            return self
+        return replace(
+            self,
+            resume=replace(self.resume, next_index=next_index),
+            updated_at=_utc(now),
         )
 
     def start_child(self, target_index: int, *, now: datetime | None = None) -> "BatchManifest":

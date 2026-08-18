@@ -59,6 +59,9 @@ class AttributedRequest:
     failed: bool = False
     canceled: bool = False
     failure_reason: str = ""
+    redirect_index: int = 0
+    redirect_from_url: str = ""
+    redirect_status: int = 0
 
 
 @dataclass

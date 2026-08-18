@@ -21,7 +21,9 @@ def validate_analysis_consistency(
     generation_id: str = "",
 ) -> dict:
     errors: list[str] = []
-    request_keys: set[tuple[str, str]] = set()
+    request_keys: set[tuple] = set()
+    occurrence_ids_by_connection: dict[str, set[str]] = defaultdict(set)
+    redirect_indexes: dict[tuple[str, str], set[int]] = defaultdict(set)
     request_ids_by_connection: dict[str, set[str]] = defaultdict(set)
     legacy_request_ids_by_connection: dict[str, set[str]] = defaultdict(set)
     urls_by_connection: dict[str, set[str]] = defaultdict(set)
@@ -35,10 +37,26 @@ def validate_analysis_consistency(
         request_id = request.get("request_id")
         if not request_id:
             continue
-        request_key = (request_id, request.get("url", ""))
+        occurrence_id = request.get("request_occurrence_id")
+        if occurrence_id:
+            request_key = ("occurrence", occurrence_id)
+        else:
+            timing = request.get("timing", {})
+            request_key = (
+                "legacy", request_id, request.get("url", ""),
+                timing.get("request"),
+            )
         if request_key in request_keys:
-            errors.append(f"duplicate request record: {request_id}")
+            errors.append(f"duplicate request occurrence: {request_id}")
         request_keys.add(request_key)
+
+        redirect_index = request.get("redirect_index")
+        if isinstance(redirect_index, int):
+            chain_key = (request.get("target_id", ""), request_id)
+            if redirect_index in redirect_indexes[chain_key]:
+                errors.append(f"duplicate redirect index: {request_id}")
+            redirect_indexes[chain_key].add(redirect_index)
+
         connection_id = request.get("connection_id")
         observation = request.get("network_observation")
         status = request.get("attribution", {}).get("status")
@@ -57,10 +75,18 @@ def validate_analysis_consistency(
                 )
                 continue
             request_ids_by_connection[connection_id].add(request_id)
+            if occurrence_id:
+                occurrence_ids_by_connection[connection_id].add(occurrence_id)
             if observation not in NON_NETWORK_OBSERVATIONS:
                 legacy_request_ids_by_connection[connection_id].add(request_id)
             if request.get("url"):
                 urls_by_connection[connection_id].add(request["url"])
+
+    for chain_key, indexes in redirect_indexes.items():
+        if indexes and indexes != set(range(max(indexes) + 1)):
+            errors.append(
+                f"non-contiguous redirect indexes: {chain_key[1]}"
+            )
 
     for connection_id, connection in connections.items():
         expected_requests = request_ids_by_connection.get(connection_id, set())
@@ -69,6 +95,17 @@ def validate_analysis_consistency(
             errors.append(
                 f"connection request_ids mismatch: {connection_id}"
             )
+        expected_occurrences = occurrence_ids_by_connection.get(
+            connection_id, set()
+        )
+        actual_occurrences = set(
+            connection.get("request_occurrence_ids", [])
+        )
+        if expected_occurrences or actual_occurrences:
+            if actual_occurrences != expected_occurrences:
+                errors.append(
+                    f"connection request_occurrence_ids mismatch: {connection_id}"
+                )
         expected_urls = urls_by_connection.get(connection_id, set())
         actual_urls = set(connection.get("urls", []))
         if actual_urls != expected_urls:

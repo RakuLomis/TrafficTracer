@@ -159,7 +159,7 @@ def test_three_target_worker_service_fail_fast_and_resume_from_exact_child(
         second = services.batches.get(payload["job_id"])
         assert second.state is BatchState.FAILED
         assert second.children[2].error.code == "BATCH_CHILD_FAILED"
-        assert second.resume.next_index == 2
+        assert second.resume.next_index == 3
         assert starts == [1, 3, 3, 5]
         assert unrelated_chrome.poll() is None
 

@@ -38,8 +38,9 @@ class CDPCollector:
         self._targets: dict[str, dict] = {}
         self._session_to_target: dict[str, str] = {}
         self._requests: list[dict] = []
-        self._responses: dict[str, dict] = {}
-        self._completions: dict[str, dict] = {}
+        self._responses: dict[object, dict] = {}
+        self._completions: dict[object, dict] = {}
+        self._request_occurrences: dict[object, int] = {}
         self._websockets: list[dict] = []
         self._visit_url = ""
         self._collecting = False
@@ -132,9 +133,9 @@ class CDPCollector:
         elif method == "Network.responseReceived":
             self._on_response_received(params, session_id)
         elif method == "Network.loadingFinished":
-            self._on_loading_finished(params)
+            self._on_loading_finished(params, session_id)
         elif method == "Network.loadingFailed":
-            self._on_loading_failed(params)
+            self._on_loading_failed(params, session_id)
         elif method == "Network.webSocketCreated":
             self._on_websocket_created(params, session_id)
         elif method == "Page.loadEventFired":
@@ -175,12 +176,19 @@ class CDPCollector:
             return
         request = params.get("request", {})
         request_id = params.get("requestId", "")
+        tid = self._session_to_target.get(session_id, "")
+        event_key = self._network_event_key(session_id, request_id)
+        occurrence_count = self._request_occurrences.get(event_key, 0)
+        redirect_index = occurrence_count
         redirect_response = params.get("redirectResponse")
+        redirect_from_url = None
+        redirect_status = None
         if isinstance(redirect_response, dict):
             prior = next(
                 (
                     item for item in reversed(self._requests)
                     if item.get("request_id") == request_id
+                    and item.get("_event_key", item.get("request_id")) == event_key
                     and "_response" not in item
                 ),
                 None,
@@ -196,10 +204,25 @@ class CDPCollector:
                     "canceled": False,
                     "failure_reason": "",
                 }
-        tid = self._session_to_target.get(session_id, "")
+                redirect_from_url = prior.get("url") or None
+                redirect_status = redirect_response.get("status")
+        elif occurrence_count:
+            self._warnings.append({
+                "code": "CDP_REQUEST_ID_REUSED_WITHOUT_REDIRECT",
+                "message": (
+                    "CDP requestId was reused without redirectResponse; "
+                    "the occurrence was retained"
+                ),
+                "request_id": request_id,
+                "target_id": tid,
+            })
+        self._request_occurrences[event_key] = occurrence_count + 1
         initiator = params.get("initiator", {})
         self._requests.append({
             "request_id": request_id,
+            "redirect_index": redirect_index,
+            "redirect_from_url": redirect_from_url,
+            "redirect_status": redirect_status,
             "target_id": tid,
             "frame_id": params.get("frameId", ""),
             "loader_id": params.get("loaderId", ""),
@@ -207,6 +230,7 @@ class CDPCollector:
             "resource_type": params.get("type", "Other"),
             "timestamp": params.get("timestamp", 0.0),
             "initiator_type": initiator.get("type", ""),
+            "_event_key": event_key,
         })
 
     def _on_response_received(self, params: dict, session_id: str) -> None:
@@ -214,24 +238,26 @@ class CDPCollector:
             return
         rid = params.get("requestId", "")
         resp = params.get("response", {})
-        self._responses[rid] = _response_payload(
+        self._responses[self._network_event_key(session_id, rid)] = _response_payload(
             resp, params.get("timestamp", 0.0),
         )
 
-    def _on_loading_finished(self, params: dict) -> None:
+    def _on_loading_finished(self, params: dict, session_id: str = "") -> None:
         if not self._collecting:
             return
-        self._completions[params.get("requestId", "")] = {
+        key = self._network_event_key(session_id, params.get("requestId", ""))
+        self._completions[key] = {
             "timestamp": params.get("timestamp", 0.0),
             "failed": False,
             "canceled": False,
             "failure_reason": "",
         }
 
-    def _on_loading_failed(self, params: dict) -> None:
+    def _on_loading_failed(self, params: dict, session_id: str = "") -> None:
         if not self._collecting:
             return
-        self._completions[params.get("requestId", "")] = {
+        key = self._network_event_key(session_id, params.get("requestId", ""))
+        self._completions[key] = {
             "timestamp": params.get("timestamp", 0.0),
             "failed": True,
             "canceled": bool(params.get("canceled", False)),
@@ -241,6 +267,12 @@ class CDPCollector:
                 or "loading_failed"
             ),
         }
+
+    def _network_event_key(self, session_id: str, request_id: str) -> object:
+        """Scope CDP request IDs to their target while preserving legacy access."""
+        target_id = self._session_to_target.get(session_id, "")
+        scope = target_id or session_id
+        return (scope, request_id) if scope else request_id
 
     def _on_websocket_created(self, params: dict, session_id: str) -> None:
         if not self._collecting:
@@ -520,12 +552,11 @@ class CDPCollector:
                 for key, value in req.items()
                 if not key.startswith("_")
             }
-            resp = req.get("_response") or self._responses.get(
-                req["request_id"], {},
-            )
+            event_key = req.get("_event_key", req["request_id"])
+            resp = req.get("_response") or self._responses.get(event_key, {})
             completion = req.get("_completion") or getattr(
                 self, "_completions", {},
-            ).get(req["request_id"], {})
+            ).get(event_key, {})
             entry["connection_id"] = resp.get("connection_id")
             entry["remote_ip"] = resp.get("remote_ip", "")
             entry["remote_port"] = resp.get("remote_port", 0)

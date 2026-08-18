@@ -70,7 +70,9 @@ class SerialBatchJob:
         elif manifest.state in {BatchState.FAILED, BatchState.INTERRUPTED}:
             if not self.resume:
                 raise ValueError("batch resume must be explicitly requested")
-            manifest = manifest.begin()
+            manifest = manifest.with_resume_policy(
+                fail_fast=self.spec.fail_fast,
+            ).begin()
         elif manifest.state is BatchState.COMPLETED:
             return self._result(manifest)
         else:
@@ -78,7 +80,11 @@ class SerialBatchJob:
         self._save(manifest)
 
         try:
-            while manifest.resume.next_index < len(manifest.targets):
+            while manifest.state is BatchState.RUNNING:
+                manifest = manifest.skip_completed()
+                self._save(manifest)
+                if manifest.resume.next_index >= len(manifest.targets):
+                    break
                 self.cancellation.checkpoint()
                 position = manifest.resume.next_index
                 manifest = manifest.start_child(position)

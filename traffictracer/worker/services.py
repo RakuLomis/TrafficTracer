@@ -400,8 +400,11 @@ class WorkerServices:
             raise WorkerMethodError(
                 "INVALID_PARAMS", "Only failed or interrupted batches can resume."
             )
-        spec = manifest.to_job_spec(
-            controller_secret=self.controller_secret or None
+        spec = replace(
+            manifest.to_job_spec(
+                controller_secret=self.controller_secret or None
+            ),
+            fail_fast=False,
         )
         # Resume never reloads target definitions. The source file is checked
         # only as an immutable provenance guard against silent YAML changes.

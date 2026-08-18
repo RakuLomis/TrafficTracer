@@ -60,6 +60,7 @@ def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector._requests: list[dict] = []
     collector._responses: dict[str, dict] = {}
     collector._completions: dict[str, dict] = {}
+    collector._request_occurrences: dict[object, int] = {}
     collector._websockets: list[dict] = []
     collector._visit_url = ""
     collector._collecting = True
@@ -140,8 +141,8 @@ def test_collector_parses_response_received():
         except asyncio.CancelledError:
             pass
 
-        assert "921.18" in collector._responses
-        resp = collector._responses["921.18"]
+        assert ("S1", "921.18") in collector._responses
+        resp = collector._responses[("S1", "921.18")]
         assert resp["connection_id"] == 17
         assert resp["remote_ip"] == "1.2.3.4"
         assert resp["remote_port"] == 443
@@ -448,7 +449,7 @@ def test_redirect_occurrences_keep_distinct_response_evidence():
     collector._on_request_will_be_sent({
         "requestId": "redirect.1",
         "timestamp": 10.5,
-        "request": {"url": "https://www.example.com/"},
+        "request": {"url": "https://example.com/"},
         "redirectResponse": {
             "status": 301,
             "connectionId": 7,
@@ -472,14 +473,38 @@ def test_redirect_occurrences_keep_distinct_response_evidence():
 
     assert [item["url"] for item in requests] == [
         "https://example.com/",
-        "https://www.example.com/",
+        "https://example.com/",
     ]
+    assert [item["redirect_index"] for item in requests] == [0, 1]
+    assert requests[1]["redirect_from_url"] == "https://example.com/"
+    assert requests[1]["redirect_status"] == 301
     assert [item["response_status"] for item in requests] == [301, 200]
     assert [item["connection_id"] for item in requests] == [7, 8]
     assert [item["remote_ip"] for item in requests] == [
         "198.51.100.7",
         "198.51.100.8",
     ]
+
+
+def test_same_request_id_is_isolated_between_cdp_sessions():
+    collector = _make_collector_with_ws(FakeWS())
+    collector._on_request_will_be_sent({
+        "requestId": "shared.1",
+        "timestamp": 10.0,
+        "request": {"url": "https://one.example/"},
+        "type": "Document",
+    }, "S1")
+    collector._on_request_will_be_sent({
+        "requestId": "shared.1",
+        "timestamp": 10.1,
+        "request": {"url": "https://two.example/"},
+        "type": "Document",
+    }, "S2")
+
+    requests = collector.get_structured_data()["requests"]
+
+    assert [item["redirect_index"] for item in requests] == [0, 0]
+    assert collector._warnings == []
 
 
 def test_playback_interaction_dispatches_cdp_mouse_sequence_to_page_session():

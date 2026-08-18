@@ -97,8 +97,9 @@ def test_failed_batch_resume_retries_failed_snapshot_position():
     )
     assert failed.state is BatchState.FAILED
     assert failed.resume.next_index == 0
-    resumed = failed.begin()
+    resumed = failed.with_resume_policy(fail_fast=False).begin()
     assert resumed.resume.attempt == 1
+    assert resumed.fail_fast is False
     assert resumed.children[0].state is BatchChildState.INTERRUPTED
     assert resumed.start_child(0).current_index == 0
 

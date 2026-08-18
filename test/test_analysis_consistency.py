@@ -118,21 +118,83 @@ def test_consistency_rejects_cross_index_orphans_and_generation_mix():
     assert "pcap references missing connection" in message
 
 
-def test_consistency_allows_redirect_stages_with_one_request_id():
-    first = _request()
+def test_consistency_allows_same_url_redirect_stages_with_one_request_id():
+    first = {
+        **_request(),
+        "request_occurrence_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+        "target_id": "page-1",
+        "redirect_index": 0,
+        "timing": {"request": 10.0},
+    }
     second = {
         **first,
-        "url": "https://example.com/app.js?redirected=1",
+        "request_occurrence_id": "f2ec1c2c-45ed-4d61-8943-a85b72cb416b",
+        "redirect_index": 1,
+        "timing": {"request": 10.5},
     }
     connection = _connection()
-    connection["urls"] = [first["url"], second["url"]]
-    flow = _flow()
-    flow["urls"] = [first["url"], second["url"]]
+    connection["request_occurrence_ids"] = [
+        first["request_occurrence_id"],
+        second["request_occurrence_id"],
+    ]
 
     result = validate_analysis_consistency(
         [first, second],
         [connection],
-        [flow],
+        [_flow()],
     )
 
     assert result["status"] == "passed"
+
+
+def test_consistency_rejects_duplicate_request_occurrence():
+    request = {
+        **_request(),
+        "request_occurrence_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+        "target_id": "page-1",
+        "redirect_index": 0,
+        "timing": {"request": 10.0},
+    }
+    connection = _connection()
+    connection["request_occurrence_ids"] = [request["request_occurrence_id"]]
+
+    with pytest.raises(
+        AnalysisConsistencyError,
+        match="duplicate request occurrence",
+    ):
+        validate_analysis_consistency(
+            [request, dict(request)],
+            [connection],
+            [_flow()],
+        )
+
+
+def test_consistency_rejects_non_contiguous_redirect_indexes():
+    first = {
+        **_request(),
+        "request_occurrence_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+        "target_id": "page-1",
+        "redirect_index": 0,
+        "timing": {"request": 10.0},
+    }
+    third = {
+        **first,
+        "request_occurrence_id": "f2ec1c2c-45ed-4d61-8943-a85b72cb416b",
+        "redirect_index": 2,
+        "timing": {"request": 11.0},
+    }
+    connection = _connection()
+    connection["request_occurrence_ids"] = [
+        first["request_occurrence_id"],
+        third["request_occurrence_id"],
+    ]
+
+    with pytest.raises(
+        AnalysisConsistencyError,
+        match="non-contiguous redirect indexes",
+    ):
+        validate_analysis_consistency(
+            [first, third],
+            [connection],
+            [_flow()],
+        )

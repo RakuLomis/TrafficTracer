@@ -92,6 +92,8 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     assert connections[0]["terminal"]["stage"] == "dial"
     assert connections[0]["connection_id"] == CONNECTION_ID
     assert connections[0]["request_ids"] == ["1.1", "1.2"]
+    assert len(connections[0]["request_occurrence_ids"]) == 2
+    assert len(set(connections[0]["request_occurrence_ids"])) == 2
     assert connections[0]["match"]["status"] == "ambiguous"
     assert connections[0]["match"]["evidence"] == ["top_score_tie"]
     assert len(connections[0]["match"]["candidates"]) == 10
@@ -99,6 +101,8 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
     assert connections[0]["match"]["candidates_truncated"] is True
     assert len(requests) == 2
     assert requests[0]["url"] == requests[1]["url"]
+    assert all(item["request_occurrence_id"] for item in requests)
+    assert {item["redirect_index"] for item in requests} == {0}
     assert {item["connection_id"] for item in requests} == {CONNECTION_ID}
 
     pcap_path = tmp_path / "results" / "pcap" / CONNECTION_ID / "pre.pcap"

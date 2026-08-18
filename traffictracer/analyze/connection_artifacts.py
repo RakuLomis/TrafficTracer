@@ -64,12 +64,16 @@ def persist_connection_artifacts(
     )
     urls_by_connection: dict[str, set[str]] = {}
     request_ids_by_connection: dict[str, set[str]] = {}
+    occurrence_ids_by_connection: dict[str, set[str]] = {}
     for request in requests:
         connection_id = request.get("connection_id")
         if connection_id:
             urls_by_connection.setdefault(connection_id, set()).add(request["url"])
             request_ids_by_connection.setdefault(connection_id, set()).add(
                 request["request_id"]
+            )
+            occurrence_ids_by_connection.setdefault(connection_id, set()).add(
+                request["request_occurrence_id"]
             )
     local_connection_ids = {
         request["connection_id"] for request in requests
@@ -79,6 +83,9 @@ def persist_connection_artifacts(
     for connection in connections:
         connection["request_ids"] = sorted(
             request_ids_by_connection.get(connection["connection_id"], set())
+        )
+        connection["request_occurrence_ids"] = sorted(
+            occurrence_ids_by_connection.get(connection["connection_id"], set())
         )
         connection["sharing"]["request_multiplexed"] = bool(
             len(connection["request_ids"]) > 1
@@ -97,7 +104,9 @@ def persist_connection_artifacts(
     for record in [*connections, *requests]:
         validate_flow_v2(record)
     connections.sort(key=lambda item: item["connection_id"])
-    requests.sort(key=lambda item: (item["request_id"], item["url"]))
+    requests.sort(key=lambda item: (
+        item["request_id"], item["redirect_index"], item["url"],
+    ))
 
     output = Path(output_dir) if output_dir is not None else Path(session_dir) / "results"
     output.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -143,6 +152,10 @@ def _merge_connection_records(records: list[dict]) -> list[dict]:
             merged[record["connection_id"]] = record
             continue
         existing["request_ids"] = sorted(set(existing["request_ids"]) | set(record["request_ids"]))
+        existing["request_occurrence_ids"] = sorted(
+            set(existing.get("request_occurrence_ids", []))
+            | set(record.get("request_occurrence_ids", []))
+        )
         existing["sharing"]["request_multiplexed"] = bool(
             len(existing["request_ids"]) > 1
         )
@@ -446,6 +459,14 @@ def _request_records(
                 "session_id": session_id,
                 "analysis_generation_id": generation_id,
                 "request_id": request.request_id,
+                "request_occurrence_id": _request_occurrence_id(
+                    session_id, request,
+                ),
+                "target_id": request.target_id,
+                "redirect_index": request.redirect_index,
+                "redirect_from_url": request.redirect_from_url or None,
+                "redirect_status": request.redirect_status or None,
+                "response_status": request.response_status,
                 "url": request.url,
                 "resource_type": request.resource_type,
                 "relation": _relation(request.url, result.domain),
@@ -486,6 +507,14 @@ def _request_records(
                 ),
             })
     return output
+
+
+def _request_occurrence_id(session_id: str, request) -> str:
+    identity = (
+        f"traffictracer-request:{session_id}:{request.target_id}:"
+        f"{request.request_id}:{request.redirect_index}"
+    )
+    return str(uuid5(NAMESPACE_URL, identity))
 
 
 def _request_unmatched_reason(

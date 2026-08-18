@@ -1,21 +1,9 @@
-global:
-  mihomo:
-    binary: ../mihomo-core/mihomo-traffictracer-v2
-    config: mihomo-configs/config.yaml
-    api: "http://127.0.0.1:9090"
-    managed: false
-  chrome:
-    binary: google-chrome
-    user_data_dir: chrome-profile
-    headless: true
-  network:
-    tun_interface: utun
-    phys_interface: wlp2s0
-  output:
-    base_dir: /data/datasets/ttTest
-
 sites:
-  # Existing baseline sites.
+
+  # ============================================================
+  # 1. Existing baseline sites
+  # ============================================================
+
   - domain: bilibili.com
     url: "https://www.bilibili.com/"
     wait: 15
@@ -24,13 +12,13 @@ sites:
 
   - domain: bilibili.com
     url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
-    wait: 15
+    wait: 20
     traffic_type: all
     page_type: bilibili-video-play-1
 
   - domain: bilibili.com
     url: "https://www.bilibili.com/video/BV1HEf2YWEvs/"
-    wait: 15
+    wait: 20
     traffic_type: all
     page_type: bilibili-video-play-2
 
@@ -56,24 +44,63 @@ sites:
     traffic_type: all
     page_type: google-search-main-page
 
-  # Generalization set: static, portal, SPA, community, and e-commerce pages.
+  # ============================================================
+  # 2. Static / lightweight / document-oriented pages
+  # ============================================================
+
   - domain: example.com
     url: "https://example.com/"
     wait: 8
     traffic_type: all
     page_type: example-static-baseline
 
-  - domain: baidu.com
-    url: "https://www.baidu.com/"
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Main_Page"
     wait: 12
     traffic_type: all
-    page_type: baidu-search-main-page
+    page_type: wikipedia-main-page
 
-  - domain: baidu.com
-    url: "https://map.baidu.com/"
-    wait: 15
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Computer_network"
+    wait: 12
     traffic_type: all
-    page_type: baidu-map-spa-main-page
+    page_type: wikipedia-article-page
+
+  - domain: mozilla.org
+    url: "https://www.mozilla.org/"
+    wait: 12
+    traffic_type: all
+    page_type: mozilla-main-page
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/"
+    wait: 12
+    traffic_type: all
+    page_type: mdn-main-page
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP"
+    wait: 12
+    traffic_type: all
+    page_type: mdn-document-page
+
+  - domain: ietf.org
+    url: "https://www.ietf.org/"
+    wait: 12
+    traffic_type: all
+    page_type: ietf-main-page
+
+  - domain: arxiv.org
+    url: "https://arxiv.org/"
+    wait: 12
+    traffic_type: all
+    page_type: arxiv-main-page
+
+  - domain: arxiv.org
+    url: "https://arxiv.org/abs/1706.03762"
+    wait: 12
+    traffic_type: all
+    page_type: arxiv-paper-page
 
   - domain: gov.cn
     url: "https://www.gov.cn/"
@@ -81,17 +108,123 @@ sites:
     traffic_type: all
     page_type: gov-government-portal
 
+  # ============================================================
+  # 3. Search engines / portals
+  # ============================================================
+
+  - domain: baidu.com
+    url: "https://www.baidu.com/"
+    wait: 12
+    traffic_type: all
+    page_type: baidu-search-main-page
+
+  - domain: bing.com
+    url: "https://www.bing.com/"
+    wait: 15
+    traffic_type: all
+    page_type: bing-search-main-page
+
+  - domain: duckduckgo.com
+    url: "https://duckduckgo.com/"
+    wait: 12
+    traffic_type: all
+    page_type: duckduckgo-search-main-page
+
   - domain: 12306.cn
     url: "https://www.12306.cn/index/"
     wait: 15
     traffic_type: all
     page_type: 12306-service-portal
 
+  - domain: yahoo.com
+    url: "https://www.yahoo.com/"
+    wait: 15
+    traffic_type: all
+    page_type: yahoo-portal-main-page
+
+  - domain: msn.com
+    url: "https://www.msn.com/"
+    wait: 15
+    traffic_type: all
+    page_type: msn-portal-main-page
+
+  # ============================================================
+  # 4. Maps / tile-based SPA
+  # ============================================================
+
+  - domain: baidu.com
+    url: "https://map.baidu.com/"
+    wait: 20
+    traffic_type: all
+    page_type: baidu-map-spa-main-page
+
+  - domain: openstreetmap.org
+    url: "https://www.openstreetmap.org/"
+    wait: 20
+    traffic_type: all
+    page_type: openstreetmap-main-page
+
+  - domain: google.com
+    url: "https://www.google.com/maps/"
+    wait: 20
+    traffic_type: all
+    page_type: google-map-main-page
+
+  # ============================================================
+  # 5. Developer / programming / community
+  # ============================================================
+
+  - domain: github.com
+    url: "https://github.com/"
+    wait: 15
+    traffic_type: all
+    page_type: github-developer-main-page
+
+  - domain: github.com
+    url: "https://github.com/explore"
+    wait: 15
+    traffic_type: all
+    page_type: github-explore-page
+
+  - domain: github.com
+    url: "https://github.com/RakuLomis/TrafficTracer"
+    wait: 15
+    traffic_type: all
+    page_type: github-repository-page
+
   - domain: gitee.com
     url: "https://gitee.com/"
     wait: 15
     traffic_type: all
     page_type: gitee-developer-main-page
+
+  - domain: stackoverflow.com
+    url: "https://stackoverflow.com/questions"
+    wait: 15
+    traffic_type: all
+    page_type: stackoverflow-question-list
+
+  - domain: huggingface.co
+    url: "https://huggingface.co/"
+    wait: 15
+    traffic_type: all
+    page_type: huggingface-main-page
+
+  - domain: huggingface.co
+    url: "https://huggingface.co/models"
+    wait: 15
+    traffic_type: all
+    page_type: huggingface-model-list
+
+  - domain: csdn.net
+    url: "https://www.csdn.net/"
+    wait: 15
+    traffic_type: all
+    page_type: csdn-content-main-page
+
+  # ============================================================
+  # 6. Community / content platforms
+  # ============================================================
 
   - domain: douban.com
     url: "https://www.douban.com/"
@@ -105,45 +238,208 @@ sites:
     traffic_type: all
     page_type: douban-movie-main-page
 
+  - domain: zhihu.com
+    url: "https://www.zhihu.com/"
+    wait: 15
+    traffic_type: all
+    page_type: zhihu-community-main-page
+
+  # ============================================================
+  # 7. News / information portals
+  # ============================================================
+
+  - domain: sina.com.cn
+    url: "https://news.sina.com.cn/"
+    wait: 15
+    traffic_type: all
+    page_type: sina-news-main-page
+
+  - domain: qq.com
+    url: "https://news.qq.com/"
+    wait: 15
+    traffic_type: all
+    page_type: tencent-news-main-page
+
+  - domain: 163.com
+    url: "https://news.163.com/"
+    wait: 15
+    traffic_type: all
+    page_type: netease-news-main-page
+
+  - domain: bbc.com
+    url: "https://www.bbc.com/"
+    wait: 18
+    traffic_type: all
+    page_type: bbc-news-main-page
+
+  - domain: reuters.com
+    url: "https://www.reuters.com/"
+    wait: 18
+    traffic_type: all
+    page_type: reuters-news-main-page
+
+  - domain: theguardian.com
+    url: "https://www.theguardian.com/international"
+    wait: 18
+    traffic_type: all
+    page_type: guardian-news-main-page
+
+  # ============================================================
+  # 8. E-commerce
+  # ============================================================
+
   - domain: jd.com
     url: "https://www.jd.com/"
-    wait: 15
+    wait: 18
     traffic_type: all
     page_type: jd-ecommerce-main-page
 
-  - domain: mi.com
-    url: "https://www.mi.com/"
-    wait: 15
-    traffic_type: all
-    page_type: mi-brand-spa-main-page
-
   - domain: taobao.com
     url: "https://www.taobao.com/"
-    wait: 15
+    wait: 18
     traffic_type: all
     page_type: taobao-ecommerce-main-page
 
-  - domain: csdn.net
-    url: "https://www.csdn.net/"
-    wait: 15
+  - domain: mi.com
+    url: "https://www.mi.com/"
+    wait: 18
     traffic_type: all
-    page_type: csdn-content-main-page
+    page_type: mi-brand-spa-main-page
 
-  # Video stress set.
+  - domain: apple.com
+    url: "https://www.apple.com/"
+    wait: 18
+    traffic_type: all
+    page_type: apple-brand-main-page
+
+  - domain: apple.com
+    url: "https://www.apple.com/iphone/"
+    wait: 18
+    traffic_type: all
+    page_type: apple-product-page
+
+  - domain: ikea.com
+    url: "https://www.ikea.com/"
+    wait: 18
+    traffic_type: all
+    page_type: ikea-ecommerce-main-page
+
+  # ============================================================
+  # 9. Image-heavy content / CDN stress
+  # ============================================================
+
+  - domain: unsplash.com
+    url: "https://unsplash.com/"
+    wait: 20
+    traffic_type: all
+    page_type: unsplash-image-main-page
+
+  - domain: pinterest.com
+    url: "https://www.pinterest.com/"
+    wait: 20
+    traffic_type: all
+    page_type: pinterest-image-main-page
+
+  # ============================================================
+  # 10. Video platforms
+  # ============================================================
+
   - domain: qq.com
     url: "https://v.qq.com/"
-    wait: 20
+    wait: 25
     traffic_type: all
     page_type: qq-video-main-page
 
   - domain: iqiyi.com
     url: "https://www.iqiyi.com/"
-    wait: 20
+    wait: 25
     traffic_type: all
     page_type: iqiyi-video-main-page
 
   - domain: youku.com
     url: "https://www.youku.com/"
-    wait: 20
+    wait: 25
     traffic_type: all
     page_type: youku-video-main-page
+
+  - domain: vimeo.com
+    url: "https://vimeo.com/"
+    wait: 25
+    traffic_type: all
+    page_type: vimeo-video-main-page
+
+  # ============================================================
+  # 11. Live-streaming platforms
+  # ============================================================
+
+  - domain: twitch.tv
+    url: "https://www.twitch.tv/"
+    wait: 30
+    traffic_type: all
+    page_type: twitch-live-main-page
+
+  - domain: douyu.com
+    url: "https://www.douyu.com/"
+    wait: 30
+    traffic_type: all
+    page_type: douyu-live-main-page
+
+  - domain: huya.com
+    url: "https://www.huya.com/"
+    wait: 30
+    traffic_type: all
+    page_type: huya-live-main-page
+
+  # ============================================================
+  # 12. Audio / music services
+  # ============================================================
+
+  - domain: music.163.com
+    url: "https://music.163.com/"
+    wait: 20
+    traffic_type: all
+    page_type: netease-music-main-page
+
+  - domain: soundcloud.com
+    url: "https://soundcloud.com/"
+    wait: 20
+    traffic_type: all
+    page_type: soundcloud-audio-main-page
+
+  - domain: spotify.com
+    url: "https://open.spotify.com/"
+    wait: 20
+    traffic_type: all
+    page_type: spotify-web-main-page
+
+  # ============================================================
+  # 13. Real-time / frequently updated Web applications
+  # ============================================================
+
+  - domain: tradingview.com
+    url: "https://www.tradingview.com/"
+    wait: 25
+    traffic_type: all
+    page_type: tradingview-realtime-main-page
+
+  - domain: weather.com
+    url: "https://weather.com/"
+    wait: 20
+    traffic_type: all
+    page_type: weather-dynamic-main-page
+
+  # ============================================================
+  # 14. Infrastructure / network-oriented pages
+  # ============================================================
+
+  - domain: cloudflare.com
+    url: "https://www.cloudflare.com/"
+    wait: 15
+    traffic_type: all
+    page_type: cloudflare-main-page
+
+  - domain: speed.cloudflare.com
+    url: "https://speed.cloudflare.com/"
+    wait: 20
+    traffic_type: all
+    page_type: cloudflare-speed-page

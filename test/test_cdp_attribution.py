@@ -146,6 +146,36 @@ def test_connection_dedup_by_connection_id():
     assert conn_ids == {17}
 
 
+def test_parse_backfills_same_url_redirect_occurrences_from_legacy_cdp():
+    data = {
+        "requests": [
+            {
+                "request_id": "redirect.1",
+                "target_id": "T1",
+                "url": "https://example.com/questions",
+                "resource_type": "Document",
+                "timestamp": 10.0,
+                "response_status": 302,
+            },
+            {
+                "request_id": "redirect.1",
+                "target_id": "T1",
+                "url": "https://example.com/questions",
+                "resource_type": "Document",
+                "timestamp": 10.5,
+                "response_status": 200,
+            },
+        ],
+    }
+    path = _write_cdp_json(data)
+    requests = parse_cdp_attribution(path)
+    os.unlink(path)
+
+    assert [item.redirect_index for item in requests] == [0, 1]
+    assert requests[1].redirect_from_url == "https://example.com/questions"
+    assert requests[1].redirect_status == 302
+
+
 if __name__ == "__main__":
     test_parse_basic_requests()
     test_parse_skips_requests_without_url()
