@@ -153,6 +153,38 @@ def test_quic_host_time_multiple_candidates_remain_ambiguous():
     assert decision.reason == "multiple_candidates"
 
 
+def test_host_time_uses_unique_nearest_candidate_when_gap_is_material():
+    transport = _transport(
+        protocol="QUIC", src_ip="", src_port=0, dst_ip="", dst_port=0,
+        first_observed_utc=1786588324.000,
+    )
+    candidates = {
+        "near": MihomoConnection(
+            "near",
+            TcpConnect(
+                "2026-08-13T02:32:00.764Z", "near", "", "",
+                "cdn.example.net",
+            ),
+            None, None,
+        ),
+        "far": MihomoConnection(
+            "far",
+            TcpConnect(
+                "2026-08-13T02:31:59.367Z", "far", "", "",
+                "cdn.example.net",
+            ),
+            None, None,
+        ),
+    }
+    decision = rank_connection_candidates(transport, candidates)
+    assert decision.status == "matched"
+    assert decision.selected_native_id == "near"
+    assert decision.reason == "unique_nearest_time"
+    winner = next(item for item in decision.candidates if item.native_id == "near")
+    assert "unique_nearest_time" in winner.evidence
+    assert "runner_up_gap_ms:1397" in winner.evidence
+
+
 def test_exact_pre_flow_accepts_incomparable_monotonic_and_utc_clocks():
     key = "tcp|198.18.0.1:44000|9.9.9.9:443"
     pre = FlowTuple(

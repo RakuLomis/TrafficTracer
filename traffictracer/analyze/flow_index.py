@@ -32,13 +32,22 @@ class FlowIndex:
                 self._by_pre_key.setdefault(mapping.pre_flow.key, []).append(mapping)
 
     @classmethod
-    def from_log(cls, path: str, max_event_seq: int | None = None) -> "FlowIndex":
+    def from_log(
+        cls,
+        path: str,
+        max_event_seq: int | None = None,
+        include_event_seqs: set[int] | None = None,
+    ) -> "FlowIndex":
         mappings: list[FlowMapping] = []
-        for conn in parse_tracing_log(path, max_event_seq=max_event_seq).values():
+        for conn in parse_tracing_log(
+            path, max_event_seq, include_event_seqs
+        ).values():
             mapping = _tcp_mapping(conn)
             if mapping:
                 mappings.append(mapping)
-        for conn in parse_udp_tracing_log(path, max_event_seq=max_event_seq).values():
+        for conn in parse_udp_tracing_log(
+            path, max_event_seq, include_event_seqs
+        ).values():
             mapping = _udp_mapping(conn)
             if mapping:
                 mappings.append(mapping)

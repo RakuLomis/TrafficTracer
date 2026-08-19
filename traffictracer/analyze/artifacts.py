@@ -538,6 +538,9 @@ def _trace_snapshot_summary(session: Path) -> dict:
         "trace_count": len(traces),
         "late_event_count": sum(item["late_event_count"] for item in traces),
         "late_event_types": dict(sorted(late_types.items())),
+        "causal_tail_event_count": sum(
+            item.get("causal_tail_event_count", 0) for item in traces
+        ),
         "max_late_delay_ms": max(
             (item.get("max_late_delay_ms", 0.0) for item in traces), default=0.0,
         ),
@@ -550,9 +553,10 @@ def _load_mappings(session: Path) -> list[FlowMapping]:
     trace_paths = _trace_paths(session)
     for trace_path in trace_paths:
         snapshot = trace_snapshot_info(str(trace_path))
+        causal_tail = set(snapshot.get("causal_tail_event_seqs", []))
         mappings.extend(
             FlowIndex.from_log(
-                str(trace_path), max_event_seq=snapshot["cutoff_event_seq"]
+                str(trace_path), snapshot["cutoff_event_seq"], causal_tail
             ).mappings
         )
     return [
@@ -613,9 +617,9 @@ def _flow_item(
         confidence = 0.0
         reason = "no complete post-proxy flow"
     elif candidate_count > 1:
-        match_status = "ambiguous"
-        confidence = 0.5
-        reason = "pre-proxy tuple is reused by multiple logical flows"
+        match_status = "matched"
+        confidence = 1.0
+        reason = "native connection identity preserves reused pre-proxy tuple mapping"
     else:
         match_status = "matched"
         confidence = 1.0

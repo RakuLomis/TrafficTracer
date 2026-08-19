@@ -85,7 +85,8 @@ def test_flow_index_and_summary_keep_duplicates_shared_and_null_post(tmp_path):
     assert [item["conn_id"] for item in index["items"]] == ["t1", "t2", "t3"]
     assert all(validate_flow(item) is item for item in index["items"])
     by_id = {item["conn_id"]: item for item in index["items"]}
-    assert by_id["t1"]["match"]["status"] == "ambiguous"
+    assert by_id["t1"]["match"]["status"] == "matched"
+    assert "native connection identity" in by_id["t1"]["match"]["reason"]
     assert by_id["t1"]["match"]["candidate_count"] == 2
     assert by_id["t2"]["post_flow"] is None
     assert by_id["t2"]["match"]["status"] == "unmatched"

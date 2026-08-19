@@ -114,8 +114,13 @@ def run_analysis(
             advance(JobStage.ANALYZE_MIHOMO, 0.4, tag)
             trace_snapshot = trace_snapshot_info(str(trace_path)) if trace_path.exists() else {"cutoff_event_seq": None}
             trace_cutoff = trace_snapshot["cutoff_event_seq"]
+            causal_tail = set(trace_snapshot.get("causal_tail_event_seqs", []))
             run_mihomo_conns = (
-                parse_tracing_log(str(trace_path), max_event_seq=trace_cutoff)
+                parse_tracing_log(
+                    str(trace_path),
+                    max_event_seq=trace_cutoff,
+                    include_event_seqs=causal_tail,
+                )
                 if trace_path.exists()
                 else {}
             )
@@ -125,7 +130,7 @@ def run_analysis(
             if cdp_path.exists():
                 result_v2 = _analyze_cdp_path(
                     str(cdp_path), str(netlog_path), str(trace_path),
-                    run_mihomo_conns, domain, tag, trace_cutoff,
+                    run_mihomo_conns, domain, tag, trace_cutoff, causal_tail,
                 )
                 if result_v2 is not None:
                     connection_results.append(result_v2)
@@ -327,6 +332,7 @@ def _analyze_cdp_path(
     domain: str,
     tag: str,
     trace_cutoff: int | None,
+    causal_tail: set[int] | None = None,
 ) -> VisitCorrelation | None:
     try:
         with open(cdp_path, "r", encoding="utf-8") as f:
@@ -357,7 +363,11 @@ def _analyze_cdp_path(
     udp_conns = None
     if os.path.exists(trace_path):
         try:
-            udp_conns = parse_udp_tracing_log(trace_path, max_event_seq=trace_cutoff)
+            udp_conns = parse_udp_tracing_log(
+                trace_path,
+                max_event_seq=trace_cutoff,
+                include_event_seqs=causal_tail,
+            )
             if udp_conns:
                 logger.info("Parsed %d UDP connections for %s", len(udp_conns), tag)
         except Exception:

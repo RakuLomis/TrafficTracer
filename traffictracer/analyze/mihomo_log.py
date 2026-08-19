@@ -13,6 +13,7 @@ from ..models import FlowTuple
 from .outcomes import terminal_error_class
 
 _ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
+CAUSAL_TAIL_MAX_DELAY_MS = 2000.0
 
 
 def _clean_addr(raw: str) -> str:
@@ -168,7 +169,12 @@ def trace_snapshot_info(path: str) -> dict:
     max_event_seq = 0
     late_event_types: Counter[str] = Counter()
     max_late_delay_ms = 0.0
+    causal_tail_event_seqs: list[int] = []
+    causal_tail_types: Counter[str] = Counter()
+    started_tcp: set[str] = set()
+    started_udp: set[str] = set()
     barrier_time = _parse_timestamp(boundary.get("ts", "")) if boundary else None
+    boundary_session = str(boundary.get("session_id", "")) if boundary else ""
     barrier_verified = boundary is None
     if trace_path.is_file():
         with trace_path.open("r", encoding="utf-8") as stream:
@@ -179,6 +185,14 @@ def trace_snapshot_info(path: str) -> dict:
                 except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
                     continue
                 max_event_seq = max(max_event_seq, seq)
+                event_session = str(event.get("session_id", ""))
+                same_session = not boundary_session or event_session == boundary_session
+                event_type = str(event.get("type", "unknown"))
+                if cutoff is not None and seq <= cutoff and same_session:
+                    if event_type == "tcp_connect" and event.get("conn_id"):
+                        started_tcp.add(str(event["conn_id"]))
+                    elif event_type == "udp_connect" and event.get("conn_key"):
+                        started_udp.add(str(event["conn_key"]))
                 if (
                     boundary is not None
                     and seq == cutoff
@@ -188,12 +202,30 @@ def trace_snapshot_info(path: str) -> dict:
                     barrier_verified = True
                 if cutoff is not None and seq > cutoff:
                     late_events += 1
-                    late_event_types[str(event.get("type", "unknown"))] += 1
+                    late_event_types[event_type] += 1
                     event_time = _parse_timestamp(str(event.get("ts", "")))
-                    if barrier_time is not None and event_time is not None:
+                    late_delay_ms = (
+                        (event_time - barrier_time).total_seconds() * 1000
+                        if barrier_time is not None and event_time is not None
+                        else None
+                    )
+                    causal = same_session and (
+                        (event_type in {"tcp_proxy_dial", "tcp_close"}
+                         and str(event.get("conn_id", "")) in started_tcp)
+                        or
+                        (event_type in {"udp_proxy_dial", "udp_close"}
+                         and str(event.get("conn_key", "")) in started_udp)
+                    )
+                    if (
+                        causal
+                        and late_delay_ms is not None
+                        and 0 <= late_delay_ms <= CAUSAL_TAIL_MAX_DELAY_MS
+                    ):
+                        causal_tail_event_seqs.append(seq)
+                        causal_tail_types[event_type] += 1
+                    if late_delay_ms is not None:
                         max_late_delay_ms = max(
-                            max_late_delay_ms,
-                            (event_time - barrier_time).total_seconds() * 1000,
+                            max_late_delay_ms, late_delay_ms,
                         )
     if not barrier_verified:
         raise ValueError(
@@ -206,6 +238,9 @@ def trace_snapshot_info(path: str) -> dict:
         "barrier_session_id": boundary.get("session_id", "") if boundary else "",
         "late_event_count": late_events,
         "late_event_types": dict(sorted(late_event_types.items())),
+        "causal_tail_event_count": len(causal_tail_event_seqs),
+        "causal_tail_event_types": dict(sorted(causal_tail_types.items())),
+        "causal_tail_event_seqs": causal_tail_event_seqs,
         "max_late_delay_ms": round(max_late_delay_ms, 3),
         "max_observed_event_seq": max_event_seq,
         "barrier_verified": barrier_verified,
@@ -221,7 +256,12 @@ def _parse_timestamp(raw: str) -> datetime | None:
         return None
 
 
-def _events(path: str, max_event_seq: int | None = None):
+def _events(
+    path: str,
+    max_event_seq: int | None = None,
+    include_event_seqs: set[int] | None = None,
+):
+    included = include_event_seqs or set()
     with open(path, "r", encoding="utf-8") as stream:
         for line in stream:
             try:
@@ -233,14 +273,21 @@ def _events(path: str, max_event_seq: int | None = None):
                     event_seq = int(event.get("event_seq", 0) or 0)
                 except (TypeError, ValueError):
                     event_seq = 0
-                if max_event_seq is not None and event_seq > max_event_seq:
+                if (
+                    max_event_seq is not None
+                    and event_seq > max_event_seq
+                    and event_seq not in included
+                ):
                     continue
                 yield event
 
 
-def parse_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, MihomoConnection]:
+def parse_tracing_log(
+    path: str, max_event_seq: int | None = None,
+    include_event_seqs: set[int] | None = None,
+) -> dict[str, MihomoConnection]:
     connections: dict[str, dict] = {}
-    for event in _events(path, max_event_seq=max_event_seq):
+    for event in _events(path, max_event_seq, include_event_seqs):
         etype = event.get("type", "")
         conn_id = event.get("conn_id", "")
         if not conn_id or not etype.startswith("tcp_"):
@@ -287,9 +334,12 @@ def parse_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, 
             for cid, row in connections.items()}
 
 
-def parse_udp_tracing_log(path: str, max_event_seq: int | None = None) -> dict[str, UdpConnection]:
+def parse_udp_tracing_log(
+    path: str, max_event_seq: int | None = None,
+    include_event_seqs: set[int] | None = None,
+) -> dict[str, UdpConnection]:
     connections: dict[str, dict] = {}
-    for event in _events(path, max_event_seq=max_event_seq):
+    for event in _events(path, max_event_seq, include_event_seqs):
         etype = event.get("type", "")
         conn_key = event.get("conn_key", "")
         if not conn_key or not etype.startswith("udp_"):

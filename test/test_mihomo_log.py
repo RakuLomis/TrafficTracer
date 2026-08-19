@@ -126,6 +126,68 @@ def test_trace_barrier_cutoff_excludes_late_events(tmp_path):
     assert snapshot["barrier_verified"] is True
 
 
+def test_trace_snapshot_includes_only_causal_same_session_tail(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    trace = raw / "mihomo-trace.jsonl"
+    events = [
+        {
+            "type": "tcp_connect", "session_id": "s1", "conn_id": "c1",
+            "event_seq": 1, "src": "198.18.0.1:40000",
+            "dst": "1.1.1.1:443",
+        },
+        {"type": "trace_barrier", "session_id": "s1", "event_seq": 2},
+        {
+            "type": "tcp_proxy_dial", "session_id": "s1", "conn_id": "c1",
+            "event_seq": 3, "ts": "2026-08-12T00:00:00.340Z",
+            "egress_outcome": "direct",
+            "post_flow": {
+                "network": "tcp", "src_ip": "192.0.2.1", "src_port": 50000,
+                "dst_ip": "1.1.1.1", "dst_port": 443, "complete": True,
+            },
+        },
+        {
+            "type": "tcp_close", "session_id": "other", "conn_id": "c1",
+            "event_seq": 4, "ts": "2026-08-12T00:00:00.500Z",
+            "status": "closed",
+        },
+        {
+            "type": "tcp_connect", "session_id": "s1", "conn_id": "late",
+            "event_seq": 5, "ts": "2026-08-12T00:00:00.600Z",
+        },
+        {
+            "type": "tcp_proxy_dial", "session_id": "s1", "conn_id": "late",
+            "event_seq": 6, "ts": "2026-08-12T00:00:00.700Z",
+            "egress_outcome": "direct",
+        },
+        {
+            "type": "tcp_close", "session_id": "s1", "conn_id": "c1",
+            "event_seq": 7, "ts": "2026-08-12T00:00:03.000Z",
+            "status": "closed",
+        },
+    ]
+    trace.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+    (raw / "capture-context.json").write_text(json.dumps({
+        "trace_boundary": {
+            "source": "mihomo_barrier", "session_id": "s1",
+            "event_seq": 2, "ts": "2026-08-12T00:00:00Z", "output": str(trace),
+        }
+    }), encoding="utf-8")
+
+    from traffictracer.analyze.mihomo_log import trace_snapshot_info
+    snapshot = trace_snapshot_info(str(trace))
+    assert snapshot["causal_tail_event_seqs"] == [3]
+    assert snapshot["causal_tail_event_count"] == 1
+    assert snapshot["causal_tail_event_types"] == {"tcp_proxy_dial": 1}
+    bounded = parse_tracing_log(
+        str(trace), snapshot["cutoff_event_seq"],
+        set(snapshot["causal_tail_event_seqs"]),
+    )
+    assert bounded["c1"].proxy_dial is not None
+    assert bounded["c1"].close is None
+    assert "late" not in bounded
+
+
 def test_trace_barrier_cutoff_rejects_missing_marker(tmp_path):
     raw = tmp_path / "raw"
     raw.mkdir()

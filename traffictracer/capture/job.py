@@ -47,6 +47,7 @@ class CaptureRuntime:
     wait_load_timeout: int = 30
     run_label: str = ""
     chrome_quiescence_timeout: float = 2.0
+    trace_tail_grace_seconds: float = 0.5
 
 
 class CaptureJob:
@@ -309,7 +310,8 @@ class CaptureJob:
             attempt("Chrome quiescence barrier", quiesce_chrome)
         if tracing_configured:
             def persist_trace_boundary() -> None:
-                boundary = self.mihomo.trace_barrier()
+                initial = self.mihomo.trace_barrier()
+                boundary = initial
                 if boundary.get("session_id") != self.session.session_id:
                     raise RuntimeError(
                         "Mihomo trace barrier session_id does not match capture session"
@@ -320,7 +322,34 @@ class CaptureJob:
                     "event_seq": boundary["event_seq"],
                     "ts": boundary["ts"],
                     "output": boundary["output"],
+                    "settle_seconds": self.runtime.trace_tail_grace_seconds,
                 }
+                write_json_atomic(capture_context_path, capture_context)
+
+                if self.runtime.trace_tail_grace_seconds <= 0:
+                    return
+                self.cancellation.wait(self.runtime.trace_tail_grace_seconds)
+                try:
+                    settled = self.mihomo.trace_barrier()
+                    if settled.get("session_id") != self.session.session_id:
+                        raise RuntimeError(
+                            "settled Mihomo trace barrier session_id does not match capture session"
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Settled Mihomo trace barrier failed; retaining initial boundary: %s",
+                        exc,
+                    )
+                    return
+                capture_context["trace_boundary_initial"] = {
+                    "event_seq": initial["event_seq"],
+                    "ts": initial["ts"],
+                }
+                capture_context["trace_boundary"].update({
+                    "event_seq": settled["event_seq"],
+                    "ts": settled["ts"],
+                    "output": settled["output"],
+                })
                 write_json_atomic(capture_context_path, capture_context)
 
             attempt("Mihomo trace barrier", persist_trace_boundary)

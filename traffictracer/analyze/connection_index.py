@@ -14,6 +14,9 @@ from .flow_index import flow_key
 from .mihomo_log import MihomoConnection
 
 
+TEMPORAL_TIE_BREAK_MIN_GAP_MS = 1000
+
+
 @dataclass(frozen=True)
 class ConnectionCandidate:
     native_id: str
@@ -168,6 +171,26 @@ def rank_connection_candidates(
     best_score = ranked[0].score
     best = tuple(item for item in ranked if item.score == best_score)
     if len(best) > 1:
+        temporal = _unique_temporal_fallback(best)
+        if temporal is not None:
+            winner, runner_up_gap_ms = temporal
+            evidence = winner.evidence + (
+                "unique_nearest_time",
+                f"runner_up_gap_ms:{runner_up_gap_ms}",
+            )
+            winner = ConnectionCandidate(
+                winner.native_id, winner.method, winner.score, evidence,
+                winner.time_delta_ms, winner.time_source,
+            )
+            ranked = tuple(
+                winner if item.native_id == winner.native_id else item
+                for item in ranked
+            )
+            return ConnectionDecision(
+                "matched", winner.method, winner.score, ranked,
+                selected_native_id=winner.native_id,
+                reason="unique_nearest_time",
+            )
         return ConnectionDecision(
             "ambiguous", best[0].method, best_score, ranked,
             reason="multiple_candidates",
@@ -182,6 +205,32 @@ def rank_connection_candidates(
         "matched", winner.method, winner.score, ranked,
         selected_native_id=winner.native_id,
     )
+
+
+def _unique_temporal_fallback(
+    candidates: tuple[ConnectionCandidate, ...],
+) -> tuple[ConnectionCandidate, int] | None:
+    """Resolve only fallback candidates with comparable, clearly separated times."""
+    if not candidates:
+        return None
+    methods = {candidate.method for candidate in candidates}
+    sources = {candidate.time_source for candidate in candidates}
+    if (
+        len(methods) != 1
+        or not methods.issubset({"endpoint_time", "host_time"})
+        or len(sources) != 1
+        or "unavailable" in sources
+        or any(candidate.time_delta_ms is None for candidate in candidates)
+    ):
+        return None
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: (candidate.time_delta_ms, candidate.native_id),
+    )
+    gap = int(ordered[1].time_delta_ms) - int(ordered[0].time_delta_ms)
+    if gap < TEMPORAL_TIE_BREAK_MIN_GAP_MS:
+        return None
+    return ordered[0], gap
 
 
 def _time_delta(observed: float | None, raw: str | None) -> float | None:

@@ -167,6 +167,8 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
         "stop:physical",
         "stop:tun",
         "tracing:barrier",
+        "wait",
+        "tracing:barrier",
         "tracing:restore",
     ]
     assert [event.stage for event in progress] == [
@@ -183,6 +185,8 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert context["interfaces"] == {"tun": "Meta", "physical": "eth0"}
     assert context["trace_boundary"]["source"] == "mihomo_barrier"
     assert context["trace_boundary"]["event_seq"] == 42
+    assert context["trace_boundary_initial"]["event_seq"] == 42
+    assert context["trace_boundary"]["settle_seconds"] == 0.5
     assert str(context_path.relative_to(tmp_path)) in result.artifacts
 
 
@@ -235,7 +239,10 @@ def test_capture_failure_still_stops_started_processes_and_restores_tracing(tmp_
     with pytest.raises(RuntimeError, match="launch failed"):
         job.run()
     assert registry.closed
-    assert events[-4:] == ["stop:physical", "stop:tun", "tracing:barrier", "tracing:restore"]
+    assert events[-6:] == [
+        "stop:physical", "stop:tun", "tracing:barrier", "wait",
+        "tracing:barrier", "tracing:restore",
+    ]
     assert progress[-1].state is JobState.FAILED
 
 
@@ -300,7 +307,10 @@ def test_packet_capture_stop_error_does_not_skip_restore(tmp_path, monkeypatch):
     with pytest.raises(PacketCaptureError) as caught:
         job.run()
     assert caught.value.code == "CAPTURE_PERMISSION_DENIED"
-    assert events[-4:] == ["stop:physical", "stop:tun", "tracing:barrier", "tracing:restore"]
+    assert events[-6:] == [
+        "stop:physical", "stop:tun", "tracing:barrier", "wait",
+        "tracing:barrier", "tracing:restore",
+    ]
     assert registry.closed
     assert progress[-1].state is JobState.FAILED
 
