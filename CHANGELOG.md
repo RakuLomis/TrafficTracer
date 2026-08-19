@@ -4,6 +4,20 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.5] - 2026-08-19
+
+### Fixed
+
+- Kept the TrafficTracer batch UI polling through stale terminal snapshots while a Resume transition is being accepted by the Worker.
+- Reconciled resumed batch status with the newest manifest revision so an old failed child cannot mask continued capture progress.
+- Preserved normalized pre-proxy tuples and bounded causally related post-barrier Mihomo events during correlation.
+- Classified explicit no-socket, local endpoint, and failure-before-socket outcomes without reporting false missing post-proxy flows.
+
+### Validation
+
+- Completed a 64-target capture with all Sessions passing request attribution, transport correlation, and consistency checks.
+- Confirmed YouTube primary media playback and URL-to-pre/post-proxy flow association.
+
 ## [1.0.4] - 2026-08-18
 
 ### Fixed
