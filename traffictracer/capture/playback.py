@@ -11,6 +11,7 @@ from traffictracer.playback import PlaybackPolicy
 
 ObservationEvaluator = Callable[[], Awaitable[Mapping[str, Any]]]
 PlaybackInteractor = Callable[[str, Mapping[str, Any]], Awaitable[bool]]
+PlaybackRecovery = Callable[[], Awaitable[bool]]
 PlaybackProgress = Callable[[dict[str, Any]], None]
 
 
@@ -99,6 +100,11 @@ _YOUTUBE_OBSERVATION_TEMPLATE = r"""
   } catch (_) {}
   return {
     href: String(window.location.href || ''),
+    title: String(document.title || ''),
+    document_ready_state: String(document.readyState || ''),
+    document_visibility_state: String(document.visibilityState || ''),
+    body_present: Boolean(document.body),
+    body_child_count: document.body ? document.body.childElementCount : 0,
     player_present: Boolean(player),
     video_present: Boolean(video),
     ad_showing: adShowing || Boolean(skipButton),
@@ -134,6 +140,7 @@ async def observe_youtube_playback(
     *,
     evaluate: ObservationEvaluator,
     interact: PlaybackInteractor | None = None,
+    recover: PlaybackRecovery | None = None,
     started_at: float,
     clock: Callable[[], float],
     checkpoint: Callable[[], None],
@@ -154,7 +161,12 @@ async def observe_youtube_playback(
     successful_samples = 0
     evaluation_errors = 0
     interaction_errors = 0
+    recovery_attempts = 0
+    recovery_errors = 0
+    reload_command_sent = False
     primary_started_at: float | None = None
+    player_first_seen_at: float | None = None
+    video_first_seen_at: float | None = None
     primary_advancing_samples = 0
     ad_observed = False
     skippable_ad_observed = False
@@ -218,6 +230,17 @@ async def observe_youtube_playback(
                 )
             except (TypeError, ValueError):
                 ready_state = 0
+            elapsed_sample = max(0.0, sampled_at - started_at)
+            if (
+                player_first_seen_at is None
+                and observation.get("player_present") is True
+            ):
+                player_first_seen_at = elapsed_sample
+            if (
+                video_first_seen_at is None
+                and observation.get("video_present") is True
+            ):
+                video_first_seen_at = elapsed_sample
             ad_showing = observation.get("ad_showing") is True
             advancing = (
                 current_video_time is not None
@@ -321,6 +344,9 @@ async def observe_youtube_playback(
             last_observation = {
                 key: observation.get(key)
                 for key in (
+                    "href", "title", "document_ready_state",
+                    "document_visibility_state", "body_present",
+                    "body_child_count",
                     "player_present", "video_present", "ad_showing",
                     "ad_module_visible", "skip_visible", "skip_enabled",
                     "skip_selector", "play_visible", "play_selector",
@@ -330,6 +356,31 @@ async def observe_youtube_playback(
             }
             if current_video_time is not None:
                 last_video_time = current_video_time
+            recovery_ready = elapsed_before >= min(5.0, duration_seconds)
+            if (
+                recover is not None
+                and recovery_attempts == 0
+                and recovery_ready
+                and successful_samples >= 3
+                and diagnostic_counts["player_present"] == 0
+                and observation.get("player_present") is not True
+                and observation.get("document_ready_state")
+                in {"interactive", "complete"}
+                and "youtube.com/watch" in str(observation.get("href", ""))
+            ):
+                recovery_attempts = 1
+                try:
+                    reload_command_sent = await recover()
+                except Exception:
+                    recovery_errors += 1
+                    reload_command_sent = False
+                record_event({
+                    "elapsed_seconds": round(elapsed_sample, 3),
+                    "event": (
+                        "reload_sent" if reload_command_sent
+                        else "reload_failed"
+                    ),
+                })
 
         phase_seconds[phase] += delta
         elapsed = max(0.0, sampled_at - started_at)
@@ -355,6 +406,7 @@ async def observe_youtube_playback(
                 "desired_primary_seconds": policy.desired_primary_seconds,
                 "skip_attempts": skip_attempts,
                 "play_attempts": play_attempts,
+                "recovery_attempts": recovery_attempts,
             })
         last_sample_at = sampled_at
         remaining = deadline - clock()
@@ -377,12 +429,24 @@ async def observe_youtube_playback(
     elif primary_observed:
         quality = "degraded"
         reason = "PRIMARY_DURATION_BELOW_TARGET"
-    elif successful_samples:
-        quality = "unavailable"
-        reason = "PRIMARY_CONTENT_NOT_OBSERVED"
-    else:
+    elif not successful_samples:
         quality = "unknown"
         reason = "PLAYBACK_STATE_UNKNOWN"
+    elif diagnostic_counts["player_present"] == 0:
+        quality = "unavailable"
+        reason = "PLAYER_NOT_CREATED"
+    elif diagnostic_counts["video_present"] == 0:
+        quality = "unavailable"
+        reason = "VIDEO_ELEMENT_NOT_CREATED"
+    elif diagnostic_counts["ready"] == 0:
+        quality = "unavailable"
+        reason = "MEDIA_NOT_READY"
+    elif diagnostic_counts["advancing"] == 0:
+        quality = "unavailable"
+        reason = "MEDIA_NOT_ADVANCING"
+    else:
+        quality = "unavailable"
+        reason = "PRIMARY_CONTENT_NOT_OBSERVED"
 
     return {
         "schema_version": 1,
@@ -410,14 +474,27 @@ async def observe_youtube_playback(
         "skip_attempts": skip_attempts,
         "skip_confirmed": skip_confirmed,
         "play_attempts": play_attempts,
+        "recovery_attempts": recovery_attempts,
+        "reload_command_sent": reload_command_sent,
         "automation_available": successful_samples > 0,
         "evaluation_errors": evaluation_errors,
         "interaction_errors": interaction_errors,
+        "recovery_errors": recovery_errors,
         "end_reason": "observation_window_elapsed",
         "events": events,
         "diagnostics": {
             "counts": diagnostic_counts,
             "last_observation": last_observation,
+            "first_seen_at_seconds": {
+                "player": (
+                    round(player_first_seen_at, 3)
+                    if player_first_seen_at is not None else None
+                ),
+                "video": (
+                    round(video_first_seen_at, 3)
+                    if video_first_seen_at is not None else None
+                ),
+            },
         },
     }
 

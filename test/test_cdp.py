@@ -521,6 +521,7 @@ def test_playback_interaction_dispatches_cdp_mouse_sequence_to_page_session():
         async def observe(policy, seconds, **kwargs):
             assert policy.provider == "youtube"
             assert seconds == 35
+            assert await kwargs["recover"]() is True
             assert await kwargs["interact"](
                 "skip", {"center_x": 442.0, "center_y": 315.0},
             ) is True
@@ -535,16 +536,18 @@ def test_playback_interaction_dispatches_cdp_mouse_sequence_to_page_session():
             )
         assert result["primary_content_observed"] is True
         assert [item[0] for item in sent] == [
+            "Page.reload",
             "Input.dispatchMouseEvent",
             "Input.dispatchMouseEvent",
             "Input.dispatchMouseEvent",
         ]
-        assert [item[1]["type"] for item in sent] == [
+        assert sent[0][1] == {"ignoreCache": False}
+        assert [item[1]["type"] for item in sent[1:]] == [
             "mouseMoved", "mousePressed", "mouseReleased",
         ]
         assert all(item[2] == "PAGE-SESSION" for item in sent)
-        assert sent[1][1]["button"] == "left"
-        assert sent[2][1]["clickCount"] == 1
+        assert sent[2][1]["button"] == "left"
+        assert sent[3][1]["clickCount"] == 1
 
     asyncio.run(scenario())
 

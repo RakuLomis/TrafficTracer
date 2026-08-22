@@ -3,6 +3,7 @@
 import json
 
 from traffictracer.analyze.artifacts import (
+    _browser_request_failure_summary,
     _local_connection_ids,
     _analysis_integrity_state,
     _mapping_error_class,
@@ -302,7 +303,7 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
         "TRANSPORT_UNMATCHED",
         "EGRESS_FAILED_BEFORE_SOCKET",
         "PCAP_PRE_EMPTY",
-        "PCAP_POST_UNAVAILABLE",
+        "PCAP_POST_NOT_REQUESTED",
     ]
     assert summary["quality_state"] == "degraded"
     assert summary["capture_global_quality_state"] == "passed"
@@ -322,6 +323,64 @@ def test_summary_reports_transport_dial_and_pcap_quality_warnings(tmp_path):
         "total": 1, "established": 0, "failed_before_socket": 1,
         "unavailable": 0,
     }
+
+
+def test_browser_request_failures_distinguish_later_same_url_recovery():
+    records = [
+        {
+            "url": "https://cdn.example/app.js#first",
+            "relation": "third_party",
+            "failure": {
+                "failed": True, "canceled": False,
+                "reason": "net::ERR_CERT_VERIFIER_CHANGED",
+            },
+        },
+        {
+            "url": "https://api.example/data",
+            "relation": "same_site",
+            "failure": {
+                "failed": True, "canceled": True,
+                "reason": "net::ERR_ABORTED",
+            },
+        },
+        {
+            "url": "https://cdn.example/app.js",
+            "relation": "third_party",
+            "failure": {"failed": False, "canceled": False, "reason": None},
+        },
+    ]
+
+    assert _browser_request_failure_summary(records) == {
+        "total_requests": 3,
+        "failed_occurrences": 2,
+        "canceled_occurrences": 1,
+        "recovered_occurrences": 1,
+        "unrecovered_occurrences": 1,
+        "by_reason": {
+            "net::ERR_ABORTED": 1,
+            "net::ERR_CERT_VERIFIER_CHANGED": 1,
+        },
+        "by_relation": {"same_site": 1, "third_party": 1},
+        "recovered_by_reason": {"net::ERR_CERT_VERIFIER_CHANGED": 1},
+        "recovery_evidence": "later_successful_occurrence_same_url",
+    }
+
+
+def test_browser_request_failure_does_not_claim_prior_success_as_recovery():
+    records = [
+        {
+            "url": "https://cdn.example/app.js",
+            "failure": {"failed": False},
+        },
+        {
+            "url": "https://cdn.example/app.js",
+            "failure": {"failed": True, "reason": "net::ERR_FAILED"},
+        },
+    ]
+
+    summary = _browser_request_failure_summary(records)
+    assert summary["recovered_occurrences"] == 0
+    assert summary["unrecovered_occurrences"] == 1
 
 
 def test_observed_network_failure_does_not_degrade_analysis_integrity():
@@ -376,6 +435,62 @@ def test_rejected_egress_is_not_missing_socket_quality_failure():
     }
     assert "EGRESS_DIAL_FAILED" not in warning_codes
     assert "EGRESS_UNAVAILABLE" not in warning_codes
+
+
+def test_rejected_egress_post_pcap_is_informational_not_missing():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": None,
+        "terminal": {"status": "rejected", "stage": "reject"},
+        "egress": {"outcome": "rejected"},
+    }
+    pcap = {
+        "split_mode": "unique_connections",
+        "connections": [{
+            "connection_id": connection["connection_id"],
+            "pre_proxy": {"status": "success"},
+            "post_proxy": {"status": "not_applicable"},
+        }],
+    }
+
+    quality = analysis_quality([], [connection], pcap)
+    assert quality["pcap_extraction"] == {
+        "requested": True, "total": 1, "pre_success": 1,
+        "post_applicable": 0, "post_success": 0, "complete_pairs": 0,
+        "post_not_applicable": 1, "post_not_requested": 0,
+    }
+    warnings = _quality_warnings([], [connection], pcap)
+    assert [(item["code"], item["severity"]) for item in warnings] == [
+        ("PCAP_POST_NOT_APPLICABLE", "info"),
+    ]
+
+
+def test_applicable_missing_post_pcap_remains_a_quality_failure():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": {
+            "network": "tcp", "src_ip": "192.0.2.1", "src_port": 51000,
+            "dst_ip": "203.0.113.1", "dst_port": 443,
+        },
+    }
+    pcap = {
+        "split_mode": "unique_connections",
+        "connections": [{
+            "connection_id": connection["connection_id"],
+            "pre_proxy": {"status": "success"},
+            "post_proxy": {"status": "empty"},
+        }],
+    }
+
+    quality = analysis_quality([], [connection], pcap)
+    assert quality["pcap_extraction"]["post_applicable"] == 1
+    assert quality["pcap_extraction"]["post_success"] == 0
+    warnings = _quality_warnings([], [connection], pcap)
+    assert [(item["code"], item["severity"]) for item in warnings] == [
+        ("PCAP_POST_UNAVAILABLE", "warning"),
+    ]
 
 
 
@@ -458,7 +573,7 @@ def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_pat
         "connections": [{
             "connection_id": connection_id, "request_ids": ["local.1"],
             "pre_proxy": {"status": "success"},
-            "post_proxy": {"status": "not_requested"},
+            "post_proxy": {"status": "not_applicable"},
         }],
     }), encoding="utf-8")
 
@@ -470,7 +585,7 @@ def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_pat
 
     assert summary["quality_state"] == "passed"
     assert [item["code"] for item in summary["warnings"]] == [
-        "LOCAL_ENDPOINT_UNAVAILABLE", "PCAP_POST_NOT_APPLICABLE",
+        "PCAP_POST_NOT_APPLICABLE", "LOCAL_ENDPOINT_UNAVAILABLE",
     ]
     assert all(item["severity"] == "info" for item in summary["warnings"])
     assert summary["quality"]["request_attribution"] == {
@@ -481,9 +596,9 @@ def test_local_endpoint_is_informational_and_post_pcap_is_not_applicable(tmp_pat
         "unavailable": 0, "not_applicable_local_endpoint": 1,
     }
     assert summary["quality"]["pcap_extraction"] == {
-        "requested": True, "total": 1, "applicable": 0,
-        "pre_success": 1, "post_success": 0, "complete_pairs": 0,
-        "post_not_applicable": 1,
+        "requested": True, "total": 1, "pre_success": 1,
+        "post_applicable": 0, "post_success": 0, "complete_pairs": 0,
+        "post_not_applicable": 1, "post_not_requested": 0,
     }
     assert summary["coverage"]["page_attributed"]["unmatched_reasons"] == {
         "local_endpoint_not_applicable": 1,

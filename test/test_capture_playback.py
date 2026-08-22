@@ -26,6 +26,8 @@ def test_youtube_expression_is_read_only_and_scopes_controls_to_player():
     assert "video.play" not in expression
     assert "querySelectorAll('button, [role=\"button\"]')" not in expression
     assert "desired_primary_seconds" not in expression
+    assert "document_ready_state" in expression
+    assert "body_child_count" in expression
 
 
 def test_fixed_window_keeps_ad_and_advancing_primary_durations():
@@ -297,4 +299,99 @@ def test_player_state_without_time_advance_is_not_primary_content():
     assert result["primary_content_observed"] is False
     assert result["primary_content_seconds"] == 0
     assert result["quality"] == "unavailable"
-    assert result["reason"] == "PRIMARY_CONTENT_NOT_OBSERVED"
+    assert result["reason"] == "MEDIA_NOT_ADVANCING"
+
+
+def test_missing_youtube_player_triggers_one_bounded_reload_and_recovers():
+    async def scenario():
+        now = [0.0]
+        reloaded = [False]
+        recoveries = []
+
+        async def evaluate():
+            now[0] += 0.5
+            current = max(0.0, now[0] - 5.5) if reloaded[0] else 0.0
+            return {
+                "href": "https://www.youtube.com/watch?v=example",
+                "title": "Example - YouTube",
+                "document_ready_state": "complete",
+                "body_present": True,
+                "body_child_count": 10,
+                "player_present": reloaded[0],
+                "video_present": reloaded[0],
+                "ad_showing": False,
+                "video_paused": not reloaded[0],
+                "video_ready_state": 4 if reloaded[0] else 0,
+                "video_current_time": current,
+            }
+
+        async def recover():
+            recoveries.append(now[0])
+            reloaded[0] = True
+            return True
+
+        result = await observe_youtube_playback(
+            PlaybackPolicy("youtube", desired_primary_seconds=1),
+            8,
+            evaluate=evaluate,
+            recover=recover,
+            started_at=0,
+            clock=lambda: now[0],
+            checkpoint=lambda: None,
+            poll_interval=0,
+        )
+        return result, recoveries
+
+    result, recoveries = asyncio.run(scenario())
+    assert recoveries == [5.5]
+    assert result["recovery_attempts"] == 1
+    assert result["reload_command_sent"] is True
+    assert result["primary_content_observed"] is True
+    assert result["diagnostics"]["first_seen_at_seconds"] == {
+        "player": 6.0, "video": 6.0,
+    }
+
+
+def test_missing_youtube_player_never_reloads_more_than_once():
+    async def scenario():
+        now = [0.0]
+        recoveries = []
+
+        async def evaluate():
+            now[0] += 0.5
+            return {
+                "href": "https://www.youtube.com/watch?v=example",
+                "document_ready_state": "complete",
+                "body_present": True,
+                "player_present": False,
+                "video_present": False,
+                "video_paused": True,
+                "video_ready_state": 0,
+                "video_current_time": 0,
+            }
+
+        async def recover():
+            recoveries.append(now[0])
+            return False
+
+        result = await observe_youtube_playback(
+            PlaybackPolicy("youtube", desired_primary_seconds=1),
+            8,
+            evaluate=evaluate,
+            recover=recover,
+            started_at=0,
+            clock=lambda: now[0],
+            checkpoint=lambda: None,
+            poll_interval=0,
+        )
+        return result, recoveries
+
+    result, recoveries = asyncio.run(scenario())
+    assert recoveries == [5.5]
+    assert result["recovery_attempts"] == 1
+    assert result["reload_command_sent"] is False
+    assert result["reason"] == "PLAYER_NOT_CREATED"
+    assert [
+        event.get("event") for event in result["events"]
+        if event.get("event", "").startswith("reload_")
+    ] == ["reload_failed"]

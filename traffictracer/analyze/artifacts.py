@@ -142,6 +142,9 @@ def persist_analysis_artifacts(
         "network_outcome": _network_outcome_summary(
             request_records, connection_records, items, local_core_ids,
         ),
+        "browser_request_failures": _browser_request_failure_summary(
+            request_records,
+        ),
         "trace_snapshot": trace_snapshot,
         "storage": _storage_summary(session, results),
     }
@@ -816,22 +819,31 @@ def analysis_quality(
 
     split_mode = pcap_payload.get("split_mode", "none")
     pcap_connections = list(pcap_payload.get("connections", []))
-    applicable_pcaps = [
+    post_applicable_pcaps = [
         item for item in pcap_connections
-        if item.get("connection_id") not in local_connection_ids
+        if item.get("post_proxy", {}).get("status")
+        not in {"not_applicable", "not_requested"}
     ]
+    post_not_applicable = sum(
+        item.get("post_proxy", {}).get("status") == "not_applicable"
+        for item in pcap_connections
+    )
+    post_not_requested = sum(
+        item.get("post_proxy", {}).get("status") == "not_requested"
+        for item in pcap_connections
+    )
     pre_success = sum(
         item.get("pre_proxy", {}).get("status") == "success"
         for item in pcap_connections
     )
     post_success = sum(
         item.get("post_proxy", {}).get("status") == "success"
-        for item in applicable_pcaps
+        for item in post_applicable_pcaps
     )
     complete_pairs = sum(
         item.get("pre_proxy", {}).get("status") == "success"
         and item.get("post_proxy", {}).get("status") == "success"
-        for item in applicable_pcaps
+        for item in post_applicable_pcaps
     )
     page_quality = {
         "request_attribution": {
@@ -851,8 +863,11 @@ def analysis_quality(
             "requested": split_mode == "unique_connections",
             "total": len(pcap_connections),
             "pre_success": pre_success,
+            "post_applicable": len(post_applicable_pcaps),
             "post_success": post_success,
             "complete_pairs": complete_pairs,
+            "post_not_applicable": post_not_applicable,
+            "post_not_requested": post_not_requested,
         },
     }
     if not_applicable_outcome:
@@ -863,10 +878,6 @@ def analysis_quality(
         page_quality["egress_establishment"][
             "not_applicable_local_endpoint"
         ] = len(local_connection_ids)
-        page_quality["pcap_extraction"]["applicable"] = len(applicable_pcaps)
-        page_quality["pcap_extraction"]["post_not_applicable"] = (
-            len(pcap_connections) - len(applicable_pcaps)
-        )
     core_records = core_flow_records or []
     global_local_ids = local_core_ids or set()
     global_logical_flows = _core_coverage(
@@ -943,6 +954,53 @@ def _network_scope_summary(
         "explicit_no_socket": counts["explicit_no_socket"],
         "local_not_applicable": counts["local_not_applicable"],
         "unexpected_missing": counts["unexpected_missing"],
+    }
+
+
+def _browser_request_failure_summary(records: list[dict]) -> dict:
+    """Summarize observed CDP failures without treating retries as correlation loss."""
+
+    latest_successful_index: dict[str, int] = {}
+    for index, record in enumerate(records):
+        failure = record.get("failure", {})
+        url = urldefrag(str(record.get("url", "")))[0]
+        if url and not failure.get("failed", False):
+            latest_successful_index[url] = index
+
+    failed_occurrences = 0
+    by_reason: Counter[str] = Counter()
+    by_relation: Counter[str] = Counter()
+    recovered_by_reason: Counter[str] = Counter()
+    canceled = 0
+    recovered = 0
+    for index, record in enumerate(records):
+        failure = record.get("failure", {})
+        if not failure.get("failed", False):
+            continue
+        failed_occurrences += 1
+        reason = str(failure.get("reason") or "loading_failed")
+        relation = str(record.get("relation") or "unknown")
+        by_reason[reason] += 1
+        by_relation[relation] += 1
+        canceled += int(bool(failure.get("canceled", False)))
+        url = urldefrag(str(record.get("url", "")))[0]
+        was_recovered = bool(
+            url and latest_successful_index.get(url, -1) > index
+        )
+        if was_recovered:
+            recovered += 1
+            recovered_by_reason[reason] += 1
+
+    return {
+        "total_requests": len(records),
+        "failed_occurrences": failed_occurrences,
+        "canceled_occurrences": canceled,
+        "recovered_occurrences": recovered,
+        "unrecovered_occurrences": failed_occurrences - recovered,
+        "by_reason": dict(sorted(by_reason.items())),
+        "by_relation": dict(sorted(by_relation.items())),
+        "recovered_by_reason": dict(sorted(recovered_by_reason.items())),
+        "recovery_evidence": "later_successful_occurrence_same_url",
     }
 
 
@@ -1045,17 +1103,22 @@ def _quality_warnings(
         ))
     if pcap_payload.get("split_mode") == "unique_connections":
         pcap_connections = pcap_payload.get("connections", [])
-        applicable_pcaps = [
-            item for item in pcap_connections
-            if item.get("connection_id") not in local_connection_ids
-        ]
         pre_missing = sum(
             item.get("pre_proxy", {}).get("status") != "success"
             for item in pcap_connections
         )
         post_missing = sum(
-            item.get("post_proxy", {}).get("status") != "success"
-            for item in applicable_pcaps
+            item.get("post_proxy", {}).get("status")
+            not in {"success", "not_applicable", "not_requested"}
+            for item in pcap_connections
+        )
+        post_not_applicable = sum(
+            item.get("post_proxy", {}).get("status") == "not_applicable"
+            for item in pcap_connections
+        )
+        post_not_requested = sum(
+            item.get("post_proxy", {}).get("status") == "not_requested"
+            for item in pcap_connections
         )
         if pre_missing:
             warnings.append(_warning(
@@ -1068,8 +1131,22 @@ def _quality_warnings(
             warnings.append(_warning(
                 "PCAP_POST_UNAVAILABLE",
                 post_missing,
-                "Some post-proxy PCAP extracts are empty or unavailable.",
+                "Some applicable post-proxy PCAP extracts are empty or unavailable.",
                 scope="page_attributed",
+            ))
+        if post_not_applicable:
+            warnings.append(_warning(
+                "PCAP_POST_NOT_APPLICABLE",
+                post_not_applicable,
+                "Post-proxy PCAP is not applicable to explicit no-socket or local outcomes.",
+                scope="page_attributed", severity="info",
+            ))
+        if post_not_requested:
+            warnings.append(_warning(
+                "PCAP_POST_NOT_REQUESTED",
+                post_not_requested,
+                "Post-proxy PCAP was not requested because no outbound tuple was available for extraction.",
+                scope="page_attributed", severity="info",
             ))
     if local_connection_ids:
         warnings.append(_warning(
@@ -1079,14 +1156,6 @@ def _quality_warnings(
             scope="page_attributed",
             severity="info",
         ))
-        if pcap_payload.get("split_mode") == "unique_connections":
-            warnings.append(_warning(
-                "PCAP_POST_NOT_APPLICABLE",
-                len(local_connection_ids),
-                "Post-proxy PCAP is not applicable to local endpoint probes.",
-                scope="page_attributed",
-                severity="info",
-            ))
     return warnings
 
 

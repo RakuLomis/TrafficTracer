@@ -514,11 +514,27 @@ class CDPCollector:
                 )
             return True
 
+        async def recover() -> bool:
+            remaining = (
+                self._navigation_started_at + seconds
+                - asyncio.get_running_loop().time()
+            )
+            if remaining <= 0:
+                return False
+            await self.send(
+                "Page.reload",
+                {"ignoreCache": self._cache_mode == "cold"},
+                timeout=min(2.0, max(0.1, remaining)),
+                session_id=self._page_session,
+            )
+            return True
+
         self._playback = await observe_youtube_playback(
             policy,
             seconds,
             evaluate=evaluate,
             interact=interact,
+            recover=recover,
             started_at=self._navigation_started_at,
             clock=asyncio.get_running_loop().time,
             checkpoint=self._checkpoint,
