@@ -10,7 +10,11 @@ from typing import Any, Protocol
 from traffictracer.capture.tshark import PacketCaptureError
 from traffictracer.capture.quiescence import ChromeCleanupIncomplete
 from traffictracer.contracts import validate_worker_message
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import (
+    CancellationToken,
+    CancelledError,
+    InterruptedError,
+)
 from traffictracer.jobs.batch_models import BatchJobResult, BatchJobSpec
 from traffictracer.jobs.models import (
     AnalysisJobSpec,
@@ -63,7 +67,10 @@ class _ManagedJob:
             "stage": self.stage,
             "progress": self.progress,
             "message": self.message,
-            "cancel_requested": self.token.cancelled,
+            "cancel_requested": (
+                self.token.cancelled and not self.token.interrupted
+            ),
+            "interrupt_requested": self.token.interrupted,
         }
         if self.result is not None:
             payload["result"] = dict(self.result)
@@ -167,6 +174,24 @@ class JobManager:
             snapshot["cancel_requested_now"] = requested
             return snapshot
 
+    def interrupt(self, params: dict[str, Any]) -> dict[str, Any]:
+        job_id = _required_job_id(params)
+        reason = params.get("reason", "Interrupted by user.")
+        if not isinstance(reason, str):
+            raise WorkerMethodError("INVALID_PARAMS", "reason must be a string.")
+        with self._lock:
+            managed = self._jobs.get(job_id)
+            if managed is None:
+                raise WorkerMethodError(
+                    "JOB_NOT_FOUND", "The requested Job does not exist."
+                )
+            requested = False
+            if not managed.state.terminal:
+                requested = managed.token.interrupt(reason)
+            snapshot = managed.snapshot()
+            snapshot["interrupt_requested_now"] = requested
+            return snapshot
+
     def wait(self, job_id: str, timeout: float | None = None) -> bool:
         with self._lock:
             managed = self._jobs.get(job_id)
@@ -241,6 +266,16 @@ class JobManager:
         try:
             runnable = factory(spec, reporter, managed.token)
             result = runnable.run()
+        except InterruptedError as exc:
+            self._finish_job(
+                managed.job_id,
+                JobState.INTERRUPTED,
+                message=str(exc) or "Job interrupted.",
+                error={
+                    "code": "INTERRUPTED",
+                    "message": str(exc) or "Job interrupted.",
+                },
+            )
         except CancelledError as exc:
             self._finish_job(
                 managed.job_id,

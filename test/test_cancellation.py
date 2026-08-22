@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import CancellationToken, CancelledError, InterruptedError
 
 
 def test_checkpoint_is_a_noop_before_cancellation():
@@ -43,4 +43,16 @@ def test_concurrent_cancel_has_exactly_one_winner_and_consistent_reason():
     winner = reasons[results.index(True)]
     assert token.reason == winner
     with pytest.raises(CancelledError, match=winner):
+        token.checkpoint()
+
+
+def test_interrupt_is_idempotent_and_cannot_be_overridden_by_cancel():
+    token = CancellationToken()
+    assert token.interrupt("pause batch")
+    assert not token.cancel("terminal stop")
+    assert token.cancelled
+    assert token.interrupted
+    assert token.intent == "interrupt"
+    assert token.reason == "pause batch"
+    with pytest.raises(InterruptedError, match="pause batch"):
         token.checkpoint()

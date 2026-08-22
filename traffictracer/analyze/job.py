@@ -9,7 +9,11 @@ from pathlib import Path
 import shutil
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import (
+    CancellationToken,
+    CancelledError,
+    InterruptedError,
+)
 from traffictracer.jobs.models import (
     AnalysisJobSpec,
     CaptureJobResult,
@@ -109,6 +113,11 @@ class AnalysisJob:
                 manifest=updated_manifest,
             )
             self._commit_staged_results()
+        except InterruptedError:
+            self._discard_staged_results()
+            self._finish_manifest(JobState.INTERRUPTED)
+            self.progress.finish(JobState.INTERRUPTED, self.cancellation.reason)
+            raise
         except CancelledError:
             self._discard_staged_results()
             self._finish_manifest(JobState.CANCELLED)

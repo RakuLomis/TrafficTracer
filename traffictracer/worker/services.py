@@ -15,7 +15,11 @@ from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSession
 from traffictracer.capture.mihomo import MihomoManager
 from traffictracer.config import ConfigValidationError, load_target_config
 from traffictracer.diagnostics import EnvironmentSpec, diagnose_environment
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import (
+    CancellationToken,
+    CancelledError,
+    InterruptedError,
+)
 from traffictracer.jobs.batch import SerialBatchJob
 from traffictracer.jobs.batch_models import (
     BatchJobSpec,
@@ -91,6 +95,7 @@ class WorkerServices:
             "flow.query": self.flow_query,
             "batch.start": self.batch_start,
             "batch.status": self.batch_status,
+            "batch.interrupt": self.batch_interrupt,
             "batch.cancel": self.batch_cancel,
             "batch.list": self.batch_list,
             "batch.resume": self.batch_resume,
@@ -393,6 +398,20 @@ class WorkerServices:
             self.batches.save(manifest)
         return {"batch": manifest.to_dict(), "job": job}
 
+    def batch_interrupt(self, params: dict[str, Any]) -> dict[str, Any]:
+        batch_id = _batch_id(params, allow_reason=True)
+        manifest = self._batch_manifest(batch_id)
+        job = self.jobs.maybe_status(batch_id)
+        if job is not None and not JobState(job["state"]).terminal:
+            interrupted = self.jobs.interrupt({
+                "job_id": batch_id,
+                "reason": params.get(
+                    "reason", "Batch interrupted by user."
+                ),
+            })
+            return {"batch": manifest.to_dict(), "job": interrupted}
+        return {"batch": manifest.to_dict(), "job": job}
+
     def batch_resume(self, params: dict[str, Any]) -> dict[str, Any]:
         batch_id = _batch_id(params)
         manifest = self._batch_manifest(batch_id)
@@ -623,6 +642,9 @@ class _PersistentCaptureRunner:
                 )
             self._transition(JobState.COMPLETED)
             return captured
+        except InterruptedError:
+            self._transition(JobState.INTERRUPTED)
+            raise
         except CancelledError:
             self._transition(JobState.CANCELLED)
             raise

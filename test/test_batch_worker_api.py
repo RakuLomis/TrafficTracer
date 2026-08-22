@@ -172,3 +172,72 @@ def test_batch_cancel_is_idempotent_and_does_not_start_next_child(
     manifest = services.batches.get(payload["job_id"])
     assert manifest.state is BatchState.CANCELLED
     assert calls == [1]
+
+
+def test_batch_interrupt_is_idempotent_resumable_and_stops_before_next_child(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.services as module
+
+    payload, _ = _payload(tmp_path)
+    started = Event()
+    calls = []
+
+    class _BlockingCapture:
+        def __init__(self, spec, **kwargs):
+            self.spec = spec
+            self.session = kwargs["session"]
+            self.cancellation = kwargs["cancellation"]
+
+        def run(self):
+            calls.append(self.spec.target_source.target_index)
+            (self.session.directory / "captures").mkdir()
+            (self.session.directory / "logs").mkdir()
+            started.set()
+            while True:
+                self.cancellation.checkpoint()
+                time.sleep(0.005)
+
+    monkeypatch.setattr(module, "CaptureJob", _BlockingCapture)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+    services.batch_start({"job": payload})
+    assert started.wait(2)
+    first = services.batch_interrupt({
+        "batch_id": payload["job_id"], "reason": "pause"
+    })
+    second = services.batch_interrupt({
+        "batch_id": payload["job_id"], "reason": "again"
+    })
+    assert first["job"]["interrupt_requested_now"] is True
+    assert first["job"]["interrupt_requested"] is True
+    assert first["job"]["cancel_requested"] is False
+    assert second["job"]["interrupt_requested_now"] is False
+    assert services.jobs.wait(payload["job_id"], timeout=5)
+
+    manifest = services.batches.get(payload["job_id"])
+    assert manifest.state is BatchState.INTERRUPTED
+    assert manifest.children[0].state is BatchChildState.INTERRUPTED
+    assert manifest.children[1].state is BatchChildState.PENDING
+    assert manifest.resume.next_index == 0
+    assert calls == [1]
+    interrupted_session_id = manifest.children[0].session_id
+    assert interrupted_session_id is not None
+    assert (
+        services.store.get(interrupted_session_id).state
+        is JobState.INTERRUPTED
+    )
+    assert services.store.scan().corrupt == ()
+
+    monkeypatch.setattr(module, "CaptureJob", _QuickCapture)
+    resumed = services.batch_resume({"batch_id": payload["job_id"]})
+    assert resumed["job_id"] == payload["job_id"]
+    assert services.jobs.wait(payload["job_id"], timeout=5)
+    completed = services.batches.get(payload["job_id"])
+    assert completed.state is BatchState.COMPLETED
+    assert completed.resume.attempt == 1
+    assert all(
+        child.state is BatchChildState.COMPLETED
+        for child in completed.children
+    )

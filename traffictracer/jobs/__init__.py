@@ -1,6 +1,6 @@
 """Job-scoped execution primitives for TrafficTracer Complete."""
 
-from .cancellation import CancellationToken, CancelledError
+from .cancellation import CancellationToken, CancelledError, InterruptedError
 from .process_registry import CleanupReport, ProcessRecord, ProcessRegistry
 from .batch_models import (
     BatchChild,
@@ -38,6 +38,7 @@ __all__ = [
     "BatchState",
     "BatchTarget",
     "CancelledError",
+    "InterruptedError",
     "CleanupReport",
     "ProcessRecord",
     "ProcessRegistry",

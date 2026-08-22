@@ -20,7 +20,7 @@ from .batch_models import (
     BatchState,
     BatchTarget,
 )
-from .cancellation import CancellationToken, CancelledError
+from .cancellation import CancellationToken, CancelledError, InterruptedError
 from .errors import exception_message
 from .models import CaptureJobResult, CaptureJobSpec, JobState, TargetSource
 from .progress import JobStage, ProgressEvent, ProgressReporter
@@ -119,6 +119,17 @@ class SerialBatchJob:
                         raise RuntimeError(
                             f"child returned non-completed state {result.state.value}"
                         )
+                except InterruptedError:
+                    manifest = self.manifest or manifest
+                    manifest = manifest.finish_child(
+                        BatchChildState.INTERRUPTED,
+                        session_id=self.session_for_job(child_spec.job_id),
+                        error=BatchError(
+                            "INTERRUPTED", self.cancellation.reason
+                        ),
+                    )
+                    self._save(manifest)
+                    raise
                 except CancelledError:
                     manifest = self.manifest or manifest
                     manifest = manifest.request_cancel().finish_child(
@@ -152,6 +163,14 @@ class SerialBatchJob:
                     session_id=result.session_id or self.session_for_job(child_spec.job_id),
                 )
                 self._save(manifest)
+        except InterruptedError:
+            manifest = self.manifest or manifest
+            if (
+                manifest.state is BatchState.RUNNING
+                and manifest.current_index is None
+            ):
+                self._save(manifest.stop(BatchState.INTERRUPTED))
+            raise
         except CancelledError:
             manifest = self.manifest or manifest
             if manifest.state is BatchState.RUNNING and manifest.current_index is None:

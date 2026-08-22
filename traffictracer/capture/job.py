@@ -8,7 +8,11 @@ import sys
 import shutil
 from typing import Any
 
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import (
+    CancellationToken,
+    CancelledError,
+    InterruptedError,
+)
 from traffictracer.jobs.models import CaptureJobResult, CaptureJobSpec, JobState
 from traffictracer.jobs.process_registry import ProcessRegistry
 from traffictracer.jobs.progress import JobStage, ProgressReporter
@@ -81,6 +85,10 @@ class CaptureJob:
     def run(self) -> CaptureJobResult:
         try:
             self._run()
+        except InterruptedError:
+            self.registry.cleanup()
+            self.progress.finish(JobState.INTERRUPTED, self.cancellation.reason)
+            raise
         except CancelledError:
             self.registry.cleanup()
             self.progress.finish(JobState.CANCELLED, self.cancellation.reason)

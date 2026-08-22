@@ -10,7 +10,11 @@ from traffictracer.capture.quiescence import (
     ChromeCleanupIncomplete,
     ChromeQuiescenceReport,
 )
-from traffictracer.jobs.cancellation import CancellationToken, CancelledError
+from traffictracer.jobs.cancellation import (
+    CancellationToken,
+    CancelledError,
+    InterruptedError,
+)
 from traffictracer.jobs.models import (
     CaptureInterfaces,
     CaptureJobOptions,
@@ -279,6 +283,22 @@ def test_pre_cancelled_job_has_no_process_or_controller_side_effects(tmp_path, m
     assert events == []
     assert registry.closed
     assert progress[-1].state is JobState.CANCELLED
+
+
+def test_pre_interrupted_job_uses_cleanup_and_reports_interrupted(
+    tmp_path, monkeypatch
+):
+    events = []
+    token = CancellationToken()
+    token.interrupt("pause batch")
+    job, registry, progress = _job(
+        tmp_path, monkeypatch, events, cancellation=token
+    )
+    with pytest.raises(InterruptedError, match="pause batch"):
+        job.run()
+    assert events == []
+    assert registry.closed
+    assert progress[-1].state is JobState.INTERRUPTED
 
 
 def test_capture_library_has_no_module_level_signal_or_process_registry():

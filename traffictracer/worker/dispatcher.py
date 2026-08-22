@@ -42,6 +42,7 @@ METHODS = (
     "flow.query",
     "batch.start",
     "batch.status",
+    "batch.interrupt",
     "batch.cancel",
     "batch.list",
     "batch.resume",
