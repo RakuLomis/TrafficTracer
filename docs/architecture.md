@@ -107,7 +107,7 @@ TrafficTracer distinguishes orchestration state from evidence quality:
 - an unexpected missing post-flow is a quality failure, not silently treated as direct traffic;
 - unmatched evidence is retained with reason codes.
 
-Cancellation is cooperative and stage-aware. The process registry terminates only managed children. Recovery journals let the Worker mark abandoned active work as interrupted and resume eligible batches without fabricating completion.
+Interruption is cooperative, resumable, and stage-aware. The process registry terminates only managed children. Recovery journals let the Worker mark abandoned active work as interrupted and resume eligible batches without fabricating completion.
 
 ## TUN and tracing ownership
 

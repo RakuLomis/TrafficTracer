@@ -131,7 +131,7 @@ sites:
     traffic_type: all
 ```
 
-Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. A capture group can be cancelled, and interrupted or failed groups retain enough state to resume from the exact target.
+Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. Use **Interrupt current capture** to stop a running serial group safely. Completed targets are retained, later targets are not started, and **Resume from interrupted target** retries the interrupted URL as a new Session in the same timestamped group. Failed groups remain resumable from their stored cursor.
 
 See [Target configuration](../configuration.md) for normalization and limits.
 
@@ -154,7 +154,9 @@ Each target follows this lifecycle:
 
 A completed job can still have `degraded` page quality. Job state reports whether orchestration completed; quality reports whether the captured evidence represents a usable network observation.
 
-## 9. Browse Sessions
+## 9. Browse Sessions and capture groups
+
+**Capture Group history** is scoped to the selected Session Output Directory. The UI automatically recovers only a group whose persisted state is `running`; an older `failed` or `interrupted` group never replaces the current view. Select a history entry to inspect its target and Session records, or select **Current capture** to return to the active group.
 
 While capture is active, the UI automatically selects the current timestamped capture-group directory. When no capture is active, historical Sessions are not mixed into one root-level list. Select a specific timestamp directory to inspect it.
 

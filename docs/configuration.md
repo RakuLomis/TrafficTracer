@@ -129,7 +129,7 @@ Before the next target begins, the Worker:
 3. waits for its Chrome profile and debugging port to become quiescent;
 4. advances the persistent batch cursor.
 
-Cancellation stops the current child and prevents later targets from starting. Eligible failed or interrupted batches can resume from the stored cursor.
+A resumable interruption stops the current child only after managed Chrome, packet capture, and tracing cleanup completes. Completed targets remain intact, later targets do not start, and the persistent cursor stays on the interrupted target. Resume creates a new child Session for that URL inside the same timestamped capture group. Terminal cancellation remains available through the Worker API for non-resumable administrative shutdowns.
 
 ## Runtime options outside the target file
 

@@ -169,9 +169,9 @@ For a YAML batch that remains on one target:
 - inspect whether Chrome navigation reached its load timeout;
 - inspect managed Chrome quiescence status;
 - inspect analysis logs for packet parsing or contract validation;
-- request cancellation from the UI instead of killing the Worker.
+- request **Interrupt current capture** from the UI instead of killing the Worker.
 
-Cancellation may take a bounded cleanup interval because raw artifacts and tracing must be finalized safely.
+Interruption may take a bounded cleanup interval because raw artifacts and tracing must be finalized safely. The batch becomes `interrupted`; Resume retries the same target with a new Session identity and never overwrites completed evidence.
 
 ## Analysis failed
 

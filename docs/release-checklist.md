@@ -130,7 +130,8 @@ unsigned package is signed.
 - [ ] Leave TUN device empty and confirm the runtime/default interface is `Meta`.
 - [ ] Switch to a writable custom Session root, re-run diagnostics, capture, analyze, list, and open artifacts there.
 - [ ] Load a three-target YAML, select a subset, and confirm YAML-order serial capture with maximum child concurrency one.
-- [ ] Cancel one batch; inject a child failure, restart the Worker, and resume from the exact failed/interrupted target.
+- [ ] Interrupt one batch; confirm cleanup, no later target starts, and Resume retries the exact interrupted target.
+- [ ] Inject a child failure, restart the Worker, and resume from the exact failed target.
 - [ ] Open every completed child Session and confirm an existing schema-v1 Session remains readable.
 - [ ] Complete a single-target capture and automatic analysis.
 - [ ] Query a pre-proxy five-tuple and inspect every returned post_flow.
