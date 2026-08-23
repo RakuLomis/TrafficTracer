@@ -4,6 +4,32 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.8] - 2026-08-23
+
+### Added
+
+- Added protocol-neutral physical carrier identities, generations, lifecycle
+  events, logical-flow bindings, and multi-path observations.
+- Added strict single-protocol batch capture and observational mode, with the
+  frozen expected protocol retained across Resume.
+- Added carrier, proxy-protocol, and TUN inbound consistency summaries to the
+  canonical artifacts and desktop UI.
+
+### Fixed
+
+- Correlated reused Hysteria2 logical streams and UDP associations with their
+  long-lived QUIC/UDP carrier instead of reporting the reused socket as missing.
+- Preserved Hysteria2 port-hopping paths under one carrier identity and allocated
+  a new generation only after a successful carrier replacement.
+- Stored each shared physical carrier PCAP once and referenced it from every
+  bound logical connection instead of duplicating encrypted packets per flow.
+
+### Validation
+
+- Passed all 543 TrafficTracer Python tests, the Mihomo full and race suites,
+  cross-repository golden contracts, and Clash Verge TypeScript, lint, frontend,
+  Rust command, and Worker integration tests.
+
 ## [1.0.5] - 2026-08-19
 
 ### Fixed
