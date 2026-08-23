@@ -65,6 +65,8 @@ class CaptureJobOptions:
     headless: bool = False
     pcap_split_mode: str = "unique_connections"
     cache_mode: str = "cold"
+    proxy_protocol_mode: str = "strict_single"
+    expected_proxy_protocol: str = ""
 
     def __post_init__(self) -> None:
         if self.pcap_split_mode not in {"none", "unique_connections"}:
@@ -73,6 +75,15 @@ class CaptureJobOptions:
             )
         if self.cache_mode not in {"cold", "warm"}:
             raise ValueError("cache_mode must be cold or warm")
+        if self.proxy_protocol_mode not in {"strict_single", "observe"}:
+            raise ValueError(
+                "proxy_protocol_mode must be strict_single or observe"
+            )
+        normalized_protocol = self.expected_proxy_protocol.replace(
+            "-", "",
+        ).replace("_", "")
+        if self.expected_proxy_protocol and not normalized_protocol.isalnum():
+            raise ValueError("expected_proxy_protocol must be a protocol name")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -83,6 +94,8 @@ class CaptureJobOptions:
             "headless": self.headless,
             "pcap_split_mode": self.pcap_split_mode,
             "cache_mode": self.cache_mode,
+            "proxy_protocol_mode": self.proxy_protocol_mode,
+            "expected_proxy_protocol": self.expected_proxy_protocol,
         }
 
 
@@ -213,6 +226,10 @@ class CaptureJobSpec:
                 ),
                 # Missing means a job written before cache policy existed.
                 cache_mode=options.get("cache_mode", "warm"),
+                proxy_protocol_mode=options.get(
+                    "proxy_protocol_mode", "strict_single",
+                ),
+                expected_proxy_protocol=options.get("expected_proxy_protocol", ""),
             ),
             wait_load_timeout=data.get("wait_load_timeout", 30),
             run_label=data.get("run_label", data["network"]),

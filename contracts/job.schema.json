@@ -60,6 +60,13 @@
         "cache_mode": {
           "enum": ["cold", "warm"],
           "default": "cold"
+        },
+        "proxy_protocol_mode": {
+          "enum": ["strict_single", "observe"],
+          "default": "strict_single"
+        },
+        "expected_proxy_protocol": {
+          "type": "string", "pattern": "^[A-Za-z0-9_-]*$"
         }
       }
     },

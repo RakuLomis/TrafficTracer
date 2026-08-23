@@ -20,6 +20,7 @@ from traffictracer.analyze.pcap_splitter import (
     _sanitize_name,
 )
 from traffictracer.models import (
+    CarrierBinding,
     CorrelatedFlowV2,
     FlowTerminal,
     FlowTuple,
@@ -226,6 +227,51 @@ def test_unique_connections_split_once_for_many_requests(tmp_path, monkeypatch):
     mapping = json.loads((flow_dir / "mapping.json").read_text(encoding="utf-8"))
     assert mapping["connection_id"] == first
     assert mapping["primary_url"] == "https://example.com/a"
+
+
+def test_shared_hy2_carrier_is_extracted_once_and_referenced(tmp_path, monkeypatch):
+    first = "conn-" + "1" * 32
+    second = "conn-" + "2" * 32
+    carrier_path = FlowTuple(
+        "udp", "192.0.2.10", 55000, "203.0.113.20", 443,
+        key="udp|192.0.2.10:55000|203.0.113.20:443",
+        complete=True, source="dialer_socket", scope="physical", shared=True,
+    )
+    flows = [
+        _flow(first, "request-1", url="https://example.com/a"),
+        _flow(second, "request-2", url="https://example.com/b"),
+    ]
+    for flow in flows:
+        flow.post_flow = carrier_path
+        flow.post_proxy_src = carrier_path.src
+        flow.post_proxy_dst = carrier_path.dst
+        flow.carrier_binding = CarrierBinding(
+            carrier_id="hy2-carrier-1",
+            relation="reused",
+            generation=1,
+            protocol="hysteria2",
+            paths=(carrier_path,),
+        )
+    calls = []
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run",
+        _successful_tshark(calls),
+    )
+
+    outputs = split_flows_v2(
+        _result(flows), "tun.pcap", "phys.pcap", str(tmp_path)
+    )
+
+    assert len(outputs) == 2
+    assert len([call for call in calls if "-w" in call]) == 3
+    assert {item.carrier_id for item in outputs} == {"hy2-carrier-1"}
+    assert all(item.post_proxy_shared for item in outputs)
+    assert outputs[0].post_proxy.path == outputs[1].post_proxy.path
+    carrier_file = (
+        tmp_path / "carriers" / "carrier-hy2-carrier-1" / "post.pcap"
+    )
+    assert carrier_file.is_file()
+    assert Path(outputs[0].post_proxy.path) == carrier_file
 
 
 def test_local_endpoint_skips_post_pcap_as_not_applicable(tmp_path, monkeypatch):

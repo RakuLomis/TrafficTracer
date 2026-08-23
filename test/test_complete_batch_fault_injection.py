@@ -45,6 +45,7 @@ def _payload(tmp_path, port):
     payload["config_path"] = str(config)
     payload["config_sha256"] = hashlib.sha256(config.read_bytes()).hexdigest()
     payload["output_root"] = str((tmp_path / "sessions").resolve())
+    payload["options"]["proxy_protocol_mode"] = "observe"
     base = payload["targets"][0]
     payload["targets"] = [
         {

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ipaddress
 
-from ..models import FlowTuple
+from ..models import CarrierBinding, FlowTuple
 from .mihomo_log import MihomoConnection, UdpConnection, parse_tracing_log, parse_udp_tracing_log
 
 
@@ -21,6 +21,8 @@ class FlowMapping:
     error_class: str = ""
     error_class_source: str = "unavailable"
     egress_outcome: str = ""
+    carrier_binding: CarrierBinding | None = None
+    inbound_name: str = ""
 
 
 class FlowIndex:
@@ -95,12 +97,14 @@ def _tcp_mapping(conn: MihomoConnection) -> FlowMapping | None:
         outer_conn_id=dial.outer_conn_id if dial else "",
         pre_flow=pre,
         post_flow=dial.post_flow if dial else None,
+        carrier_binding=_carrier_binding(dial),
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
         stage=close.stage if close else "",
         error_class=close.error_class if close else "",
         error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
+        inbound_name=conn.connect.in_name if conn.connect else "",
     )
 
 
@@ -115,10 +119,31 @@ def _udp_mapping(conn: UdpConnection) -> FlowMapping | None:
         outer_conn_id=dial.outer_conn_id if dial else "",
         pre_flow=pre,
         post_flow=dial.post_flow if dial else None,
+        carrier_binding=_carrier_binding(dial),
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
         stage=close.stage if close else "",
         error_class=close.error_class if close else "",
         error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
+        inbound_name=conn.connect.in_name if conn.connect else "",
+    )
+
+
+def _carrier_binding(dial: object | None) -> CarrierBinding | None:
+    if dial is None:
+        return None
+    carrier_id = str(getattr(dial, "carrier_id", "") or getattr(dial, "outer_conn_id", ""))
+    if not carrier_id:
+        return None
+    paths = tuple(getattr(dial, "carrier_paths", ()) or ())
+    post_flow = getattr(dial, "post_flow", None)
+    if not paths and post_flow is not None:
+        paths = (post_flow,)
+    return CarrierBinding(
+        carrier_id=carrier_id,
+        relation=str(getattr(dial, "carrier_relation", "")),
+        generation=int(getattr(dial, "carrier_generation", 0) or 0),
+        protocol=str(getattr(dial, "carrier_protocol", "")),
+        paths=paths,
     )

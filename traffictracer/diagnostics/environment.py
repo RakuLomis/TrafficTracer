@@ -20,6 +20,10 @@ REQUIRED_TRACING_CAPABILITIES = (
     "supports_egress_outcome",
     "supports_session_sink_isolation",
     "supports_trace_barrier",
+    "supports_carrier_lifecycle",
+    "supports_logical_carrier_binding",
+    "supports_multi_path_carrier",
+    "supports_protocol_snapshot",
 )
 
 

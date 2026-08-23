@@ -258,6 +258,13 @@ def test_internal_batch_orchestration_creates_three_serial_analyzed_sessions(
             finally:
                 active[0] -= 1
 
+    monkeypatch.setattr(
+        module.MihomoManager,
+        "get_proxy_protocol_snapshot",
+        lambda self: {
+            "protocols": ["hysteria2"], "status": "single", "selections": [],
+        },
+    )
     monkeypatch.setattr(module, "CaptureJob", FakeCaptureJob)
     started = services.jobs.start_batch({"job": payload})
     assert services.jobs.wait(started["job_id"], timeout=5)
@@ -269,6 +276,9 @@ def test_internal_batch_orchestration_creates_three_serial_analyzed_sessions(
     assert len(sessions) == 3
     assert all(session["state"] == "completed" for session in sessions)
     assert maximum == [1]
+    manifest = services.batches.get(started["job_id"])
+    assert manifest.options.expected_proxy_protocol == "hysteria2"
+    assert manifest.options.proxy_protocol_mode == "strict_single"
 
 
 def test_session_flow_query_paginates_and_terminal_delete_is_scoped(

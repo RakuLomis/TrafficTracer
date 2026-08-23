@@ -92,6 +92,11 @@ def test_capture_options_reject_unknown_cache_mode():
         CaptureJobOptions(cache_mode="stale")
 
 
+
+def test_capture_options_reject_unknown_proxy_protocol_mode():
+    with pytest.raises(ValueError, match="proxy_protocol_mode"):
+        CaptureJobOptions(proxy_protocol_mode="guess")
+
 def test_capture_job_round_trips_optional_playback_policy():
     payload = _fixture()
     payload["url"] = "https://www.youtube.com/watch?v=example"

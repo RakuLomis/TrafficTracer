@@ -28,6 +28,25 @@ class FlowTuple:
         return _format_endpoint(self.dst_ip, self.dst_port)
 
 
+@dataclass(frozen=True)
+class CarrierBinding:
+    carrier_id: str
+    relation: str = ""
+    generation: int = 0
+    protocol: str = ""
+    paths: tuple[FlowTuple, ...] = ()
+
+    @property
+    def mode(self) -> str:
+        if any(path.shared for path in self.paths):
+            return "shared"
+        return "shared" if self.relation == "reused" else "exclusive"
+
+    @property
+    def bound(self) -> bool:
+        return bool(self.carrier_id)
+
+
 def _format_endpoint(ip: str, port: int) -> str:
     if not ip:
         return ""
@@ -114,6 +133,7 @@ class CorrelatedFlowV2:
     match_confidence: float = 0.5
     conn_id: str = ""
     outer_conn_id: str = ""
+    carrier_binding: CarrierBinding | None = None
     stable_connection_id: str = ""
     match_method: str = "none"
     match_candidates: list[dict] = field(default_factory=list)

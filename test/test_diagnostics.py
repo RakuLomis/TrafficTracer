@@ -29,8 +29,11 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
         "supports_egress_outcome",
         "supports_session_sink_isolation",
         "supports_trace_barrier",
+        "supports_carrier_lifecycle",
+        "supports_logical_carrier_binding",
+        "supports_multi_path_carrier",
+        "supports_protocol_snapshot",
     ]
-
     monkeypatch.setattr(
         environment,
         "_controller_get",
@@ -40,6 +43,10 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
             "supports_egress_outcome": True,
             "supports_session_sink_isolation": True,
             "supports_trace_barrier": True,
+            "supports_carrier_lifecycle": True,
+            "supports_logical_carrier_binding": True,
+            "supports_multi_path_carrier": True,
+            "supports_protocol_snapshot": True,
         },
     )
     assert environment.check_controller("http://127.0.0.1:9090").code == "CORE_READY"
@@ -129,6 +136,10 @@ def test_environment_report_keeps_all_checks_and_stable_fields(tmp_path, monkeyp
             "supports_egress_outcome": True,
             "supports_session_sink_isolation": True,
             "supports_trace_barrier": True,
+            "supports_carrier_lifecycle": True,
+            "supports_logical_carrier_binding": True,
+            "supports_multi_path_carrier": True,
+            "supports_protocol_snapshot": True,
         },
     )
     monkeypatch.setattr(

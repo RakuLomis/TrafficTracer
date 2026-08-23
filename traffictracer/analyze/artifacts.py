@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import urldefrag
 
 from traffictracer.contracts import validate_flow
-from traffictracer.models import FlowTuple
+from traffictracer.models import CarrierBinding, FlowTuple
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_VERSION
 
@@ -147,6 +147,9 @@ def persist_analysis_artifacts(
         ),
         "trace_snapshot": trace_snapshot,
         "storage": _storage_summary(session, results),
+        "carrier_bindings": _carrier_binding_summary(items),
+        "proxy_protocol": _capture_protocol_summary(session),
+        "inbound": _capture_inbound_summary(session, items),
     }
     if playback is not None:
         summary_payload["playback"] = playback
@@ -457,6 +460,107 @@ def _read_index(path: Path) -> dict:
     return payload
 
 
+def _carrier_binding_summary(items: list[dict]) -> dict:
+    proxy_items = [item for item in items if item.get("egress_outcome") == "proxy"]
+    bindings = [
+        item["carrier_binding"]
+        for item in proxy_items
+        if isinstance(item.get("carrier_binding"), dict)
+        and item["carrier_binding"].get("carrier_id")
+    ]
+    fan_out = Counter(
+        binding["carrier_id"]
+        for binding in bindings
+        if binding.get("mode") == "shared"
+    )
+    physical_carriers = {
+        binding["carrier_id"]
+        for binding in bindings
+        if binding.get("physical_paths")
+    }
+    return {
+        "logical_proxy_flows": len(proxy_items),
+        "bound_logical_flows": len(bindings),
+        "missing_binding": len(proxy_items) - len(bindings),
+        "exclusive_socket_count": sum(
+            binding.get("mode") == "exclusive" for binding in bindings
+        ),
+        "shared_bound_logical_flows": sum(
+            binding.get("mode") == "shared" for binding in bindings
+        ),
+        "shared_carrier_count": len(fan_out),
+        "shared_carrier_max_fan_out": max(fan_out.values(), default=0),
+        "shared_carrier_fan_out": dict(sorted(fan_out.items())),
+        "physical_carriers_observed": len(physical_carriers),
+    }
+
+
+def _capture_contexts(session: Path) -> list[dict]:
+    paths = [session / "raw" / "capture-context.json"]
+    paths.extend(sorted((session / "logs").glob("capture_context_*.json")))
+    contexts = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            contexts.append(payload)
+    return contexts
+
+
+def _capture_protocol_summary(session: Path) -> dict:
+    snapshots = [
+        context.get("proxy_protocol", {})
+        for context in _capture_contexts(session)
+        if isinstance(context.get("proxy_protocol"), dict)
+    ]
+    if not snapshots:
+        return {
+            "expected_protocol": "",
+            "observed_protocols": [],
+            "consistency": "unavailable",
+        }
+    latest = snapshots[-1]
+    runtime = latest.get("runtime_observation", {})
+    return {
+        "mode": latest.get("mode", ""),
+        "expected_protocol": latest.get("expected_protocol", ""),
+        "selected_protocols": latest.get("protocols", []),
+        "observed_protocols": runtime.get("protocols", []),
+        "consistency": runtime.get("consistency", "not_observed"),
+        "proxy_dial_events": runtime.get("proxy_dial_events", 0),
+    }
+
+
+def _capture_inbound_summary(session: Path, items: list[dict]) -> dict:
+    contexts = _capture_contexts(session)
+    inbound = contexts[-1].get("inbound", {}) if contexts else {}
+    configured = dict(inbound) if isinstance(inbound, dict) else {}
+    expected = str(configured.get("expected_core_name", ""))
+    observed = Counter(
+        str(item.get("inbound_name", ""))
+        for item in items if item.get("inbound_name")
+    )
+    mismatched = sum(
+        count for name, count in observed.items() if expected and name != expected
+    )
+    loopback = sum(_record_targets_loopback(item) for item in items)
+    configured.update({
+        "observed_names": dict(sorted(observed.items())),
+        "mismatched_flows": mismatched,
+        "loopback_flows": loopback,
+        "consistency": (
+            "not_observed" if not observed
+            else "match" if mismatched == 0 and loopback == 0
+            else "mismatch"
+        ),
+    })
+    return configured
+
+
 def core_flow_records(
     session_dir: str | Path,
     session_id: str,
@@ -664,9 +768,25 @@ def _flow_item(
     }
     if mapping.outer_conn_id:
         item["outer_conn_id"] = mapping.outer_conn_id
+    if mapping.carrier_binding is not None:
+        item["carrier_binding"] = _carrier_binding_payload(mapping.carrier_binding)
     if mapping.egress_outcome:
         item["egress_outcome"] = mapping.egress_outcome
+    if mapping.inbound_name:
+        item["inbound_name"] = mapping.inbound_name
     item["post_flow_disposition"] = post_flow_disposition(item)
+    if mapping.carrier_binding is not None:
+        item["carrier_state"] = (
+            "shared_bound"
+            if mapping.carrier_binding.mode == "shared"
+            else "exclusive_bound"
+        )
+    elif _outcome_without_socket(mapping.egress_outcome):
+        item["carrier_state"] = "not_applicable"
+    elif item["post_flow_disposition"] == "failed_before_socket":
+        item["carrier_state"] = "failed_before_carrier"
+    else:
+        item["carrier_state"] = "observation_missing"
     return item
 
 
@@ -684,6 +804,25 @@ def _tuple_payload(flow: FlowTuple, scope: str) -> dict:
     }
     if flow.dst_host:
         payload["dst_host"] = flow.dst_host
+    return payload
+
+
+def _carrier_binding_payload(binding: CarrierBinding) -> dict:
+    paths = [
+        _tuple_payload(path, "post_proxy")
+        for path in binding.paths
+        if path.complete
+    ]
+    status = "shared_bound" if binding.mode == "shared" else "exclusive_bound"
+    payload = {
+        "carrier_id": binding.carrier_id,
+        "status": status,
+        "mode": binding.mode,
+        "relation": binding.relation or "observed",
+        "generation": binding.generation,
+        "protocol": binding.protocol or "unknown",
+        "physical_paths": paths,
+    }
     return payload
 
 

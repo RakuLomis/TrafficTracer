@@ -96,6 +96,22 @@ coverage, integrity, egress, and packet-evidence summaries
 
 URL attribution and transport correlation are separate stages. One connection can serve multiple requests and URLs; one proxy transport can carry multiple logical flows. The data model retains both relationships instead of forcing a connection ID to equal a URL.
 
+## Logical flows and physical carriers
+
+Mihomo emits logical proxy-flow evidence separately from physical carrier
+lifecycles. Exclusive protocols commonly create one socket per logical flow.
+Hysteria2 instead multiplexes logical TCP streams and UDP associations over a
+long-lived QUIC/UDP carrier. TrafficTracer records this as a many-to-one binding
+with a stable carrier ID, generation, protocol, relation, and complete observed
+path set.
+
+A Hysteria2 port hop updates the carrier path set without inventing a new logical
+flow. A successfully replaced carrier receives a new generation. Carrier evidence
+is embedded in every logical bind, so a carrier opened before the current trace
+file remains attributable. Shared encrypted carrier packets are stored once and
+referenced by each logical connection; they are not falsely divided into unique
+per-stream packet captures.
+
 ## Failure and uncertainty model
 
 TrafficTracer distinguishes orchestration state from evidence quality:

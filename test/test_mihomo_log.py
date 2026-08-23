@@ -77,6 +77,12 @@ def test_parse_normalized_udp_proxy_dial(tmp_path):
          "proxy": "automatic", "proxy_type": "URLTest",
          "leaf_proxy": "tuic-node", "leaf_proxy_type": "Tuic",
          "egress_outcome": "proxy",
+         "carrier_id": "hy2-carrier-1", "carrier_relation": "reused",
+         "carrier_generation": 3, "carrier_protocol": "hysteria2",
+         "carrier_paths": [{"network": "udp", "src_ip": "192.0.2.1",
+                            "src_port": 51000, "dst_ip": "203.0.113.1",
+                            "dst_port": 443, "capture_scope": "physical",
+                            "shared": True}],
          "post_flow": {"network": "udp", "src_ip": "192.0.2.1", "src_port": 51000,
                        "dst_ip": "203.0.113.1", "dst_port": 443,
                        "key": "udp|192.0.2.1:51000|203.0.113.1:443", "complete": True}},
@@ -91,6 +97,11 @@ def test_parse_normalized_udp_proxy_dial(tmp_path):
     assert conn.proxy_dial.leaf_proxy_type == "Tuic"
     assert conn.proxy_dial.egress_outcome == "proxy"
 
+    assert conn.proxy_dial.carrier_id == "hy2-carrier-1"
+    assert conn.proxy_dial.carrier_relation == "reused"
+    assert conn.proxy_dial.carrier_generation == 3
+    assert conn.proxy_dial.carrier_protocol == "hysteria2"
+    assert conn.proxy_dial.carrier_paths[0].shared is True
 
 def test_trace_barrier_cutoff_excludes_late_events(tmp_path):
     raw = tmp_path / "raw"
@@ -205,3 +216,55 @@ def test_trace_barrier_cutoff_rejects_missing_marker(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="barrier marker"):
         trace_snapshot_info(str(trace))
+
+
+def test_observed_proxy_protocols_respects_cutoff_and_ignores_direct(tmp_path):
+    from traffictracer.analyze.mihomo_log import observed_proxy_protocols
+    events = [
+        {"type": "udp_proxy_dial", "event_seq": 1,
+         "egress_outcome": "proxy", "carrier_protocol": "Hysteria2"},
+        {"type": "tcp_proxy_dial", "event_seq": 2,
+         "egress_outcome": "direct", "leaf_proxy_type": "Direct"},
+        {"type": "tcp_proxy_dial", "event_seq": 3,
+         "egress_outcome": "proxy", "leaf_proxy_type": "Vless"},
+    ]
+    path = tmp_path / "trace.jsonl"
+    path.write_text("\n".join(json.dumps(event) for event in events))
+
+    observation = observed_proxy_protocols(str(path), max_event_seq=2)
+
+    assert observation["protocols"] == ["hysteria2"]
+    assert observation["proxy_dial_events"] == 1
+    assert observation["unknown_protocol_events"] == 0
+
+
+def test_parse_carrier_lifecycle_and_binding_events(tmp_path):
+    from traffictracer.analyze.mihomo_log import parse_carrier_events
+    path_value = {
+        "network": "udp", "src_ip": "192.0.2.10", "src_port": 55000,
+        "dst_ip": "203.0.113.20", "dst_port": 443,
+        "complete": True, "scope": "physical", "shared": True,
+    }
+    events = [
+        {"type": "carrier_open", "event_seq": 1,
+         "carrier_id": "carrier-1", "carrier_generation": 1,
+         "carrier_protocol": "hysteria2", "post_flow": path_value,
+         "carrier_paths": [path_value]},
+        {"type": "logical_carrier_bind", "event_seq": 2,
+         "carrier_id": "carrier-1", "carrier_relation": "reused",
+         "logical_conn_id": "tcp-1", "conn_id": "tcp-1",
+         "carrier_generation": 1, "carrier_protocol": "hysteria2",
+         "carrier_paths": [path_value]},
+        {"type": "carrier_close", "event_seq": 3,
+         "carrier_id": "carrier-1"},
+    ]
+    path = tmp_path / "carrier.jsonl"
+    path.write_text("\n".join(json.dumps(event) for event in events))
+
+    records = parse_carrier_events(str(path), max_event_seq=2)
+
+    assert [record.event_type for record in records] == [
+        "carrier_open", "logical_carrier_bind",
+    ]
+    assert records[1].logical_conn_id == "tcp-1"
+    assert records[1].physical_paths[0].shared is True

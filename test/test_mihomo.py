@@ -137,6 +137,68 @@ def test_trace_barrier_calls_stable_endpoint_and_validates_result():
     assert calls == [("POST", "/experimental/tracing/barrier", None)]
 
 
+
+def test_proxy_info_resolves_nested_groups_to_protocol_leaf():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    proxies = {
+        "automatic": {"type": "URLTest", "now": "region"},
+        "region": {"type": "Selector", "now": "hy2-node"},
+        "hy2-node": {
+            "type": "Hysteria2",
+            "server": "203.0.113.7",
+            "port": 443,
+            "network": "udp",
+        },
+        "DIRECT": {"type": "Direct"},
+    }
+    mgr._api_request = lambda method, path: {"proxies": proxies}
+
+    rows = mgr.get_proxy_info()
+    automatic = next(row for row in rows if row["group"] == "automatic")
+    assert automatic["node"] == "region"
+    assert automatic["leaf_node"] == "hy2-node"
+    assert automatic["leaf_type"] == "Hysteria2"
+    assert automatic["selection_chain"] == [
+        "automatic", "region", "hy2-node",
+    ]
+
+    snapshot = mgr.get_proxy_protocol_snapshot()
+    assert snapshot["status"] == "single"
+    assert snapshot["protocols"] == ["hysteria2"]
+    assert snapshot["expected_protocol"] == "hysteria2"
+
+
+def test_proxy_protocol_snapshot_reports_mixed_selected_leaf_types():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    proxies = {
+        "group-a": {"type": "Selector", "now": "hy2-node"},
+        "group-b": {"type": "Fallback", "now": "vless-node"},
+        "direct-group": {"type": "Selector", "now": "DIRECT"},
+        "hy2-node": {"type": "Hysteria2"},
+        "vless-node": {"type": "Vless"},
+        "DIRECT": {"type": "Direct"},
+    }
+    mgr._api_request = lambda method, path: {"proxies": proxies}
+
+    snapshot = mgr.get_proxy_protocol_snapshot()
+    assert snapshot["status"] == "mixed"
+    assert snapshot["protocols"] == ["hysteria2", "vless"]
+    assert snapshot["expected_protocol"] == ""
+
+
+def test_proxy_info_stops_at_group_cycle():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    proxies = {
+        "a": {"type": "Selector", "now": "b"},
+        "b": {"type": "Selector", "now": "a"},
+    }
+    mgr._api_request = lambda method, path: {"proxies": proxies}
+
+    rows = mgr.get_proxy_info()
+    row = next(item for item in rows if item["group"] == "a")
+    assert row["selection_chain"] == ["a", "b"]
+    assert row["leaf_type"] == "Selector"
+
 def test_restore_tracing_clears_session_ownership_when_previously_absent():
     mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
     calls = []

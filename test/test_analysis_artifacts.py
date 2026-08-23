@@ -4,6 +4,9 @@ import json
 
 from traffictracer.analyze.artifacts import (
     _browser_request_failure_summary,
+    _carrier_binding_summary,
+    _capture_inbound_summary,
+    _capture_protocol_summary,
     _local_connection_ids,
     _analysis_integrity_state,
     _mapping_error_class,
@@ -834,3 +837,62 @@ def test_playback_scenario_fails_only_when_primary_is_not_observed(tmp_path):
     assert summary["scenario_outcome"]["state"] == "failed"
     assert summary["scenario_outcome"]["primary_content_observed"] is False
     assert summary["scenario_outcome"]["ad_observed"] is True
+
+
+def test_carrier_summary_counts_shared_fan_out_without_duplication():
+    path = _flow(
+        "udp", "192.0.2.10", 55000, "203.0.113.20", 443,
+        "post_proxy", shared=True,
+    )
+    binding = {
+        "carrier_id": "carrier-1", "mode": "shared",
+        "physical_paths": [path],
+    }
+    items = [
+        {"egress_outcome": "proxy", "carrier_binding": binding},
+        {"egress_outcome": "proxy", "carrier_binding": binding},
+        {"egress_outcome": "proxy"},
+        {"egress_outcome": "direct"},
+    ]
+
+    summary = _carrier_binding_summary(items)
+
+    assert summary["logical_proxy_flows"] == 3
+    assert summary["bound_logical_flows"] == 2
+    assert summary["missing_binding"] == 1
+    assert summary["shared_carrier_count"] == 1
+    assert summary["shared_carrier_max_fan_out"] == 2
+    assert summary["physical_carriers_observed"] == 1
+
+
+def test_capture_context_summaries_report_protocol_and_inbound_mismatch(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "capture-context.json").write_text(json.dumps({
+        "proxy_protocol": {
+            "mode": "strict_single",
+            "expected_protocol": "hysteria2",
+            "protocols": ["hysteria2"],
+            "runtime_observation": {
+                "protocols": ["hysteria2"],
+                "consistency": "match",
+                "proxy_dial_events": 4,
+            },
+        },
+        "inbound": {
+            "mode": "tun", "interface": "Meta",
+            "expected_core_name": "DEFAULT-TUN",
+        },
+    }), encoding="utf-8")
+    items = [{
+        "inbound_name": "MIXED-IN",
+        "pre_flow": _flow(
+            "tcp", "127.0.0.1", 40000, "127.0.0.1", 7890, "pre_proxy",
+        ),
+    }]
+
+    assert _capture_protocol_summary(tmp_path)["consistency"] == "match"
+    inbound = _capture_inbound_summary(tmp_path, items)
+    assert inbound["mismatched_flows"] == 1
+    assert inbound["loopback_flows"] == 1
+    assert inbound["consistency"] == "mismatch"

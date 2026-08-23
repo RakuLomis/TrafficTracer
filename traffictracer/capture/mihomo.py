@@ -9,9 +9,21 @@ from pathlib import Path
 import socket
 import subprocess
 import time
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 from ..utils import logger
+
+
+_PROXY_GROUP_TYPES = frozenset({
+    "selector", "urltest", "fallback", "loadbalance", "relay",
+})
+_NON_PROXY_LEAF_TYPES = frozenset({
+    "direct", "reject", "rejectdrop", "dns", "pass", "compatible",
+})
+
+
+def _normalized_proxy_type(value: object) -> str:
+    return str(value or "").lower().replace("-", "").replace("_", "")
 
 
 class MihomoApiError(RuntimeError):
@@ -197,23 +209,66 @@ class MihomoManager:
             self.restore_tracing(previous)
 
     def get_proxy_info(self) -> list[dict]:
-        """Return protocol details for all currently selected proxy nodes."""
+        """Return selected proxy groups with recursively resolved leaf nodes."""
         groups = self._api_request("GET", "/proxies").get("proxies", {})
         result = []
         for group_name, group in groups.items():
             node_name = group.get("now", "")
             if not node_name:
                 continue
-            try:
-                detail = self._api_request("GET", f"/proxies/{quote(node_name, safe='')}")
-            except Exception:
-                continue
+            leaf_name, chain = _selected_leaf(groups, group_name)
+            detail = groups.get(leaf_name, {})
+            if not isinstance(detail, dict):
+                detail = {}
             result.append({
                 "group": group_name,
                 "node": node_name,
-                "type": detail.get("type", ""),
+                "type": groups.get(node_name, {}).get("type", "")
+                if isinstance(groups.get(node_name), dict) else "",
+                "leaf_node": leaf_name,
+                "leaf_type": detail.get("type", ""),
+                "selection_chain": chain,
                 "server": detail.get("server", ""),
                 "port": detail.get("port", ""),
                 "network": detail.get("network", ""),
             })
         return result
+
+    def get_proxy_protocol_snapshot(self) -> dict:
+        selections = self.get_proxy_info()
+        protocols = sorted({
+            _normalized_proxy_type(row.get("leaf_type", ""))
+            for row in selections
+            if _normalized_proxy_type(row.get("leaf_type", ""))
+            not in _PROXY_GROUP_TYPES | _NON_PROXY_LEAF_TYPES | {""}
+        })
+        return {
+            "mode": "strict_single",
+            "status": (
+                "single" if len(protocols) == 1
+                else "no_proxy" if not protocols
+                else "mixed"
+            ),
+            "protocols": protocols,
+            "expected_protocol": protocols[0] if len(protocols) == 1 else "",
+            "selections": selections,
+        }
+
+
+def _selected_leaf(groups: object, start: str) -> tuple[str, list[str]]:
+    if not isinstance(groups, dict):
+        return start, [start]
+    chain: list[str] = []
+    current = start
+    seen: set[str] = set()
+    while current and current not in seen:
+        seen.add(current)
+        chain.append(current)
+        detail = groups.get(current)
+        if not isinstance(detail, dict):
+            break
+        selected = str(detail.get("now", "") or "")
+        if not selected:
+            break
+        current = selected
+    return (chain[-1] if chain else start), chain

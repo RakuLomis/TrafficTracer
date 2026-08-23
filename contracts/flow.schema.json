@@ -42,6 +42,9 @@
     },
     "conn_id": { "type": "string" },
     "outer_conn_id": { "type": "string" },
+    "inbound_name": { "type": "string" },
+    "carrier_binding": { "$ref": "#/$defs/carrierBinding" },
+    "carrier_state": { "enum": ["exclusive_bound", "shared_bound", "not_applicable", "failed_before_carrier", "observation_missing"] },
     "egress_outcome": {
       "enum": ["direct", "proxy", "rejected", "rejected_drop", "internal_dns", "pass", "compatible", "unknown"]
     },
@@ -77,6 +80,19 @@
         "source": { "type": "string", "minLength": 1 },
         "scope": { "enum": ["pre_proxy", "post_proxy"] },
         "shared": { "type": "boolean" }
+      }
+    },
+    "carrierBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["carrier_id", "status", "mode", "relation", "generation", "protocol", "physical_paths"],
+      "properties": {
+        "carrier_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "status": { "enum": ["exclusive_bound", "shared_bound"] },
+        "mode": { "enum": ["exclusive", "shared"] },
+        "relation": { "enum": ["created", "reused", "observed"] },
+        "generation": { "type": "integer", "minimum": 0 },
+        "protocol": { "type": "string", "minLength": 1 },
+        "physical_paths": { "type": "array", "items": { "$ref": "#/$defs/flowTuple" } }
       }
     },
     "terminal": {

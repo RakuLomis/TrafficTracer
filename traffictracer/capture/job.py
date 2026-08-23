@@ -7,6 +7,10 @@ from pathlib import Path
 import sys
 import shutil
 from typing import Any
+from traffictracer.analyze.mihomo_log import (
+    observed_proxy_protocols,
+)
+
 
 from traffictracer.jobs.cancellation import (
     CancellationToken,
@@ -124,6 +128,11 @@ class CaptureJob:
             "interfaces": self.spec.interfaces.to_dict(),
             "output_root": self.spec.output_root,
             "cache_mode": self.spec.options.cache_mode,
+            "inbound": {
+                "mode": "tun",
+                "interface": self.spec.interfaces.tun,
+                "expected_core_name": "DEFAULT-TUN",
+            },
         }
         if self.spec.playback is not None:
             capture_context["playback_policy"] = (
@@ -143,7 +152,30 @@ class CaptureJob:
             tracing_configured = True
             self._record(paths["mihomo_trace"])
 
-            proxy_info = self.mihomo.get_proxy_info()
+            protocol_snapshot = self.mihomo.get_proxy_protocol_snapshot()
+            protocol_snapshot["mode"] = self.spec.options.proxy_protocol_mode
+            expected = self.spec.options.expected_proxy_protocol.lower().replace(
+                "-", ""
+            ).replace("_", "")
+            if expected:
+                protocol_snapshot["expected_protocol"] = expected
+            observed = set(protocol_snapshot["protocols"])
+            if (
+                self.spec.options.proxy_protocol_mode == "strict_single"
+                and len(observed) > 1
+            ):
+                raise RuntimeError(
+                    "Proxy protocol invariant failed: selected leaf protocols are "
+                    + ", ".join(sorted(observed))
+                )
+            if expected and observed and observed != {expected}:
+                raise RuntimeError(
+                    f"Proxy protocol invariant failed: expected {expected}, "
+                    f"observed {', '.join(sorted(observed))}"
+                )
+            proxy_info = protocol_snapshot["selections"]
+            capture_context["proxy_protocol"] = protocol_snapshot
+            write_json_atomic(paths["capture_context"], capture_context)
             write_json_atomic(paths["proxy_info"], proxy_info)
             self._record(paths["proxy_info"])
 
@@ -317,6 +349,32 @@ class CaptureJob:
 
             attempt("Chrome quiescence barrier", quiesce_chrome)
         if tracing_configured:
+            def persist_protocol_observation(boundary: dict[str, Any]) -> None:
+                observation = observed_proxy_protocols(
+                    str(boundary.get("output", "")),
+                    max_event_seq=boundary.get("event_seq"),
+                )
+                protocol_context = capture_context.setdefault("proxy_protocol", {})
+                expected = str(
+                    protocol_context.get("expected_protocol", "")
+                ).lower().replace("-", "").replace("_", "")
+                protocols = set(observation["protocols"])
+                event_count = int(observation["proxy_dial_events"])
+                if event_count == 0:
+                    consistency = "not_observed"
+                elif expected and protocols == {expected}:
+                    consistency = "match"
+                elif expected:
+                    consistency = "mismatch"
+                elif len(protocols) <= 1:
+                    consistency = "consistent"
+                else:
+                    consistency = "mixed"
+                observation["consistency"] = consistency
+                protocol_context["runtime_observation"] = observation
+                write_json_atomic(capture_context_path, capture_context)
+
+
             def persist_trace_boundary() -> None:
                 initial = self.mihomo.trace_barrier()
                 boundary = initial
@@ -333,6 +391,7 @@ class CaptureJob:
                     "settle_seconds": self.runtime.trace_tail_grace_seconds,
                 }
                 write_json_atomic(capture_context_path, capture_context)
+                persist_protocol_observation(capture_context["trace_boundary"])
 
                 if self.runtime.trace_tail_grace_seconds <= 0:
                     return
@@ -360,6 +419,7 @@ class CaptureJob:
                 })
                 write_json_atomic(capture_context_path, capture_context)
 
+                persist_protocol_observation(capture_context["trace_boundary"])
             attempt("Mihomo trace barrier", persist_trace_boundary)
         if previous_tracing is not None:
             try:

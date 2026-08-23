@@ -38,6 +38,25 @@ Use one entry for each page visit. Multiple entries for the same domain are vali
 
 Unknown global settings are not imported into a UI target preview. The UI owns runtime core, controller, interfaces, Chrome, storage, and cache-mode choices.
 
+## Proxy protocol invariant
+
+The capture form controls this runtime invariant; it is intentionally not a
+sites.yaml field.
+
+Strict single protocol is the recommended mode for comparison experiments. Before
+packet capture starts, TrafficTracer resolves every selected proxy group to its
+active leaf node. A batch freezes the observed leaf protocol once and persists it
+in the batch manifest, including across resume. Mixed proxy protocols or a mismatch
+with an explicitly expected protocol block the capture before evidence is written.
+
+Observe only permits mixed or changing leaf protocols and reports the selected and
+actually observed protocols afterward. DIRECT, reject, DNS, pass, compatible, and
+other no-proxy/no-socket outcomes are excluded from the single-protocol set.
+
+The optional expected protocol is case-insensitive and accepts a short identifier
+such as hysteria2. Leave it empty to freeze the single selected leaf protocol
+automatically.
+
 ## Bounded YouTube playback
 
 YouTube video targets can request best-effort playback observation:

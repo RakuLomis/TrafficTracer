@@ -37,7 +37,9 @@
     "analyze_after_capture": true,
     "headless": false,
     "pcap_split_mode": "unique_connections",
-    "cache_mode": "cold"
+    "cache_mode": "cold",
+    "proxy_protocol_mode": "strict_single",
+    "expected_proxy_protocol": ""
   },
   "fail_fast": true
 }

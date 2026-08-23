@@ -41,6 +41,7 @@ def _payload(tmp_path, count=2):
     payload["config_sha256"] = hashlib.sha256(config.read_bytes()).hexdigest()
     payload["output_root"] = str((tmp_path / "sessions").resolve())
     payload["targets"] = payload["targets"][:count]
+    payload["options"]["proxy_protocol_mode"] = "observe"
     return payload, original
 
 

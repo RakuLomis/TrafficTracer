@@ -564,6 +564,7 @@ class WorkerServices:
     ):
         assert isinstance(spec, BatchJobSpec)
         self._require_output_root(spec.output_root)
+        spec = self._freeze_batch_proxy_protocol(spec)
         return SerialBatchJob(
             spec,
             child_factory=self._capture_factory,
@@ -571,6 +572,36 @@ class WorkerServices:
             cancellation=cancellation,
             session_for_job=self._session_for_job,
             resume=resume,
+        )
+
+    @staticmethod
+    def _freeze_batch_proxy_protocol(spec: BatchJobSpec) -> BatchJobSpec:
+        options = spec.options
+        if (
+            options.proxy_protocol_mode != "strict_single"
+            or options.expected_proxy_protocol
+        ):
+            return spec
+        manager = MihomoManager(
+            "",
+            spec.controller.generated_config or "",
+            spec.controller.endpoint,
+            spec.controller.secret or "",
+        )
+        snapshot = manager.get_proxy_protocol_snapshot()
+        protocols = list(snapshot.get("protocols", []))
+        if len(protocols) > 1:
+            raise RuntimeError(
+                "Proxy protocol invariant failed at capture-group creation: "
+                + ", ".join(sorted(protocols))
+            )
+        if len(protocols) != 1:
+            return spec
+        return replace(
+            spec,
+            options=replace(
+                options, expected_proxy_protocol=str(protocols[0]),
+            ),
         )
 
     def _session_for_job(self, job_id: str) -> str | None:

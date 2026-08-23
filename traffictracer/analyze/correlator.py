@@ -8,7 +8,7 @@ from .netlog import FiveTupleData, DomainConnections, _parse_addr
 from .connection_index import rank_connection_candidates, stable_connection_id
 from .mihomo_log import MihomoConnection, UdpConnect, UdpClose, UdpConnection
 from .request_observation import request_can_have_transport
-from ..models import AttributedRequest, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTerminal, FlowTuple
+from ..models import AttributedRequest, CarrierBinding, TransportConnection, VisitCorrelation, CorrelatedFlowV2, FlowTerminal, FlowTuple
 
 
 class CorrelatedFlow(NamedTuple):
@@ -179,6 +179,11 @@ def correlate_v2(
                 if mconn and mconn.proxy_dial
                 else ""
             ),
+            carrier_binding=_binding_from_dial(
+                mconn.proxy_dial
+                if mconn and mconn.proxy_dial
+                else None
+            ),
             proxy=(
                 mconn.proxy_dial.proxy
                 if mconn and mconn.proxy_dial
@@ -313,6 +318,7 @@ def correlate_cdp_direct(
             request_ids=rids,
             connection_reused=rep.connection_reused,
             terminal=_terminal_from_close(mconn.close),
+            carrier_binding=_binding_from_dial(mconn.proxy_dial),
         ))
 
     if udp_conns:
@@ -388,6 +394,9 @@ def _correlate_cdp_udp(
             match_confidence=0.35,
             conn_id=rich.conn_key if rich else uc.conn_key,
             outer_conn_id=rich.proxy_dial.outer_conn_id if rich and rich.proxy_dial else "",
+            carrier_binding=_binding_from_dial(
+                rich.proxy_dial if rich and rich.proxy_dial else None
+            ),
             proxy=rich.proxy_dial.proxy if rich and rich.proxy_dial else "",
             proxy_type=(
                 rich.proxy_dial.proxy_type
@@ -409,6 +418,25 @@ def _correlate_cdp_udp(
         ))
 
     return flows
+
+
+def _binding_from_dial(dial: object | None) -> CarrierBinding | None:
+    if dial is None:
+        return None
+    carrier_id = str(getattr(dial, "carrier_id", "") or getattr(dial, "outer_conn_id", ""))
+    if not carrier_id:
+        return None
+    paths = tuple(getattr(dial, "carrier_paths", ()) or ())
+    post_flow = getattr(dial, "post_flow", None)
+    if not paths and post_flow is not None:
+        paths = (post_flow,)
+    return CarrierBinding(
+        carrier_id=carrier_id,
+        relation=str(getattr(dial, "carrier_relation", "")),
+        generation=int(getattr(dial, "carrier_generation", 0) or 0),
+        protocol=str(getattr(dial, "carrier_protocol", "")),
+        paths=paths,
+    )
 
 
 def _terminal_from_close(close) -> FlowTerminal | None:

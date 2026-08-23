@@ -55,9 +55,12 @@ def test_wait_chrome_exit_timeout():
     terminate_chrome(proc)
 
 
-def test_launch_chrome_minimal():
+def test_launch_chrome_minimal(tmp_path):
+    fake_chrome = tmp_path / "fake-chrome"
+    fake_chrome.write_text("#!/bin/sh\nsleep 0.2\n", encoding="utf-8")
+    fake_chrome.chmod(0o755)
     proc = launch_chrome(
-        binary="echo",
+        binary=str(fake_chrome),
         url="about:blank",
         netlog_path="/tmp/test_netlog.json",
         user_data_dir="/tmp/test-profile",

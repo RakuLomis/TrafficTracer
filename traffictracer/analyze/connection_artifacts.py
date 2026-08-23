@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_flow_v2, validate_pcap_index
-from traffictracer.models import CorrelatedFlowV2, FlowTuple, VisitCorrelation
+from traffictracer.models import CarrierBinding, CorrelatedFlowV2, FlowTuple, VisitCorrelation
 from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideResult
 from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
@@ -260,6 +260,7 @@ def _connection_record(
             ),
             "post_flow_shared": bool(
                 post_flow and post_flow.shared
+                or flow.carrier_binding and flow.carrier_binding.mode == "shared"
             ),
             "outer_connection_reused": False,
         },
@@ -267,6 +268,7 @@ def _connection_record(
             flow.connection_reused
             or len(set(flow.request_ids)) > 1
             or (post_flow and post_flow.shared)
+            or (flow.carrier_binding and flow.carrier_binding.mode == "shared")
         ),
         "egress": _resolve_egress(flow, proxy_selections),
         "match": match,
@@ -295,6 +297,8 @@ def _connection_record(
         record["mihomo_connection_id"] = flow.conn_id
     if flow.outer_conn_id:
         record["outer_connection_id"] = flow.outer_conn_id
+    if flow.carrier_binding is not None:
+        record["carrier_binding"] = _carrier_binding_payload(flow.carrier_binding)
     return record
 
 
@@ -552,6 +556,24 @@ def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:
     payload["source"] = flow.source or "netlog"
     payload["shared"] = bool(flow.shared)
     return payload
+
+
+def _carrier_binding_payload(binding: CarrierBinding) -> dict:
+    return {
+        "carrier_id": binding.carrier_id,
+        "status": (
+            "shared_bound" if binding.mode == "shared" else "exclusive_bound"
+        ),
+        "mode": binding.mode,
+        "relation": binding.relation or "observed",
+        "generation": binding.generation,
+        "protocol": binding.protocol or "unknown",
+        "physical_paths": [
+            _flow_payload(path, "post_proxy")
+            for path in binding.paths
+            if path.complete
+        ],
+    }
 
 
 def _usable_post_flow(flow: FlowTuple | None) -> FlowTuple | None:

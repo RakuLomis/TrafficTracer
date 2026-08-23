@@ -95,6 +95,8 @@ Open **Traffic Tracer** and configure:
 - **Chrome executable**: an absolute path when automatic discovery is insufficient;
 - **Analysis storage**: `Standard` for raw PCAP plus indexes, or `Full` to also export per-connection PCAP files immediately;
 - **Cache mode**: `Cold` for isolated repeatable captures, or `Warm` only when cache reuse is part of the experiment.
+- **Proxy protocol invariant**: keep Strict single protocol for comparable batches, or use Observe only for exploratory mixed routing;
+- **Expected proxy protocol**: optionally require a leaf protocol such as hysteria2; leave it empty to freeze the selected leaf protocol automatically.
 
 Find the physical interface with:
 
@@ -134,6 +136,9 @@ sites:
 Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. Use **Interrupt current capture** to stop a running serial group safely. Completed targets are retained, later targets are not started, and **Resume from interrupted target** retries the interrupted URL as a new Session in the same timestamped group. Failed groups remain resumable from their stored cursor.
 
 See [Target configuration](../configuration.md) for normalization and limits.
+The frozen protocol invariant is stored with the Capture Group. Resume reuses it
+instead of silently accepting the node or protocol currently selected in the UI.
+
 
 ## 8. Run the capture
 

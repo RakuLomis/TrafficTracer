@@ -57,7 +57,9 @@
         "protocol": { "enum": ["tcp", "udp"] },
         "request_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
         "pre_proxy": { "$ref": "#/$defs/pcapResult" },
-        "post_proxy": { "$ref": "#/$defs/pcapResult" }
+        "post_proxy": { "$ref": "#/$defs/pcapResult" },
+        "carrier_id": { "type": "string", "minLength": 1 },
+        "post_proxy_shared": { "type": "boolean" }
       }
     },
     "partition": {

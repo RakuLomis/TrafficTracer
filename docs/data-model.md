@@ -174,6 +174,19 @@ Coverage for the page should be evaluated on `page_attributed` traffic. Backgrou
 
 Shared transport is not a correlation failure. TrafficTracer preserves the logical pre-proxy flow, shared outer tuple, associated URLs, and non-one-to-one warning. Packet bytes on that outer transport cannot always be uniquely assigned to one inner request.
 
+New core traces add a carrier binding to each logical proxy flow:
+
+- carrier ID and generation identify the physical carrier instance;
+- relation distinguishes carrier creation from reuse;
+- protocol records the selected leaf proxy protocol;
+- physical paths retain all observed local/remote carrier tuples;
+- shared marks a many-to-one carrier rather than an exclusive NAT mapping.
+
+The canonical carrier state is exclusive_bound, shared_bound, not_applicable,
+failed_before_carrier, or observation_missing. In Full split mode, a shared carrier
+is extracted once below the carrier artifact directory. All bound connection
+records reference that artifact instead of duplicating its encrypted packets.
+
 ## Match and ambiguity semantics
 
 Correlation combines exact IDs, endpoints, protocol, timing windows, NetLog dependency relationships, Mihomo event sequence, and reuse evidence. Match metadata records the selected method and confidence.

@@ -92,6 +92,19 @@
         "outer_connection_reused": { "type": "boolean" }
       }
     },
+    "carrierBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["carrier_id", "status", "mode", "relation", "generation", "protocol", "physical_paths"],
+      "properties": {
+        "carrier_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "status": { "enum": ["exclusive_bound", "shared_bound"] },
+        "mode": { "enum": ["exclusive", "shared"] },
+        "relation": { "enum": ["created", "reused", "observed"] },
+        "generation": { "type": "integer", "minimum": 0 },
+        "protocol": { "type": "string", "minLength": 1 },
+        "physical_paths": { "type": "array", "items": { "$ref": "#/$defs/flowTuple" } }
+      }
+    },
     "egress": {
       "type": "object", "additionalProperties": false,
       "required": ["mode", "policy", "selection_chain", "selected_node", "selected_type", "evidence"],
@@ -195,6 +208,7 @@
         "pre_flow": { "$ref": "#/$defs/flowTuple" },
         "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
         "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "carrier_binding": { "$ref": "#/$defs/carrierBinding" },
         "netlog_source_id": { "type": "integer", "minimum": 1 },
         "terminal": { "$ref": "#/$defs/terminal" },
         "mihomo_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },

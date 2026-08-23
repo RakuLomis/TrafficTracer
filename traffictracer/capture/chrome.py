@@ -218,6 +218,8 @@ def launch_chrome(
         ])
     if proxy_server:
         cmd.append(f"--proxy-server={proxy_server}")
+    else:
+        cmd.append("--no-proxy-server")
     if remote_debugging_port is not None:
         cmd.extend([
             f"--remote-debugging-port={remote_debugging_port}",

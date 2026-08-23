@@ -14,6 +14,12 @@ from .outcomes import terminal_error_class
 
 _ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
 CAUSAL_TAIL_MAX_DELAY_MS = 2000.0
+_PROXY_GROUP_TYPES = frozenset({"selector", "urltest", "fallback", "loadbalance", "relay"})
+_NON_PROXY_TYPES = frozenset({"direct", "reject", "rejectdrop", "dns", "pass", "compatible"})
+
+
+def _normalize_proxy_type(value: object) -> str:
+    return str(value or "").lower().replace("-", "").replace("_", "")
 
 
 def _clean_addr(raw: str) -> str:
@@ -38,6 +44,16 @@ def parse_flow_tuple(raw: object) -> FlowTuple | None:
     )
 
 
+def parse_flow_tuples(raw: object) -> tuple[FlowTuple, ...]:
+    if not isinstance(raw, list):
+        return ()
+    return tuple(
+        flow
+        for item in raw
+        if (flow := parse_flow_tuple(item)) is not None
+    )
+
+
 @dataclass(frozen=True)
 class TcpConnect:
     ts: str
@@ -45,6 +61,7 @@ class TcpConnect:
     src: str
     dst: str
     host: str
+    in_name: str = ""
     pre_flow: FlowTuple | None = None
     event_seq: int = 0
 
@@ -60,6 +77,11 @@ class TcpProxyDial:
     out_dst: str = ""
     post_flow: FlowTuple | None = None
     outer_conn_id: str = ""
+    carrier_id: str = ""
+    carrier_relation: str = ""
+    carrier_generation: int = 0
+    carrier_protocol: str = ""
+    carrier_paths: tuple[FlowTuple, ...] = ()
     event_seq: int = 0
     leaf_proxy: str = ""
     leaf_proxy_type: str = ""
@@ -114,6 +136,11 @@ class UdpProxyDial:
     out_dst: str = ""
     post_flow: FlowTuple | None = None
     outer_conn_id: str = ""
+    carrier_id: str = ""
+    carrier_relation: str = ""
+    carrier_generation: int = 0
+    carrier_protocol: str = ""
+    carrier_paths: tuple[FlowTuple, ...] = ()
     event_seq: int = 0
     leaf_proxy: str = ""
     leaf_proxy_type: str = ""
@@ -141,6 +168,23 @@ class UdpConnection:
     connect: UdpConnect | None
     proxy_dial: UdpProxyDial | None
     close: UdpClose | None
+
+
+@dataclass(frozen=True)
+class CarrierLifecycleRecord:
+    event_type: str
+    ts: str
+    event_seq: int
+    network: str
+    carrier_id: str
+    logical_conn_id: str
+    conn_id: str
+    conn_key: str
+    relation: str
+    generation: int
+    protocol: str
+    post_flow: FlowTuple | None
+    physical_paths: tuple[FlowTuple, ...]
 
 
 def trace_snapshot_info(path: str) -> dict:
@@ -282,6 +326,76 @@ def _events(
                 yield event
 
 
+def observed_proxy_protocols(
+    path: str, max_event_seq: int | None = None,
+) -> dict[str, object]:
+    """Summarize actual proxy leaf protocols within a durable trace cutoff."""
+    trace_path = Path(path)
+    if not trace_path.is_file():
+        return {
+            "protocols": [],
+            "proxy_dial_events": 0,
+            "unknown_protocol_events": 0,
+        }
+    protocols: set[str] = set()
+    total = 0
+    unknown = 0
+    for event in _events(str(trace_path), max_event_seq):
+        if event.get("type") not in {"tcp_proxy_dial", "udp_proxy_dial"}:
+            continue
+        if event.get("egress_outcome") not in {"", "proxy"}:
+            continue
+        total += 1
+        raw_type = event.get("carrier_protocol") or event.get(
+            "leaf_proxy_type", ""
+        )
+        normalized = _normalize_proxy_type(raw_type)
+        if normalized and normalized not in _PROXY_GROUP_TYPES | _NON_PROXY_TYPES:
+            protocols.add(normalized)
+        else:
+            unknown += 1
+    return {
+        "protocols": sorted(protocols),
+        "proxy_dial_events": total,
+
+        "unknown_protocol_events": unknown,
+    }
+
+
+def parse_carrier_events(
+    path: str,
+    max_event_seq: int | None = None,
+    include_event_seqs: set[int] | None = None,
+) -> list[CarrierLifecycleRecord]:
+    event_types = {
+        "carrier_open", "carrier_path_update",
+        "logical_carrier_bind", "carrier_close",
+    }
+    records = []
+    for event in _events(path, max_event_seq, include_event_seqs):
+        event_type = str(event.get("type", ""))
+        if event_type not in event_types:
+            continue
+        records.append(CarrierLifecycleRecord(
+            event_type=event_type,
+            ts=str(event.get("ts", "")),
+            event_seq=int(event.get("event_seq", 0) or 0),
+            network=str(event.get("network", "")),
+            carrier_id=str(
+                event.get("carrier_id", "") or event.get("outer_conn_id", "")
+            ),
+            logical_conn_id=str(event.get("logical_conn_id", "")),
+            conn_id=str(event.get("conn_id", "")),
+            conn_key=str(event.get("conn_key", "")),
+            relation=str(event.get("carrier_relation", "")),
+            generation=int(event.get("carrier_generation", 0) or 0),
+            protocol=str(event.get("carrier_protocol", "")),
+            post_flow=parse_flow_tuple(event.get("post_flow")),
+            physical_paths=parse_flow_tuples(event.get("carrier_paths")),
+        ))
+    return records
+
+
 def parse_tracing_log(
     path: str, max_event_seq: int | None = None,
     include_event_seqs: set[int] | None = None,
@@ -298,6 +412,7 @@ def parse_tracing_log(
             conn["connect"] = TcpConnect(
                 **common, src=_clean_addr(event.get("src", "")),
                 dst=_clean_addr(event.get("dst", "")), host=event.get("host", ""),
+                in_name=event.get("in_name", ""),
                 pre_flow=parse_flow_tuple(event.get("pre_flow")),
                 event_seq=int(event.get("event_seq", 0) or 0),
             )
@@ -309,6 +424,11 @@ def parse_tracing_log(
                 out_dst=_clean_addr(event.get("out_dst", "")),
                 post_flow=parse_flow_tuple(event.get("post_flow")),
                 outer_conn_id=event.get("outer_conn_id", ""),
+                carrier_id=event.get("carrier_id", "") or event.get("outer_conn_id", ""),
+                carrier_relation=event.get("carrier_relation", ""),
+                carrier_generation=int(event.get("carrier_generation", 0) or 0),
+                carrier_protocol=event.get("carrier_protocol", ""),
+                carrier_paths=parse_flow_tuples(event.get("carrier_paths")),
                 event_seq=int(event.get("event_seq", 0) or 0),
                 leaf_proxy=event.get("leaf_proxy", ""),
                 leaf_proxy_type=event.get("leaf_proxy_type", ""),
@@ -360,6 +480,11 @@ def parse_udp_tracing_log(
                 proxy_addr=_clean_addr(event.get("proxy_addr", "")), out_src=_clean_addr(event.get("out_src", "")),
                 out_dst=_clean_addr(event.get("out_dst", "")), post_flow=parse_flow_tuple(event.get("post_flow")),
                 outer_conn_id=event.get("outer_conn_id", ""), event_seq=int(event.get("event_seq", 0) or 0),
+                carrier_id=event.get("carrier_id", "") or event.get("outer_conn_id", ""),
+                carrier_relation=event.get("carrier_relation", ""),
+                carrier_generation=int(event.get("carrier_generation", 0) or 0),
+                carrier_protocol=event.get("carrier_protocol", ""),
+                carrier_paths=parse_flow_tuples(event.get("carrier_paths")),
                 leaf_proxy=event.get("leaf_proxy", ""),
                 leaf_proxy_type=event.get("leaf_proxy_type", ""),
                 egress_outcome=event.get("egress_outcome", ""),

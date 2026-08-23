@@ -58,15 +58,22 @@ class ConnectionPcapResult:
     request_ids: tuple[str, ...]
     pre_proxy: PcapSideResult
     post_proxy: PcapSideResult
+    carrier_id: str | None = None
+    post_proxy_shared: bool = False
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "connection_id": self.connection_id,
             "protocol": self.protocol,
             "request_ids": list(self.request_ids),
             "pre_proxy": self.pre_proxy.to_dict(),
             "post_proxy": self.post_proxy.to_dict(),
         }
+        if self.carrier_id is not None:
+            payload["carrier_id"] = self.carrier_id
+        if self.post_proxy_shared:
+            payload["post_proxy_shared"] = True
+        return payload
 
 
 def build_tshark_filter(ft: FiveTupleData, direction: str) -> str:
@@ -370,6 +377,20 @@ def split_flows_v2(
             post_filter = _build_filter_from_addr(
                 flow.post_proxy_src, flow.post_proxy_dst,
             )
+        binding = flow.carrier_binding
+        carrier_id = (
+            binding.carrier_id
+            if binding is not None and binding.mode == "shared"
+            else ""
+        )
+        carrier_paths = tuple(binding.paths) if carrier_id else ()
+        carrier_path_filters = sorted({
+            build_flow_tuple_filter(path)
+            for path in carrier_paths
+            if path.complete and build_flow_tuple_filter(path)
+        })
+        if carrier_path_filters:
+            post_filter = " or ".join(f"({item})" for item in carrier_path_filters)
         request_ids = sorted({
             request_id
             for connection_flow in connection_flows
@@ -391,6 +412,9 @@ def split_flows_v2(
             "post_filter": post_filter,
             "post_recovery_status": post_recovery_status,
             "post_not_applicable": post_not_applicable,
+            "carrier_id": carrier_id,
+            "carrier_paths": carrier_paths,
+            "post_proxy_shared": bool(carrier_id),
             "request_ids": request_ids,
             "urls": urls,
             "primary_url": primary_url,
@@ -412,7 +436,23 @@ def split_flows_v2(
                 ),
                 entry["post_filter"],
             ),
+            carrier_id=entry["carrier_id"] or None,
+            post_proxy_shared=entry["post_proxy_shared"],
         ) for entry in entries]
+
+    carrier_filters: dict[str, set[str]] = {}
+    for entry in entries:
+        carrier_id = entry["carrier_id"]
+        if not carrier_id:
+            continue
+        filters = carrier_filters.setdefault(carrier_id, set())
+        filters.update(
+            build_flow_tuple_filter(path)
+            for path in entry["carrier_paths"]
+            if path.complete and build_flow_tuple_filter(path)
+        )
+        if entry["post_filter"]:
+            filters.add(entry["post_filter"])
 
     groups: dict[str, list[dict]] = {}
     for entry in entries:
@@ -421,6 +461,7 @@ def split_flows_v2(
         ).append(entry)
 
     outputs: list[ConnectionPcapResult] = []
+    carrier_outputs: dict[str, PcapSideResult] = {}
     for ordinal, resource_entries in enumerate(groups.values(), start=1):
         primary_url = resource_entries[0]["primary_url"]
         resource_dir = Path(output_base) / (
@@ -444,6 +485,19 @@ def split_flows_v2(
                     entry["post_filter"],
                     error_code="POST_FLOW_SOURCE_AMBIGUOUS",
                 )
+            elif entry["carrier_id"]:
+                carrier_id = entry["carrier_id"]
+                if carrier_id not in carrier_outputs:
+                    carrier_slug = _carrier_slug(carrier_id)
+                    display_filter = " or ".join(
+                        f"({item})" for item in sorted(carrier_filters[carrier_id])
+                    )
+                    carrier_outputs[carrier_id] = _extract_side(
+                        phys_pcap, display_filter,
+                        Path(output_base) / "carriers" / carrier_slug / "post.pcap",
+                        f"pcap-{carrier_slug}-post",
+                    )
+                post = carrier_outputs[carrier_id]
             else:
                 post = _extract_side(
                     phys_pcap, entry["post_filter"],
@@ -456,6 +510,8 @@ def split_flows_v2(
                 request_ids=tuple(entry["request_ids"]),
                 pre_proxy=pre,
                 post_proxy=post,
+                carrier_id=entry["carrier_id"] or None,
+                post_proxy_shared=entry["post_proxy_shared"],
             )))
 
         ranked = sorted(extracted, key=_resource_candidate_rank)
@@ -475,9 +531,13 @@ def split_flows_v2(
                     item.pre_proxy,
                     resource_dir / f"{prefix}pre.pcap",
                 ),
-                post_proxy=_rename_side(
-                    item.post_proxy,
-                    resource_dir / f"{prefix}post.pcap",
+                post_proxy=(
+                    item.post_proxy
+                    if item.post_proxy_shared
+                    else _rename_side(
+                        item.post_proxy,
+                        resource_dir / f"{prefix}post.pcap",
+                    )
                 ),
             )
         ordered = [finalized[entry["connection_id"]] for entry in resource_entries]
@@ -505,6 +565,8 @@ def split_flows_v2(
                     ),
                     "pre_status": item.pre_proxy.status,
                     "post_status": item.post_proxy.status,
+                    "carrier_id": item.carrier_id,
+                    "post_proxy_shared": item.post_proxy_shared,
                 }
                 for item in ordered
             ],
@@ -554,6 +616,15 @@ def _resource_key(url: str) -> str:
         parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
         urlencode(sorted(query)), "",
     ))
+
+
+def _carrier_slug(carrier_id: str) -> str:
+    normalized = "".join(
+        character if character.isalnum() or character in {"-", "_"} else "-"
+        for character in carrier_id
+    ).strip("-_")
+    normalized = normalized[:48] or "unknown"
+    return f"carrier-{normalized}"
 
 
 def _extract_side(

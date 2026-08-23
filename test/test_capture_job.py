@@ -78,6 +78,17 @@ class FakeMihomo:
         self.events.append("proxy:info")
         return []
 
+    def get_proxy_protocol_snapshot(self):
+        self.events.append("proxy:protocol")
+        return {
+            "mode": "strict_single",
+            "status": "single",
+            "protocols": ["hysteria2"],
+            "expected_protocol": "hysteria2",
+            "selections": [],
+        }
+
+
     def restore_tracing(self, state):
         self.events.append("tracing:restore")
 
@@ -161,7 +172,7 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert events == [
         "tracing:get",
         "tracing:enable",
-        "proxy:info",
+        "proxy:protocol",
         "start:tun",
         "start:physical",
         "launch:chrome",
@@ -187,6 +198,15 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     context_path = next((tmp_path / "logs").glob("capture_context_*.json"))
     context = json.loads(context_path.read_text(encoding="utf-8"))
     assert context["interfaces"] == {"tun": "Meta", "physical": "eth0"}
+    assert context["inbound"] == {
+        "mode": "tun",
+        "interface": "Meta",
+        "expected_core_name": "DEFAULT-TUN",
+    }
+    assert context["proxy_protocol"]["protocols"] == ["hysteria2"]
+    assert context["proxy_protocol"]["runtime_observation"] == {
+        "protocols": [], "proxy_dial_events": 0, "unknown_protocol_events": 0,
+        "consistency": "not_observed"}
     assert context["trace_boundary"]["source"] == "mihomo_barrier"
     assert context["trace_boundary"]["event_seq"] == 42
     assert context["trace_boundary_initial"]["event_seq"] == 42
@@ -632,3 +652,26 @@ def test_collector_close_failure_cannot_be_reported_as_capture_success(
         job.run()
     assert registry.closed
     assert progress[-1].state is JobState.FAILED
+
+
+def test_strict_capture_rejects_mixed_selected_proxy_protocols(tmp_path, monkeypatch):
+    events = []
+    job, registry, progress = _job(
+        tmp_path, monkeypatch, events,
+    )
+    class MixedProtocolMihomo(FakeMihomo):
+        def get_proxy_protocol_snapshot(self):
+            self.events.append("proxy:protocol")
+            return {
+                "mode": "strict_single",
+                "status": "mixed",
+                "protocols": ["hysteria2", "vless"],
+                "expected_protocol": "",
+                "selections": [],
+            }
+    job.mihomo = MixedProtocolMihomo(events)
+
+    with pytest.raises(RuntimeError, match="selected leaf protocols"):
+        job.run()
+    assert "start:tun" not in events
+    assert events[-1] == "tracing:restore"
