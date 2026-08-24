@@ -1,6 +1,6 @@
 # Development and Releases
 
-TrafficTracer Complete is developed from the `Complete` branch with pinned recursive submodules. The supported 1.0.8 release target is `x86_64-unknown-linux-gnu`.
+TrafficTracer Complete is developed from the `Complete` branch with pinned recursive submodules. The supported 1.0.9 release target is `x86_64-unknown-linux-gnu`.
 
 ## Clone and bootstrap
 
@@ -24,7 +24,7 @@ pnpm --dir components/clash-verge-rev install --frozen-lockfile
 make check-toolchain
 ```
 
-The toolchain check covers Python 3.12 or newer, Go, Rust/Cargo, pnpm, PyInstaller, Chrome/Chromium, tshark, and dumpcap. Release 1.0.8 is built and validated in the current Ubuntu 24.04 LTS environment.
+The toolchain check covers Python 3.12 or newer, Go, Rust/Cargo, pnpm, PyInstaller, Chrome/Chromium, tshark, and dumpcap. Release 1.0.9 is built and validated in the current Ubuntu 24.04 LTS environment.
 
 ## Component lock
 
@@ -131,7 +131,7 @@ make package-linux
 The wrapper rebuilds the core and Worker, prepares the pinned UI resources, invokes Tauri for Deb and AppImage, and verifies both bundles before atomically publishing the directory:
 
 ```text
-dist/packages/traffictracer-complete-v1.0.8-linux-x86_64/
+dist/packages/traffictracer-complete-v1.0.9-linux-x86_64/
 ```
 
 The output directory is never overwritten. Choose a new absolute path for another candidate:
@@ -172,17 +172,17 @@ Complete every applicable item in [the release checklist](release-checklist.md) 
 
 TrafficTracer product version is defined by `traffictracer.version.COMPLETE_VERSION` and must equal `product.version` in the component lock.
 
-The 1.0.8 Linux Deb retains the upstream package identity for upgrade compatibility while using bundle version:
+The 1.0.9 Linux Deb retains the upstream package identity for upgrade compatibility while using bundle version:
 
 ```text
-2.5.2+traffictracer.1.0.8
+2.5.2+traffictracer.1.0.9
 ```
 
 Public assets use product-centric names:
 
 ```text
-TrafficTracer-Complete_1.0.8_linux_x86_64.deb
-TrafficTracer-Complete_1.0.8_linux_x86_64.AppImage
+TrafficTracer-Complete_1.0.9_linux_x86_64.deb
+TrafficTracer-Complete_1.0.9_linux_x86_64.AppImage
 ```
 
 Create the annotated product tag only after the final artifacts pass smoke and release audit. Rewriting a released tag invalidates commit provenance and package metadata.

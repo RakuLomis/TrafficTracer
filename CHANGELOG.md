@@ -4,6 +4,35 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.9] - 2026-08-24
+
+### Added
+
+- Added explicit carrier protocol and carrier path evidence-source fields so
+  inferred fallback metadata remains distinguishable from lifecycle evidence.
+- Added an optional proxy selection group for strict single-protocol preflight.
+- Persisted the TrafficTracer environment, YAML target selection, current or
+  recent Job and Capture Group, selected capture folder, page, and Session.
+
+### Fixed
+
+- Accepted capture-tail attribution counters in the canonical PCAP index
+  contract instead of failing analysis after a successful capture.
+- Allowed failed analysis Sessions to be retried in place without recapturing
+  or replacing their raw evidence.
+- Reconciled a successful standalone reanalysis with its owning Capture Group,
+  preserving the correct Resume position for any remaining targets.
+- Scoped proxy-protocol preflight to an explicitly selected chain and retained
+  runtime trace evidence as the authoritative protocol observation.
+- Kept capture startup and runtime failures visible after navigation instead of
+  relying on a transient notification.
+
+### Validation
+
+- Passed all 552 TrafficTracer Python tests, 72 TrafficTracer Rust bridge tests,
+  33 focused frontend tests and TypeScript checks, strict frontend lint, and the
+  Mihomo tracer package tests.
+
 ## [1.0.8] - 2026-08-23
 
 ### Added

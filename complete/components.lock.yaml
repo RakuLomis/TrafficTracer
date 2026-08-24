@@ -1,7 +1,7 @@
 schema_version: 1
 product:
   name: TrafficTracer Complete
-  version: 1.0.8
+  version: 1.0.9
   branch: Complete
   platforms:
     - x86_64-unknown-linux-gnu
@@ -10,12 +10,12 @@ components:
     path: components/mihomo
     repository: https://github.com/RakuLomis/mihomo.git
     branch: TrafficTracer
-    commit: 0d3a988152dc6379dec0c543958fe3d2bb7d5214
+    commit: c1830fdca3b023b6b14ffc421a8f83f02ffa77a0
   clash_verge_rev:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
     branch: feat/traffic-tracer
-    commit: d46b9592161e7dc6f2648eaa79781db81a2621a7
+    commit: 7560257ded4ffc6afd7bac8ba273f174dfa2491b
   clash_verge_service:
     repository: https://github.com/clash-verge-rev/clash-verge-service-ipc
     tag: v2.6.1

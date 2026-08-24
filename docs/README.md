@@ -19,7 +19,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 
 ## Release information
 
-- [1.0.8 release notes](releases/v1.0.8.md)
+- [1.0.9 release notes](releases/v1.0.9.md)
 - [1.0.7 release notes](releases/v1.0.7.md)
 - [1.0.4 release notes](releases/v1.0.4.md)
 - [1.0.1 release notes](releases/v1.0.1.md)
@@ -38,4 +38,4 @@ The documentation follows these rules:
 5. Runtime behavior takes precedence over historical design notes. Obsolete implementation plans are not kept in the active documentation tree.
 6. Examples must not contain real proxy credentials, subscription URLs, controller secrets, captures, or user-specific paths.
 
-Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.8 on Linux x86-64. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.
+Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.9 on Linux x86-64. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.
