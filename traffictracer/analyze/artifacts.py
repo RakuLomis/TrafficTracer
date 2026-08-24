@@ -287,8 +287,15 @@ def _core_coverage(
             record, local_endpoint=record.get(id_field) in local_ids,
         )
         counts[disposition] += 1
-    if counts["unexpected_missing"]:
-        reasons["missing_post_flow"] += counts["unexpected_missing"]
+        if disposition == "unexpected_missing" and _capture_tail_unattributed(record):
+            counts["capture_tail_unattributed"] += 1
+    unexplained_missing = (
+        counts["unexpected_missing"] - counts["capture_tail_unattributed"]
+    )
+    if unexplained_missing:
+        reasons["missing_post_flow"] += unexplained_missing
+    if counts["capture_tail_unattributed"]:
+        reasons["capture_tail_unattributed"] += counts["capture_tail_unattributed"]
     if counts["failed_before_socket"]:
         reasons["failed_before_socket"] += counts["failed_before_socket"]
     if counts["local_not_applicable"]:
@@ -303,6 +310,8 @@ def _core_coverage(
         "local_not_applicable": counts["local_not_applicable"],
         "unexpected_missing": counts["unexpected_missing"],
     }
+    if counts["capture_tail_unattributed"]:
+        coverage["capture_tail_unattributed"] = counts["capture_tail_unattributed"]
     # Backward-compatible aliases retained for older UI readers.
     if counts["local_not_applicable"]:
         coverage["not_applicable_local_endpoint"] = counts["local_not_applicable"]
@@ -529,6 +538,9 @@ def _capture_protocol_summary(session: Path) -> dict:
         "mode": latest.get("mode", ""),
         "expected_protocol": latest.get("expected_protocol", ""),
         "selected_protocols": latest.get("protocols", []),
+        "selection_group": latest.get("selection_group", ""),
+        "selected_scope": latest.get("selected_scope", {}),
+        "inventory_protocols": latest.get("inventory_protocols", []),
         "observed_protocols": runtime.get("protocols", []),
         "consistency": runtime.get("consistency", "not_observed"),
         "proxy_dial_events": runtime.get("proxy_dial_events", 0),
@@ -555,6 +567,7 @@ def _capture_inbound_summary(session: Path, items: list[dict]) -> dict:
         "consistency": (
             "not_observed" if not observed
             else "match" if mismatched == 0 and loopback == 0
+            else "match_with_local" if mismatched == 0
             else "mismatch"
         ),
     })
@@ -835,6 +848,19 @@ def _network(value: str) -> str:
     raise ValueError(f"unsupported normalized flow network: {value}")
 
 
+def _capture_tail_unattributed(record: dict) -> bool:
+    if record.get("post_flow_disposition") != "unexpected_missing":
+        return False
+    if record.get("attribution_scope") != "capture_unattributed":
+        return False
+    if record.get("request_ids") or record.get("urls"):
+        return False
+    terminal = record.get("terminal")
+    return not isinstance(terminal, dict) or not any(
+        terminal.get(field) for field in ("status", "stage", "error")
+    )
+
+
 def _warnings(
     items: list[dict],
     pre_counts: Counter[str],
@@ -864,12 +890,21 @@ def _warnings(
             severity="info",
         ))
     dispositions = Counter(item["post_flow_disposition"] for item in items)
-    if dispositions["unexpected_missing"]:
+    tail_incomplete = sum(_capture_tail_unattributed(item) for item in items)
+    unexplained_missing = dispositions["unexpected_missing"] - tail_incomplete
+    if unexplained_missing:
         warnings.append(_warning(
             "POST_FLOW_UNAVAILABLE",
-            dispositions["unexpected_missing"],
+            unexplained_missing,
             "Some capture-global logical flows have no explained post-proxy outcome.",
             scope="capture_global",
+        ))
+    if tail_incomplete:
+        warnings.append(_warning(
+            "CAPTURE_TAIL_UNATTRIBUTED",
+            tail_incomplete,
+            "Unattributed background flows remained incomplete at the trace boundary.",
+            scope="capture_global", severity="info",
         ))
     if dispositions["explicit_no_socket"]:
         warnings.append(_warning(

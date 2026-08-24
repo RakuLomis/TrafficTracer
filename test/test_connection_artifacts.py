@@ -2,6 +2,8 @@
 
 import json
 
+import traffictracer.analyze.connection_artifacts as connection_artifacts_module
+
 from traffictracer.analyze.connection_artifacts import (
     persist_connection_artifacts,
     persist_pcap_index,
@@ -210,6 +212,49 @@ def test_pcap_index_validates_published_path_while_writing_to_staging(tmp_path):
     )
 
     payload = json.loads(index_path.read_text(encoding="utf-8"))
+
+
+def test_pcap_index_persists_capture_tail_coverage_through_contract(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(
+        connection_artifacts_module,
+        "core_flow_records",
+        lambda _session, _session_id: [{
+            "conn_id": "mihomo-tail",
+            "post_flow": None,
+            "post_flow_disposition": "unexpected_missing",
+            "shared": False,
+            "attribution_scope": "capture_unattributed",
+            "request_ids": [],
+            "urls": [],
+            "terminal": None,
+        }],
+    )
+
+    results = tmp_path / "results"
+    results.mkdir()
+    for name in ("request-index-v2.json", "connection-index-v2.json"):
+        (results / name).write_text(
+            json.dumps({"items": []}),
+            encoding="utf-8",
+        )
+
+    index_path = persist_pcap_index(
+        tmp_path,
+        SESSION_ID,
+        "78fdab68-4e5d-4b67-9910-33da00a2632a",
+        "unique_connections",
+        [],
+    )
+
+    coverage = json.loads(index_path.read_text(encoding="utf-8"))["coverage"]
+    core = coverage["capture_global"]["core_logical_flows"]
+    assert core["capture_tail_unattributed"] == 1
+    assert core["unexpected_missing"] == 1
+    assert coverage["capture_global"]["unmatched_reasons"] == {
+        "capture_tail_unattributed": 1,
+    }
 
 def test_cached_request_is_not_counted_as_missing_transport(tmp_path):
     result = VisitCorrelation(

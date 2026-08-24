@@ -152,6 +152,40 @@ def test_analysis_failure_preserves_raw_artifact_and_records_manifest_error(
     assert events[-1].state is JobState.FAILED
 
 
+def test_failed_analysis_can_retry_in_place_without_recapturing(
+    tmp_path, monkeypatch
+):
+    import traffictracer.analyze.job as module
+
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    raw = session_dir / "logs" / "netlog_example.com_all_1.json"
+    raw.write_text("original raw capture", encoding="utf-8")
+    real_run_analysis = module.run_analysis
+    monkeypatch.setattr(
+        module,
+        "run_analysis",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("invalid generated index")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="invalid generated index"):
+        _job(tmp_path, session_dir, []).run()
+
+    failed = store.get(manifest.session_id)
+    assert failed.error is not None
+    assert failed.error.code == "ANALYSIS_FAILED"
+
+    monkeypatch.setattr(module, "run_analysis", real_run_analysis)
+    result = _job(tmp_path, session_dir, [], overwrite=True).run()
+
+    assert result.state is JobState.COMPLETED
+    completed = store.get(manifest.session_id)
+    assert completed.state is JobState.COMPLETED
+    assert completed.error is None
+    assert completed.session_dir == failed.session_dir
+    assert raw.read_text(encoding="utf-8") == "original raw capture"
+
+
 def test_analysis_failure_with_empty_exception_has_contract_safe_message(
     tmp_path, monkeypatch
 ):

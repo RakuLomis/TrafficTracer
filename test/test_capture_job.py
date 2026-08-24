@@ -206,6 +206,7 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert context["proxy_protocol"]["protocols"] == ["hysteria2"]
     assert context["proxy_protocol"]["runtime_observation"] == {
         "protocols": [], "proxy_dial_events": 0, "unknown_protocol_events": 0,
+        "validation_source": "bounded_mihomo_trace",
         "consistency": "not_observed"}
     assert context["trace_boundary"]["source"] == "mihomo_barrier"
     assert context["trace_boundary"]["event_seq"] == 42
@@ -654,10 +655,38 @@ def test_collector_close_failure_cannot_be_reported_as_capture_success(
     assert progress[-1].state is JobState.FAILED
 
 
-def test_strict_capture_rejects_mixed_selected_proxy_protocols(tmp_path, monkeypatch):
+def test_strict_capture_rejects_mixed_runtime_trace(tmp_path, monkeypatch):
+    events = []
+    job, registry, progress = _job(tmp_path, monkeypatch, events)
+    from dataclasses import replace
+    job.spec = replace(
+        job.spec, options=replace(job.spec.options, proxy_protocol_mode="strict_single"),
+    )
+    import traffictracer.capture.job as module
+    monkeypatch.setattr(
+        module,
+        "observed_proxy_protocols",
+        lambda *args, **kwargs: {
+            "protocols": ["hysteria2", "vless"],
+            "proxy_dial_events": 2,
+            "unknown_protocol_events": 0,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="failed from Mihomo trace"):
+        job.run()
+    assert "start:tun" in events
+    assert events[-1] == "tracing:restore"
+
+
+def test_strict_capture_does_not_reject_mixed_inventory_before_trace(tmp_path, monkeypatch):
     events = []
     job, registry, progress = _job(
         tmp_path, monkeypatch, events,
+    )
+    from dataclasses import replace
+    job.spec = replace(
+        job.spec, options=replace(job.spec.options, proxy_protocol_mode="strict_single"),
     )
     class MixedProtocolMihomo(FakeMihomo):
         def get_proxy_protocol_snapshot(self):
@@ -671,7 +700,7 @@ def test_strict_capture_rejects_mixed_selected_proxy_protocols(tmp_path, monkeyp
             }
     job.mihomo = MixedProtocolMihomo(events)
 
-    with pytest.raises(RuntimeError, match="selected leaf protocols"):
-        job.run()
-    assert "start:tun" not in events
+    result = job.run()
+    assert result.state is JobState.COMPLETED
+    assert "start:tun" in events
     assert events[-1] == "tracing:restore"

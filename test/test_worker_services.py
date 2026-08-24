@@ -205,6 +205,38 @@ def test_capture_failure_records_partial_raw_artifacts_and_non_empty_error(
     ]
 
 
+def test_batch_start_reports_unresolved_mixed_inventory_before_acceptance(tmp_path, monkeypatch):
+    import traffictracer.worker.services as module
+
+    config = tmp_path / "mixed-targets.yaml"
+    config.write_text("sites:\n  - domain: example.test\n    url: https://example.test/\n")
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda message: None, shutdown_event=Event(),
+    )
+    preview = services.load_targets({"path": str(config)})
+    payload = json.loads(BATCH_FIXTURE.read_text(encoding="utf-8"))
+    payload.update({
+        "config_path": preview["config_path"],
+        "config_sha256": preview["sha256"],
+        "targets": preview["targets"],
+        "output_root": str(services.store.output_root),
+    })
+    monkeypatch.setattr(
+        module.MihomoManager,
+        "get_proxy_protocol_snapshot",
+        lambda self: {
+            "protocols": [],
+            "inventory_protocols": ["hysteria2", "vless"],
+            "status": "unscoped",
+            "selections": [],
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="cannot infer the active selection chain"):
+        services.batch_start({"job": payload})
+    assert services.batches.scan().batches == ()
+
+
 def test_internal_batch_orchestration_creates_three_serial_analyzed_sessions(
     tmp_path, monkeypatch
 ):

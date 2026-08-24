@@ -54,7 +54,8 @@
             "pcap_split_mode": { "enum": ["none", "unique_connections"] },
             "cache_mode": { "enum": ["cold", "warm"] },
             "proxy_protocol_mode": { "enum": ["strict_single", "observe"] },
-            "expected_proxy_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" }
+            "expected_proxy_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" },
+            "proxy_selection_group": { "type": "string" }
           }
         }
       }

@@ -86,7 +86,8 @@
         "explicit_no_socket": { "type": "integer", "minimum": 0 },
         "failed_before_socket": { "type": "integer", "minimum": 0 },
         "local_not_applicable": { "type": "integer", "minimum": 0 },
-        "unexpected_missing": { "type": "integer", "minimum": 0 }
+        "unexpected_missing": { "type": "integer", "minimum": 0 },
+        "capture_tail_unattributed": { "type": "integer", "minimum": 0 }
       }
     },
     "reasonCounts": {

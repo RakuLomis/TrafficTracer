@@ -173,6 +173,9 @@ class AnalysisJob:
         if manifest.state is JobState.CAPTURING:
             manifest = manifest.transition(JobState.ANALYZING)
             store.save(manifest)
+        elif manifest.state is JobState.FAILED and self.spec.options.overwrite:
+            manifest = manifest.begin_analysis_retry()
+            store.save(manifest)
         elif manifest.state is JobState.COMPLETED and self.spec.options.overwrite:
             pass
         elif manifest.state is not JobState.ANALYZING:

@@ -268,3 +268,24 @@ def test_parse_carrier_lifecycle_and_binding_events(tmp_path):
     ]
     assert records[1].logical_conn_id == "tcp-1"
     assert records[1].physical_paths[0].shared is True
+
+
+def test_legacy_binding_recovers_protocol_and_path_from_explicit_evidence(tmp_path):
+    from traffictracer.analyze.mihomo_log import parse_carrier_events
+    post_flow = {
+        "network": "tcp", "src_ip": "192.0.2.10", "src_port": 55000,
+        "dst_ip": "203.0.113.20", "dst_port": 443, "complete": True,
+        "scope": "physical", "source": "dialer_socket", "shared": True,
+    }
+    path = tmp_path / "legacy-carrier.jsonl"
+    path.write_text(json.dumps({
+        "type": "logical_carrier_bind", "event_seq": 1,
+        "carrier_id": "carrier-legacy", "logical_conn_id": "tcp-1",
+        "leaf_proxy_type": "Hysteria2", "post_flow": post_flow,
+    }) + "\n")
+
+    record = parse_carrier_events(str(path))[0]
+    assert record.protocol == "hysteria2"
+    assert len(record.physical_paths) == 1
+    assert record.physical_paths[0].src_ip == "192.0.2.10"
+    assert record.physical_paths[0].dst_ip == "203.0.113.20"

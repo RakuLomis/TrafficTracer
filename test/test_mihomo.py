@@ -162,10 +162,18 @@ def test_proxy_info_resolves_nested_groups_to_protocol_leaf():
         "automatic", "region", "hy2-node",
     ]
 
-    snapshot = mgr.get_proxy_protocol_snapshot()
+    inventory = mgr.get_proxy_protocol_snapshot()
+    assert inventory["status"] == "unscoped"
+    assert inventory["protocols"] == []
+    assert inventory["inventory_protocols"] == ["hysteria2"]
+
+    snapshot = mgr.get_proxy_protocol_snapshot("automatic")
     assert snapshot["status"] == "single"
     assert snapshot["protocols"] == ["hysteria2"]
     assert snapshot["expected_protocol"] == "hysteria2"
+    assert snapshot["selected_scope"]["selection_chain"] == [
+        "automatic", "region", "hy2-node",
+    ]
 
 
 def test_proxy_protocol_snapshot_reports_mixed_selected_leaf_types():
@@ -180,10 +188,15 @@ def test_proxy_protocol_snapshot_reports_mixed_selected_leaf_types():
     }
     mgr._api_request = lambda method, path: {"proxies": proxies}
 
-    snapshot = mgr.get_proxy_protocol_snapshot()
-    assert snapshot["status"] == "mixed"
-    assert snapshot["protocols"] == ["hysteria2", "vless"]
-    assert snapshot["expected_protocol"] == ""
+    inventory = mgr.get_proxy_protocol_snapshot()
+    assert inventory["status"] == "unscoped"
+    assert inventory["protocols"] == []
+    assert inventory["inventory_protocols"] == ["hysteria2", "vless"]
+
+    snapshot = mgr.get_proxy_protocol_snapshot("group-a")
+    assert snapshot["status"] == "single"
+    assert snapshot["protocols"] == ["hysteria2"]
+    assert snapshot["inventory_protocols"] == ["hysteria2", "vless"]
 
 
 def test_proxy_info_stops_at_group_cycle():

@@ -151,6 +151,12 @@ class SerialBatchJob:
                         ),
                     )
                     self._save(manifest)
+                    if (
+                        str(code) == "PROXY_PROTOCOL_INVARIANT_FAILED"
+                        and manifest.state is BatchState.RUNNING
+                    ):
+                        manifest = manifest.stop(BatchState.FAILED)
+                        self._save(manifest)
                     if manifest.state is BatchState.FAILED:
                         return self._result(manifest)
                     continue

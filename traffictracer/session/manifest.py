@@ -255,6 +255,34 @@ class SessionManifest:
         result.validate()
         return result
 
+    def begin_analysis_retry(
+        self,
+        *,
+        now: datetime | None = None,
+    ) -> SessionManifest:
+        """Reopen only a failed v2 analysis while preserving captured evidence."""
+        self._require_writable()
+        if self.state is not JobState.FAILED or self.error is None:
+            raise SessionTransitionError(
+                "analysis retry requires a failed Session"
+            )
+        if self.error.code not in {
+            "ANALYSIS_FAILED",
+            "ANALYSIS_CONSISTENCY_FAILED",
+        }:
+            raise SessionTransitionError(
+                "only an analysis failure can be retried"
+            )
+        result = replace(
+            self,
+            state=JobState.ANALYZING,
+            updated_at=self._updated_time(now),
+            completed_at=None,
+            error=None,
+        )
+        result.validate()
+        return result
+
     def with_artifact(self, artifact: Artifact, *, now: datetime | None = None) -> SessionManifest:
         self._require_writable()
         result = replace(

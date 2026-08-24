@@ -104,6 +104,42 @@ def test_failed_batch_resume_retries_failed_snapshot_position():
     assert resumed.start_child(0).current_index == 0
 
 
+def test_successful_reanalysis_reconciles_failed_child_without_recapture():
+    session_id = "5027aee9-c6e4-41de-8625-7ea0869a3307"
+    running = BatchManifest.create(_spec()).begin().start_child(0)
+    failed = running.finish_child(
+        BatchChildState.FAILED,
+        session_id=session_id,
+        error=BatchError("BATCH_CHILD_FAILED", "invalid generated index"),
+    )
+
+    reconciled = failed.reconcile_analyzed_session(
+        session_id,
+        analysis_error_code="ANALYSIS_FAILED",
+    )
+
+    assert reconciled.state is BatchState.INTERRUPTED
+    assert reconciled.children[0].state is BatchChildState.COMPLETED
+    assert reconciled.children[0].error is None
+    assert reconciled.resume.next_index == 1
+
+
+def test_analysis_reconciliation_rejects_non_analysis_failure():
+    session_id = "5027aee9-c6e4-41de-8625-7ea0869a3307"
+    running = BatchManifest.create(_spec()).begin().start_child(0)
+    failed = running.finish_child(
+        BatchChildState.FAILED,
+        session_id=session_id,
+        error=BatchError("BATCH_CHILD_FAILED", "capture failed"),
+    )
+
+    with pytest.raises(ValueError, match="retryable analysis failure"):
+        failed.reconcile_analyzed_session(
+            session_id,
+            analysis_error_code="CAPTURE_FAILED",
+        )
+
+
 def test_manifest_persistence_recovers_without_ui_memory(tmp_path):
     manifest = BatchManifest.create(_spec()).begin().start_child(0)
     path = manifest.persist(tmp_path / "batch")

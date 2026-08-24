@@ -196,6 +196,27 @@ def test_non_fail_fast_continues_serially_but_parent_finishes_failed(tmp_path):
     assert BatchManifest.load(job.manifest_path).state is BatchState.FAILED
 
 
+def test_protocol_invariant_stops_non_fail_fast_batch(tmp_path):
+    spec = _spec(tmp_path, fail_fast=False)
+    calls = []
+
+    class ProtocolMismatch(RuntimeError):
+        code = "PROXY_PROTOCOL_INVARIANT_FAILED"
+
+    def factory(child, progress, token):
+        calls.append(child.target_source.target_index)
+        return _Runnable(
+            lambda: (_ for _ in ()).throw(ProtocolMismatch("mixed runtime protocols"))
+        )
+
+    job, result, _ = _execute(spec, factory)
+    manifest = BatchManifest.load(job.manifest_path)
+    assert len(calls) == 1
+    assert result.state is JobState.FAILED
+    assert manifest.state is BatchState.FAILED
+    assert manifest.children[0].error.code == "PROXY_PROTOCOL_INVARIANT_FAILED"
+
+
 def test_cancel_waits_for_current_child_checkpoint_and_never_starts_next(tmp_path):
     spec = _spec(tmp_path)
     token = CancellationToken()

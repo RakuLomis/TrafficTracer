@@ -63,10 +63,13 @@
         },
         "proxy_protocol_mode": {
           "enum": ["strict_single", "observe"],
-          "default": "strict_single"
+          "default": "observe"
         },
         "expected_proxy_protocol": {
           "type": "string", "pattern": "^[A-Za-z0-9_-]*$"
+        },
+        "proxy_selection_group": {
+          "type": "string"
         }
       }
     },

@@ -1,6 +1,7 @@
 """Tests for persisted UI-ready normalized analysis artifacts."""
 
 import json
+from collections import Counter
 
 from traffictracer.analyze.artifacts import (
     _browser_request_failure_summary,
@@ -12,6 +13,7 @@ from traffictracer.analyze.artifacts import (
     _mapping_error_class,
     _mapping_targets_loopback,
     _quality_warnings,
+    _warnings,
     analysis_quality,
     _target_document_non_network,
     layered_coverage,
@@ -209,6 +211,21 @@ def test_layered_coverage_conserves_each_denominator_for_partial_trace():
         "no_candidate": 1,
         "no_transport_connection": 1,
     }
+
+
+def test_unattributed_capture_tail_is_informational_not_correlation_loss():
+    items = [{
+        "shared": False,
+        "post_flow_disposition": "unexpected_missing",
+        "attribution_scope": "capture_unattributed",
+        "request_ids": [],
+        "terminal": None,
+    }]
+    warnings = _warnings(items, Counter(), set(), set())
+    assert [warning["code"] for warning in warnings] == [
+        "CAPTURE_TAIL_UNATTRIBUTED",
+    ]
+    assert warnings[0]["severity"] == "info"
 
 
 def test_summary_is_recomputable_from_v2_indexes(tmp_path):
@@ -896,3 +913,13 @@ def test_capture_context_summaries_report_protocol_and_inbound_mismatch(tmp_path
     assert inbound["mismatched_flows"] == 1
     assert inbound["loopback_flows"] == 1
     assert inbound["consistency"] == "mismatch"
+
+    local_on_expected_tun = _capture_inbound_summary(tmp_path, [{
+        "inbound_name": "DEFAULT-TUN",
+        "pre_flow": _flow(
+            "tcp", "127.0.0.1", 40000, "127.0.0.1", 7890, "pre_proxy",
+        ),
+    }])
+    assert local_on_expected_tun["mismatched_flows"] == 0
+    assert local_on_expected_tun["loopback_flows"] == 1
+    assert local_on_expected_tun["consistency"] == "match_with_local"

@@ -484,6 +484,67 @@ class BatchManifest:
             updated_at=_utc(now),
         )
 
+    def reconcile_analyzed_session(
+        self,
+        session_id: str,
+        *,
+        analysis_error_code: str,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        """Mark one failed analysis child complete without recapturing it."""
+        if self.state is not BatchState.FAILED:
+            raise ValueError("analysis reconciliation requires a failed batch")
+        matching = [
+            position
+            for position, child in enumerate(self.children)
+            if child.session_id == session_id
+        ]
+        if len(matching) != 1:
+            raise ValueError(
+                "analysis Session must identify exactly one batch child"
+            )
+        position = matching[0]
+        child = self.children[position]
+        if (
+            analysis_error_code
+            not in {
+                "ANALYSIS_FAILED",
+                "ANALYSIS_CONSISTENCY_FAILED",
+            }
+            or child.state is not BatchChildState.FAILED
+        ):
+            raise ValueError(
+                "batch child must contain a retryable analysis failure"
+            )
+        children = list(self.children)
+        children[position] = replace(
+            child,
+            state=BatchChildState.COMPLETED,
+            error=None,
+        )
+        next_index = next(
+            (
+                index
+                for index, candidate in enumerate(children)
+                if candidate.state is not BatchChildState.COMPLETED
+            ),
+            len(children),
+        )
+        state = (
+            BatchState.COMPLETED
+            if next_index == len(children)
+            else BatchState.INTERRUPTED
+        )
+        return replace(
+            self,
+            state=state,
+            stage=BatchStage.FINISHED,
+            current_index=None,
+            children=tuple(children),
+            resume=replace(self.resume, next_index=next_index),
+            updated_at=_utc(now),
+        )
+
     def request_cancel(self, *, now: datetime | None = None) -> "BatchManifest":
         if self.state.terminal:
             return self

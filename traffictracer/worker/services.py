@@ -359,6 +359,7 @@ class WorkerServices:
         spec = BatchJobSpec.from_dict(payload)
         self._require_output_root(spec.output_root)
         spec.verify_config_sha256()
+        spec = self._freeze_batch_proxy_protocol(spec)
         return self.jobs.start_batch({"job": spec.to_dict()})
 
     def batch_status(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -536,7 +537,14 @@ class WorkerServices:
             raise WorkerMethodError(
                 "SESSION_NOT_FOUND", "Analysis Session path does not match its manifest."
             )
-        return AnalysisJob(spec, progress=progress, cancellation=cancellation)
+        return _PersistentAnalysisRunner(
+            AnalysisJob(spec, progress=progress, cancellation=cancellation),
+            manifest.session_id,
+            self.batches,
+            (
+                manifest.error.code if manifest.error is not None else None
+            ),
+        )
 
     def _packet_split_factory(
         self,
@@ -588,12 +596,33 @@ class WorkerServices:
             spec.controller.endpoint,
             spec.controller.secret or "",
         )
-        snapshot = manager.get_proxy_protocol_snapshot()
+        snapshot = (
+            manager.get_proxy_protocol_snapshot(options.proxy_selection_group)
+            if options.proxy_selection_group
+            else manager.get_proxy_protocol_snapshot()
+        )
         protocols = list(snapshot.get("protocols", []))
-        if len(protocols) > 1:
+        inventory_protocols = list(snapshot.get("inventory_protocols", []))
+        if (
+            not options.proxy_selection_group
+            and not protocols
+            and len(inventory_protocols) == 1
+        ):
+            protocols = inventory_protocols
+        if (
+            not options.proxy_selection_group
+            and not protocols
+            and len(inventory_protocols) > 1
+        ):
             raise RuntimeError(
-                "Proxy protocol invariant failed at capture-group creation: "
-                + ", ".join(sorted(protocols))
+                "Strict single protocol cannot infer the active selection chain "
+                "from a mixed configuration inventory; set "
+                "expected_proxy_protocol or proxy_selection_group, or use observe"
+            )
+        if options.proxy_selection_group and len(protocols) != 1:
+            raise RuntimeError(
+                "Proxy protocol selection group did not resolve to one proxy "
+                f"protocol: {options.proxy_selection_group}"
             )
         if len(protocols) != 1:
             return spec
@@ -619,6 +648,42 @@ class WorkerServices:
             raise WorkerMethodError(
                 "INVALID_PARAMS", "Job output_root must match the Worker Session root."
             )
+
+
+class _PersistentAnalysisRunner:
+    """Reconcile a successful standalone reanalysis with its owning batch."""
+
+    def __init__(
+        self,
+        analysis: AnalysisJob,
+        session_id: str,
+        batches: BatchStore,
+        analysis_error_code: str | None,
+    ) -> None:
+        self.analysis = analysis
+        self.session_id = session_id
+        self.batches = batches
+        self.analysis_error_code = analysis_error_code
+
+    def run(self) -> CaptureJobResult:
+        result = self.analysis.run()
+        if self.analysis_error_code is None:
+            return result
+        for batch in self.batches.scan().batches:
+            if not any(
+                child.session_id == self.session_id
+                for child in batch.children
+            ):
+                continue
+            try:
+                reconciled = batch.reconcile_analyzed_session(
+                    self.session_id,
+                    analysis_error_code=self.analysis_error_code,
+                )
+            except ValueError:
+                continue
+            self.batches.save(reconciled)
+        return result
 
 
 class _PersistentCaptureRunner:

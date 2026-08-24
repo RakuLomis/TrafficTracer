@@ -234,23 +234,40 @@ class MihomoManager:
             })
         return result
 
-    def get_proxy_protocol_snapshot(self) -> dict:
+    def get_proxy_protocol_snapshot(self, selection_group: str = "") -> dict:
         selections = self.get_proxy_info()
-        protocols = sorted({
+        inventory_protocols = sorted({
             _normalized_proxy_type(row.get("leaf_type", ""))
             for row in selections
             if _normalized_proxy_type(row.get("leaf_type", ""))
             not in _PROXY_GROUP_TYPES | _NON_PROXY_LEAF_TYPES | {""}
         })
+        selected = next(
+            (row for row in selections if row.get("group") == selection_group),
+            None,
+        ) if selection_group else None
+        selected_protocol = _normalized_proxy_type(
+            selected.get("leaf_type", "") if selected else ""
+        )
+        protocols = (
+            [selected_protocol]
+            if selected_protocol
+            and selected_protocol not in _PROXY_GROUP_TYPES | _NON_PROXY_LEAF_TYPES
+            else []
+        )
         return {
             "mode": "strict_single",
             "status": (
-                "single" if len(protocols) == 1
-                else "no_proxy" if not protocols
-                else "mixed"
+                "single" if protocols
+                else "selection_not_found" if selection_group and selected is None
+                else "no_proxy" if selection_group
+                else "unscoped"
             ),
             "protocols": protocols,
             "expected_protocol": protocols[0] if len(protocols) == 1 else "",
+            "selection_group": selection_group,
+            "selected_scope": selected or {},
+            "inventory_protocols": inventory_protocols,
             "selections": selections,
         }
 

@@ -65,8 +65,9 @@ class CaptureJobOptions:
     headless: bool = False
     pcap_split_mode: str = "unique_connections"
     cache_mode: str = "cold"
-    proxy_protocol_mode: str = "strict_single"
+    proxy_protocol_mode: str = "observe"
     expected_proxy_protocol: str = ""
+    proxy_selection_group: str = ""
 
     def __post_init__(self) -> None:
         if self.pcap_split_mode not in {"none", "unique_connections"}:
@@ -84,9 +85,11 @@ class CaptureJobOptions:
         ).replace("_", "")
         if self.expected_proxy_protocol and not normalized_protocol.isalnum():
             raise ValueError("expected_proxy_protocol must be a protocol name")
+        if any(ord(char) < 32 for char in self.proxy_selection_group):
+            raise ValueError("proxy_selection_group must not contain control characters")
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "capture_packets": self.capture_packets,
             "collect_cdp": self.collect_cdp,
             "collect_netlog": self.collect_netlog,
@@ -97,6 +100,9 @@ class CaptureJobOptions:
             "proxy_protocol_mode": self.proxy_protocol_mode,
             "expected_proxy_protocol": self.expected_proxy_protocol,
         }
+        if self.proxy_selection_group:
+            payload["proxy_selection_group"] = self.proxy_selection_group
+        return payload
 
 
 @dataclass(frozen=True)
@@ -227,9 +233,10 @@ class CaptureJobSpec:
                 # Missing means a job written before cache policy existed.
                 cache_mode=options.get("cache_mode", "warm"),
                 proxy_protocol_mode=options.get(
-                    "proxy_protocol_mode", "strict_single",
+                    "proxy_protocol_mode", "observe",
                 ),
                 expected_proxy_protocol=options.get("expected_proxy_protocol", ""),
+                proxy_selection_group=options.get("proxy_selection_group", ""),
             ),
             wait_load_timeout=data.get("wait_load_timeout", 30),
             run_label=data.get("run_label", data["network"]),

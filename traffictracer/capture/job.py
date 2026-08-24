@@ -37,6 +37,10 @@ from .quiescence import verify_chrome_quiescence
 from .tshark import start_packet_capture, stop_packet_capture
 
 
+class ProxyProtocolInvariantError(RuntimeError):
+    code = "PROXY_PROTOCOL_INVARIANT_FAILED"
+
+
 @dataclass(frozen=True)
 class CaptureSessionContext:
     session_id: str
@@ -152,26 +156,29 @@ class CaptureJob:
             tracing_configured = True
             self._record(paths["mihomo_trace"])
 
-            protocol_snapshot = self.mihomo.get_proxy_protocol_snapshot()
+            protocol_snapshot = (
+                self.mihomo.get_proxy_protocol_snapshot(
+                    self.spec.options.proxy_selection_group,
+                )
+                if self.spec.options.proxy_selection_group
+                else self.mihomo.get_proxy_protocol_snapshot()
+            )
             protocol_snapshot["mode"] = self.spec.options.proxy_protocol_mode
             expected = self.spec.options.expected_proxy_protocol.lower().replace(
                 "-", ""
             ).replace("_", "")
             if expected:
                 protocol_snapshot["expected_protocol"] = expected
-            observed = set(protocol_snapshot["protocols"])
+            selected = set(protocol_snapshot["protocols"])
             if (
                 self.spec.options.proxy_protocol_mode == "strict_single"
-                and len(observed) > 1
+                and expected
+                and selected
+                and selected != {expected}
             ):
-                raise RuntimeError(
-                    "Proxy protocol invariant failed: selected leaf protocols are "
-                    + ", ".join(sorted(observed))
-                )
-            if expected and observed and observed != {expected}:
-                raise RuntimeError(
-                    f"Proxy protocol invariant failed: expected {expected}, "
-                    f"observed {', '.join(sorted(observed))}"
+                raise ProxyProtocolInvariantError(
+                    f"Proxy protocol selection mismatch: expected {expected}, "
+                    f"selected {', '.join(sorted(selected))}"
                 )
             proxy_info = protocol_snapshot["selections"]
             capture_context["proxy_protocol"] = protocol_snapshot
@@ -370,9 +377,25 @@ class CaptureJob:
                     consistency = "consistent"
                 else:
                     consistency = "mixed"
+                observation["validation_source"] = "bounded_mihomo_trace"
                 observation["consistency"] = consistency
                 protocol_context["runtime_observation"] = observation
                 write_json_atomic(capture_context_path, capture_context)
+                strict_mismatch = (
+                    self.spec.options.proxy_protocol_mode == "strict_single"
+                    and event_count > 0
+                    and (
+                        (expected and protocols != {expected})
+                        or (not expected and len(protocols) > 1)
+                    )
+                )
+                if strict_mismatch:
+                    wanted = expected or "one runtime proxy protocol"
+                    actual = ", ".join(sorted(protocols)) or "none"
+                    raise ProxyProtocolInvariantError(
+                        "Proxy protocol invariant failed from Mihomo trace: "
+                        f"expected {wanted}; observed {actual}"
+                    )
 
 
             def persist_trace_boundary() -> None:
