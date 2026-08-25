@@ -4,6 +4,42 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.10] - 2026-08-26
+
+### Added
+
+- Added monotonic Job, stage, and operation timings for Worker recovery,
+  capture preparation, tshark, Chrome, page observation, analysis, and packet
+  splitting.
+- Added an output-root-bound persistent Session catalog with incremental
+  reconciliation, indexed recovery candidates, and catalog-first pagination.
+- Added an application-owned Chrome profile scratch root with strict ownership
+  markers and bounded crash-safe cold-profile cleanup.
+- Persisted active TrafficTracer progress and Worker startup timing in the UI.
+
+### Changed
+
+- Deferred whole-history five-tuple lookup until the user submits the query and
+  cancelled stale history/detail requests when the workspace changes.
+- Updated DIRECT, TUN, and recovery integration fixtures to the normalized
+  `raw/` input, atomic `analysis/` output, and canonical v2 connection-index
+  contracts.
+
+### Fixed
+
+- Removed output-root-wide Session scans from capture and normal recovery hot
+  paths.
+- Preserved reusable warm Chrome profiles during Worker crash recovery while
+  retaining fail-closed handling for unknown marked layouts.
+
+### Validation
+
+- Passed 575 Python tests, 36 frontend tests, 72 TrafficTracer Rust bridge
+  tests, Python/Go/Rust contract gates, Mihomo tracer tests, DIRECT E2E, and
+  Chrome/tshark/analysis cancellation plus Worker crash-recovery E2E.
+- On the 1,000-Session five-run fixture, warm catalog lookup stayed below
+  30 ms and indexed recovery discovery stayed below 28 ms.
+
 ## [1.0.9] - 2026-08-24
 
 ### Added
