@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import time
 from typing import Any
 
 from traffictracer.contracts import validate_worker_message
@@ -48,14 +49,17 @@ class WorkerRecovery:
         notify: Callable[[dict[str, Any]], None] | None = None,
         fingerprint: Callable[[int], ProcessFingerprint | None] | None = None,
         terminate: Callable[[int], None] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._store = store
         self._restore = restore_tracing
         self._notify = notify
         self._fingerprint = fingerprint
         self._terminate = terminate
+        self._clock = clock
 
     def run(self) -> WorkerRecoveryReport:
+        started_at = self._clock()
         try:
             manager = RecoveryManager(
                 self._store,
@@ -70,13 +74,13 @@ class WorkerRecovery:
             result = WorkerRecoveryReport(
                 errors=(f"startup recovery scan failed: {_safe_error(exc)}",)
             )
-        self._publish(result)
+        self._publish(result, _duration_ms(started_at, self._clock()))
         return result
 
     def _restore_snapshot(self, snapshot: TracingSnapshot) -> None:
         self._restore(snapshot.to_dict())
 
-    def _publish(self, report: WorkerRecoveryReport) -> None:
+    def _publish(self, report: WorkerRecoveryReport, duration_ms: int) -> None:
         if self._notify is None:
             return
         notification = {
@@ -92,6 +96,11 @@ class WorkerRecovery:
                     else "Worker recovery completed."
                 ),
                 "recovery": report.to_dict(),
+                "timing": {
+                    "operation": "worker.recovery",
+                    "duration_ms": duration_ms,
+                    "catalog": self._store.catalog_timing,
+                },
             },
         }
         validate_worker_message(notification)
@@ -113,3 +122,7 @@ def _worker_report(report: RecoveryReport) -> WorkerRecoveryReport:
 def _safe_error(error: Exception) -> str:
     message = str(error).strip()
     return message or error.__class__.__name__
+
+
+def _duration_ms(started_at: float, finished_at: float) -> int:
+    return max(0, int(round((finished_at - started_at) * 1000)))

@@ -68,7 +68,7 @@ if "analysis.test" in url:
     deadline = time.time() + 5
     trace = None
     while time.time() < deadline:
-        matches = list(root.glob("*/logs/mihomo_trace_analysis.test_*.jsonl"))
+        matches = list(root.rglob("raw/mihomo-trace.jsonl"))
         if matches:
             trace = matches[0]
             break
@@ -86,7 +86,7 @@ if "analysis.test" in url:
     with trace.open("a", encoding="utf-8") as stream:
         for _ in range(120000):
             stream.write(line)
-    netlog = trace.with_name(trace.name.replace("mihomo_trace_", "netlog_").replace(".jsonl", ".json"))
+    netlog = trace.with_name("netlog.json")
     netlog.write_text('{"constants":{},"events":[]}', encoding="utf-8")
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 while True: time.sleep(1)
@@ -146,7 +146,7 @@ def session_for_job(client: WorkerClient, job_id: str) -> dict[str, Any] | None:
 
 
 def journal_with_roles(sessions: Path, roles: set[str]):
-    for path in sessions.glob("*/recovery.json"):
+    for path in sessions.rglob("recovery.json"):
         data = json.loads(path.read_text(encoding="utf-8"))
         actual = {item["role"] for item in data["processes"]}
         if roles <= actual:
@@ -236,6 +236,25 @@ def crash_recovery(
         lambda: journal_with_roles(sessions, {"chrome"}), "crash recovery journal"
     )
     session_id = journal["session_id"]
+    chrome_profiles = [
+        item.get("profile", "")
+        for item in journal["processes"]
+        if item.get("role") == "chrome"
+    ]
+    if len(chrome_profiles) != 1:
+        raise E2EFailure(
+            f"crash recovery journal has invalid Chrome profiles: {chrome_profiles}"
+        )
+    profile_parts = Path(chrome_profiles[0]).parts
+    expected_profiles = {
+        ("cold", "crash.test", session_id),
+        ("warm", "crash.test", "capture"),
+    }
+    if len(profile_parts) < 3 or profile_parts[-3:] not in expected_profiles:
+        raise E2EFailure(
+            "crash recovery journal has unexpected Chrome profile: "
+            f"profile={chrome_profiles[0]} session={session_id}"
+        )
     child_pids = {item["pid"] for item in journal["processes"]}
     process.kill()
     process.wait(timeout=10)

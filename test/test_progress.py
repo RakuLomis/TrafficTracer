@@ -62,6 +62,48 @@ def test_high_frequency_messages_are_throttled_but_stage_changes_are_not():
     assert [event.progress for event in events] == [0.1, 0.3, 0.4]
 
 
+def test_progress_reports_monotonic_stage_and_operation_timings():
+    events = []
+    clock = FakeClock()
+    reporter = ProgressReporter("job-1", events.append, min_interval=10, clock=clock)
+    reporter.emit(
+        JobState.PREPARING,
+        JobStage.PREPARING,
+        0.1,
+        operation="capture.prepare_paths",
+    )
+    clock.advance(1.25)
+    reporter.emit(
+        JobState.PREPARING,
+        JobStage.PREPARING,
+        0.2,
+        operation="core.trace_status",
+    )
+    clock.advance(0.5)
+    reporter.emit(
+        JobState.CAPTURING,
+        JobStage.CAPTURE_PACKETS,
+        0.3,
+        operation="capture.tshark_tun_start",
+    )
+
+    assert len(events) == 3
+    assert events[0].timing == {
+        "job_elapsed_ms": 0,
+        "stage_elapsed_ms": 0,
+        "operation": "capture.prepare_paths",
+        "operation_elapsed_ms": 0,
+    }
+    assert events[1].timing["job_elapsed_ms"] == 1250
+    assert events[1].timing["stage_elapsed_ms"] == 1250
+    assert events[1].timing["completed_operation"] == "capture.prepare_paths"
+    assert events[1].timing["completed_operation_duration_ms"] == 1250
+    assert events[2].timing["completed_stage"] == "preparing"
+    assert events[2].timing["completed_stage_duration_ms"] == 1750
+    assert events[2].timing["completed_operation"] == "core.trace_status"
+    assert events[2].timing["completed_operation_duration_ms"] == 500
+
+
 def test_final_event_is_forced_and_no_events_follow_it():
     events = []
     clock = FakeClock()

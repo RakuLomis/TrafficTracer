@@ -3,7 +3,8 @@
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-from uuid import UUID
+import shutil
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import pytest
 
@@ -85,6 +86,33 @@ def test_artifact_path_rejects_absolute_parent_and_symlink_escape(tmp_path):
     (session_dir / "link").symlink_to(outside, target_is_directory=True)
     with pytest.raises(UnsafeSessionPathError, match="escapes"):
         store.artifact_path(manifest.session_id, "link/data.json")
+
+
+def test_known_session_artifact_path_is_direct_and_still_validates_context(
+    tmp_path, monkeypatch
+):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    session_dir = Path(manifest.session_dir)
+    monkeypatch.setattr(
+        store,
+        "get",
+        lambda session_id: (_ for _ in ()).throw(
+            AssertionError("direct lookup must not call SessionStore.get")
+        ),
+    )
+
+    assert store.artifact_path_for_session(
+        manifest.session_id, session_dir, "recovery.json"
+    ) == session_dir / "recovery.json"
+    with pytest.raises(UnsafeSessionPathError, match="match"):
+        store.artifact_path_for_session(
+            str(IDS[1]), session_dir, "recovery.json"
+        )
+    with pytest.raises(UnsafeSessionPathError, match="escapes"):
+        store.artifact_path_for_session(
+            manifest.session_id, session_dir, "../outside.json"
+        )
 
 
 def test_delete_removes_only_a_valid_managed_session(tmp_path):
@@ -271,3 +299,213 @@ def test_missing_active_capture_group_can_be_resolved_but_not_scanned(tmp_path):
     assert scope.kind == "capture_group"
     assert store.scan_scope(scope.scope_id).sessions == ()
     assert store.scan_scope(scope.scope_id).corrupt == ()
+
+
+def test_catalog_repeated_get_save_and_job_lookup_do_not_enumerate_root(
+    tmp_path, monkeypatch
+):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    assert store.get(manifest.session_id) == manifest
+
+    def unexpected_enumeration(*args, **kwargs):
+        raise AssertionError("catalog hit must not enumerate unrelated Sessions")
+
+    monkeypatch.setattr(store, "_manifest_candidates", unexpected_enumeration)
+    updated = manifest.with_warning(
+        "catalog update", now=BASE_TIME + timedelta(seconds=1)
+    )
+    store.save(updated)
+
+    assert store.get(manifest.session_id) == updated
+    assert store.session_id_for_job(manifest.job_id) == manifest.session_id
+    assert store.scope_for_job(manifest.job_id).scope_id == Path(
+        manifest.session_dir
+    ).name
+
+
+def test_catalog_rediscovers_a_valid_externally_moved_session(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    assert store.get(manifest.session_id) == manifest
+    original = Path(manifest.session_dir)
+    moved = tmp_path / f"moved_{manifest.session_id}"
+    original.rename(moved)
+    manifest_path = moved / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["session_dir"] = str(moved.resolve())
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    discovered = store.get(manifest.session_id)
+
+    assert discovered.session_dir == str(moved.resolve())
+    assert not original.exists()
+
+
+def test_catalog_invalidates_an_externally_removed_session(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    assert store.get(manifest.session_id) == manifest
+    shutil.rmtree(manifest.session_dir)
+
+    with pytest.raises(SessionNotFoundError):
+        store.get(manifest.session_id)
+
+
+def test_catalog_reloads_replaced_manifest_and_fails_closed_on_corruption(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    assert store.get(manifest.session_id) == manifest
+    manifest_path = Path(manifest.session_dir) / "manifest.json"
+    replaced = manifest.with_warning(
+        "external replacement", now=BASE_TIME + timedelta(seconds=1)
+    )
+    manifest_path.write_text(json.dumps(replaced.to_dict()), encoding="utf-8")
+
+    assert store.get(manifest.session_id) == replaced
+    manifest_path.write_text("{bad-json", encoding="utf-8")
+    with pytest.raises(CorruptSessionError, match="invalid Session manifest"):
+        store.get(manifest.session_id)
+
+
+def test_catalog_preserves_duplicate_session_id_failure(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    source = Path(manifest.session_dir)
+    duplicate = tmp_path / f"duplicate_{manifest.session_id}"
+    shutil.copytree(source, duplicate)
+    manifest_path = duplicate / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["session_dir"] = str(duplicate.resolve())
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(CorruptSessionError, match="multiple Session directories"):
+        store.get(manifest.session_id)
+
+
+def test_persistent_catalog_warm_load_materializes_only_selected_manifest(
+    tmp_path, monkeypatch
+):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    first = _create(store, now=BASE_TIME)
+    _create(store, now=BASE_TIME + timedelta(seconds=1))
+    store.scan()
+
+    warm = SessionStore(tmp_path)
+    loaded = []
+    real_load = warm._load_managed_manifest
+
+    def record_load(session_dir):
+        loaded.append(Path(session_dir))
+        return real_load(session_dir)
+
+    monkeypatch.setattr(warm, "_load_managed_manifest", record_load)
+
+    assert warm.get(first.session_id).session_id == first.session_id
+    assert loaded == [Path(first.session_dir)]
+    assert warm.catalog_timing["operation"] == "catalog.warm_reconcile"
+    assert warm.catalog_timing["reconciled_changes"] == 0
+
+
+def test_persistent_catalog_reconciles_only_changed_manifest(tmp_path, monkeypatch):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    first = _create(store, now=BASE_TIME)
+    second = _create(store, now=BASE_TIME + timedelta(seconds=1))
+    store.scan()
+    changed = first.with_warning(
+        "changed outside catalog", now=BASE_TIME + timedelta(seconds=2)
+    )
+    first_path = Path(first.session_dir) / "manifest.json"
+    first_path.write_text(json.dumps(changed.to_dict()), encoding="utf-8")
+
+    warm = SessionStore(tmp_path)
+    loaded = []
+    real_load = warm._load_managed_manifest
+
+    def record_load(session_dir):
+        loaded.append(Path(session_dir))
+        return real_load(session_dir)
+
+    monkeypatch.setattr(warm, "_load_managed_manifest", record_load)
+
+    assert warm.get(first.session_id) == changed
+    assert loaded == [Path(first.session_dir)]
+    assert Path(second.session_dir) not in loaded
+    assert warm.catalog_timing["reconciled_changes"] == 1
+
+
+def test_corrupt_or_root_mismatched_persistent_catalog_rebuilds_safely(
+    tmp_path, monkeypatch
+):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    first = _create(store, now=BASE_TIME)
+    second = _create(store, now=BASE_TIME + timedelta(seconds=1))
+    store.scan()
+    catalog_path = tmp_path / ".session-catalog" / "catalog-v1.json"
+    payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    payload["root_identity"]["inode"] += 1
+    catalog_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    rebuilt = SessionStore(tmp_path)
+    loaded = []
+    real_load = rebuilt._load_managed_manifest
+
+    def record_load(session_dir):
+        loaded.append(Path(session_dir))
+        return real_load(session_dir)
+
+    monkeypatch.setattr(rebuilt, "_load_managed_manifest", record_load)
+
+    assert rebuilt.get(first.session_id).session_id == first.session_id
+    assert set(loaded) == {Path(first.session_dir), Path(second.session_dir)}
+    assert rebuilt.catalog_timing["operation"] == "catalog.cold_rebuild"
+    repaired = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert repaired["root_identity"] == rebuilt._root_identity()
+
+
+def test_removing_persistent_catalog_only_causes_safe_rebuild(tmp_path):
+    store = SessionStore(tmp_path, id_factory=_factory(IDS))
+    manifest = _create(store)
+    store.scan()
+    catalog_path = tmp_path / ".session-catalog" / "catalog-v1.json"
+    catalog_path.unlink()
+
+    rebuilt = SessionStore(tmp_path)
+
+    assert rebuilt.get(manifest.session_id) == manifest
+    assert rebuilt.catalog_timing["operation"] == "catalog.cold_rebuild"
+    assert catalog_path.is_file()
+
+
+def test_persistent_catalog_page_materializes_only_requested_history_slice(
+    tmp_path, monkeypatch
+):
+    identifiers = iter(
+        uuid5(NAMESPACE_URL, f"lazy-history-{index}") for index in range(30)
+    )
+    store = SessionStore(tmp_path, id_factory=lambda: next(identifiers))
+    manifests = [
+        _create(store, now=BASE_TIME + timedelta(seconds=index))
+        for index in range(30)
+    ]
+    store.scan()
+
+    warm = SessionStore(tmp_path)
+    loaded = []
+    real_load = warm._load_managed_manifest
+
+    def record_load(session_dir):
+        loaded.append(Path(session_dir))
+        return real_load(session_dir)
+
+    monkeypatch.setattr(warm, "_load_managed_manifest", record_load)
+    page = warm.page(offset=10, limit=5)
+
+    expected = list(reversed(manifests))[10:15]
+    assert page.total == 30
+    assert [item.session_id for item in page.sessions] == [
+        item.session_id for item in expected
+    ]
+    assert loaded == [Path(item.session_dir) for item in expected]
+    assert warm.page(offset=10, limit=5).sessions == page.sessions
+    assert len(loaded) == 5

@@ -347,11 +347,13 @@ def run(core_path: Path, worker_path: Path) -> None:
                 session_id = capture["result"]["session_id"]
                 manifest = worker.request("session.get", {"session_id": session_id})
                 session_dir = Path(manifest["session_dir"])
-                run_dir = next((session_dir / "captures" / domain).iterdir())
-                assert_pcap(run_dir / "tun.pcap", sandbox.target_ip)
-                assert_pcap(run_dir / "phys.pcap", sandbox.target_ip)
+                raw_dir = session_dir / "raw"
+                assert_pcap(raw_dir / "tun.pcap", sandbox.target_ip)
+                assert_pcap(raw_dir / "phys.pcap", sandbox.target_ip)
 
-                trace_path = next((session_dir / "logs").glob("mihomo_trace_*.jsonl"))
+                trace_path = raw_dir / "mihomo-trace.jsonl"
+                if not trace_path.is_file():
+                    raise E2EFailure(f"capture trace is missing: {trace_path}")
                 pre_flow, post_flow = assert_real_flow(load_trace(trace_path))
                 if pre_flow["dst_ip"] != sandbox.target_ip:
                     raise E2EFailure(f"unexpected pre-proxy target: {pre_flow}")
@@ -361,9 +363,7 @@ def run(core_path: Path, worker_path: Path) -> None:
                 if any(restored.get(key) != value for key, value in baseline.items()):
                     raise E2EFailure(f"tracing state was not restored: {restored}")
 
-                write_analysis_inputs(
-                    session_dir, domain, run_dir.name, target_url, pre_flow
-                )
+                write_analysis_inputs(session_dir, target_url, pre_flow)
                 analysis_id = str(uuid4())
                 worker.request(
                     "analysis.start",
@@ -383,13 +383,22 @@ def run(core_path: Path, worker_path: Path) -> None:
                     },
                 )
                 worker.wait_job(analysis_id, timeout=45)
-                correlation = json.loads(
-                    (session_dir / "results" / "correlation.json").read_text(
-                        encoding="utf-8"
-                    )
+                index = json.loads(
+                    (
+                        session_dir / "analysis" / "connection-index-v2.json"
+                    ).read_text(encoding="utf-8")
                 )
-                if not correlation.get(domain, {}).get("flows"):
-                    raise E2EFailure(f"analysis produced no correlation: {correlation}")
+                exact_connections = [
+                    item
+                    for item in index.get("items", [])
+                    if item.get("match", {}).get("status") == "matched"
+                    and item.get("post_flow") is not None
+                ]
+                if len(exact_connections) != 1:
+                    raise E2EFailure(
+                        "analysis produced no exact canonical connection: "
+                        f"connection_index={index}"
+                    )
                 analyzed_manifest = worker.request(
                     "session.get", {"session_id": session_id}
                 )
@@ -397,9 +406,9 @@ def run(core_path: Path, worker_path: Path) -> None:
                     artifact["path"] for artifact in analyzed_manifest["artifacts"]
                 }
                 required_analysis = {
-                    "results/correlation.json",
-                    "results/flow-index.json",
-                    "results/summary.json",
+                    "analysis/correlation.json",
+                    "analysis/flow-index.json",
+                    "analysis/summary.json",
                 }
                 if not required_analysis <= artifact_paths:
                     raise E2EFailure(

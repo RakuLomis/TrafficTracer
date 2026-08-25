@@ -160,10 +160,23 @@ def test_batch_cancel_is_idempotent_and_does_not_start_next_child(
                 time.sleep(0.005)
 
     monkeypatch.setattr(module, "CaptureJob", _BlockingCapture)
+    clock = iter((0.0, 0.1, 0.1, 0.3, 0.3, 0.6, 0.6, 1.0, 1.1)).__next__
     services = WorkerServices(
-        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+        tmp_path / "sessions",
+        notify=lambda _: None,
+        shutdown_event=Event(),
+        clock=clock,
     )
-    services.batch_start({"job": payload})
+    started_batch = services.batch_start({"job": payload})
+    assert started_batch["startup_timing"] == {
+        "total_ms": 1100,
+        "operations": [
+            {"operation": "batch.parse", "duration_ms": 100},
+            {"operation": "batch.config_verify", "duration_ms": 200},
+            {"operation": "batch.proxy_protocol_freeze", "duration_ms": 300},
+            {"operation": "batch.job_accept", "duration_ms": 400},
+        ],
+    }
     assert started.wait(2)
     first = services.batch_cancel({"batch_id": payload["job_id"], "reason": "stop"})
     second = services.batch_cancel({"batch_id": payload["job_id"], "reason": "again"})

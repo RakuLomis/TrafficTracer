@@ -98,7 +98,11 @@ class FakeRecoveryStore:
         self.root = root
 
     def artifact_path(self, session_id, relative_path):
+        raise AssertionError("capture recovery must not perform a global Session lookup")
+
+    def artifact_path_for_session(self, session_id, session_dir, relative_path):
         assert session_id == "session-1"
+        assert session_dir == self.root
         return self.root / relative_path
 
 
@@ -189,9 +193,25 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert [event.stage for event in progress] == [
         "preparing",
         "core.configure",
+        "core.configure",
+        "core.configure",
+        "capture.packets",
         "capture.packets",
         "capture.browser",
+        "capture.browser",
         "cleanup",
+        "finished",
+    ]
+    assert [event.timing["operation"] for event in progress] == [
+        "capture.prepare_paths",
+        "core.trace_status",
+        "core.trace_enable",
+        "core.protocol_snapshot",
+        "capture.tshark_tun_start",
+        "capture.tshark_physical_start",
+        "capture.chrome_launch",
+        "capture.observation",
+        "capture.cleanup",
         "finished",
     ]
     assert (tmp_path / "captures" / "example.com" / "visit_1").is_dir()

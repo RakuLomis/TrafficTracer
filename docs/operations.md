@@ -141,6 +141,29 @@ Do not select:
 
 When a custom root fails, inspect the Environment Check result for the resolved path, filesystem permissions, and active-job lock instead of manually copying partial Sessions.
 
+## Chrome scratch profiles
+
+Complete captures keep Chrome scratch state separate from the evidence output
+root. The default is `traffictracer/chrome-profiles` below
+`XDG_RUNTIME_DIR`; when that variable is unavailable, TrafficTracer uses a
+user-specific directory below the system temporary directory. Set the
+diagnostic override `TRAFFICTRACER_CHROME_PROFILE_ROOT` to an absolute,
+user-owned, private directory before starting Clash Verge when another local
+scratch filesystem is required.
+
+The root contains `.traffictracer-profile-root-v1`. Do not copy this marker to
+another directory. TrafficTracer deletes only an exact
+`cold/<domain>/<session-uuid>` path below a matching marked root, and only
+after its owned Chrome process group is quiescent. Warm profiles are retained.
+Unmarked legacy profiles and unrelated browser profiles are never removed by
+recovery. A cold-profile cleanup failure keeps the recovery journal and makes
+the cleanup failure visible rather than reporting capture success.
+
+To roll back, unset `TRAFFICTRACER_CHROME_PROFILE_ROOT`. Existing evidence is
+unaffected. Old unmarked `.chrome-profiles` directories below Session roots
+may be inspected and removed manually only after confirming that no Chrome
+process uses them; rollback code does not claim or delete them automatically.
+
 ## Session selection and corrupt Sessions
 
 The UI opens one timestamped capture-group directory, not an aggregate of every directory under the Session root. When idle, it intentionally shows no implicit historical scope; select a timestamp folder explicitly.

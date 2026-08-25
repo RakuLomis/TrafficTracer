@@ -14,6 +14,11 @@ from uuid import UUID
 
 from traffictracer.jobs.models import JobState
 from traffictracer.jobs.process_registry import ProcessRecord
+from traffictracer.capture.profile import (
+    ProfileCleanupError,
+    ProfileOwnershipError,
+    remove_recovered_cold_profile,
+)
 
 from .atomic import write_json_atomic
 from .store import SessionStore
@@ -170,8 +175,19 @@ class RecoveryJournal:
             "created_at": _format_time(self.created_at),
         }
 
-    def persist(self, store: SessionStore) -> Path:
-        path = store.artifact_path(self.session_id, RECOVERY_JOURNAL_NAME)
+    def persist(
+        self,
+        store: SessionStore,
+        *,
+        session_dir: str | Path | None = None,
+    ) -> Path:
+        path = (
+            store.artifact_path_for_session(
+                self.session_id, session_dir, RECOVERY_JOURNAL_NAME
+            )
+            if session_dir is not None
+            else store.artifact_path(self.session_id, RECOVERY_JOURNAL_NAME)
+        )
         write_json_atomic(path, self.to_dict())
         return path
 
@@ -208,12 +224,17 @@ class RecoveryManager:
         skipped: list[int] = []
         errors: list[str] = []
 
-        scan = self._store.scan()
+        scan = self._store.recovery_candidates()
         errors.extend(f"{item.session_dir}: {item.message}" for item in scan.corrupt)
         for manifest in scan.sessions:
-            errors.extend(
-                _recover_analysis_workspace(Path(manifest.session_dir))
+            workspace_errors = _recover_analysis_workspace(
+                Path(manifest.session_dir)
             )
+            errors.extend(workspace_errors)
+            if not workspace_errors:
+                self._store.clear_analysis_recovery_if_clean(
+                    manifest.session_id
+                )
             if manifest.state.terminal:
                 continue
             journal_path = self._store.artifact_path(
@@ -230,6 +251,7 @@ class RecoveryManager:
                     continue
 
             recovery_failed = False
+            recovered_profiles: set[str] = set()
             if journal is not None:
                 for process in reversed(journal.processes):
                     current = self._fingerprint(process.pid)
@@ -239,6 +261,8 @@ class RecoveryManager:
                         if process.profile and process.pgid is not None
                         else ()
                     )
+                    if process.role == "chrome" and process.profile:
+                        recovered_profiles.add(process.profile)
                     if not same_leader and not members:
                         skipped.append(process.pid)
                         continue
@@ -261,6 +285,18 @@ class RecoveryManager:
                 except Exception as exc:
                     errors.append(f"{manifest.session_id}: restore tracing: {exc}")
                     continue
+                if recovery_failed:
+                    continue
+                for profile in sorted(recovered_profiles):
+                    try:
+                        remove_recovered_cold_profile(
+                            profile, manifest.session_id
+                        )
+                    except (OSError, ProfileCleanupError, ProfileOwnershipError) as exc:
+                        errors.append(
+                            f"{manifest.session_id}: cleanup Chrome profile: {exc}"
+                        )
+                        recovery_failed = True
                 if recovery_failed:
                     continue
 

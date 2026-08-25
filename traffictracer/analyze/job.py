@@ -189,6 +189,8 @@ class AnalysisJob:
 
     def _prepare_staged_results(self) -> None:
         session = Path(self.spec.session_dir)
+        if self._store is not None:
+            self._store.set_analysis_recovery(self._session_id, True)
         staging = session / f".analysis-staging-{uuid4()}"
         self._staging_results_dir = staging
         self._results_dir = staging
@@ -233,6 +235,7 @@ class AnalysisJob:
                 )
         self._backup_results_dir = None
         self._published_this_run = False
+        self._clear_analysis_recovery_if_clean()
 
     def _discard_staged_results(self) -> None:
         destination = self._published_results_dir
@@ -268,6 +271,11 @@ class AnalysisJob:
                     )
         self._staging_results_dir = None
         self._results_dir = self._published_results_dir
+        self._clear_analysis_recovery_if_clean()
+
+    def _clear_analysis_recovery_if_clean(self) -> None:
+        if self._store is not None:
+            self._store.clear_analysis_recovery_if_clean(self._session_id)
 
     def _finish_manifest(
         self,

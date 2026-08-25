@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 import json
 from pathlib import Path
 from threading import Event
+import time
 from typing import Any
 
 from traffictracer.analyze.flow_index import flow_key
@@ -13,6 +15,7 @@ from traffictracer.analyze.job import AnalysisJob
 from traffictracer.analyze.packet_split_status import inspect_packet_split
 from traffictracer.capture.job import CaptureJob, CaptureRuntime, CaptureSessionContext
 from traffictracer.capture.mihomo import MihomoManager
+from traffictracer.capture.profile import resolve_owned_profile_root
 from traffictracer.config import ConfigValidationError, load_target_config
 from traffictracer.diagnostics import EnvironmentSpec, diagnose_environment
 from traffictracer.jobs.cancellation import (
@@ -65,6 +68,8 @@ class WorkerServices:
         shutdown_event: Event,
         controller_endpoint: str = "",
         controller_secret: str = "",
+        profile_root: str = "",
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.store = SessionStore(Path(output_root).expanduser().resolve())
         self.batches = BatchStore(self.store.output_root)
@@ -72,6 +77,8 @@ class WorkerServices:
         self.shutdown_event = shutdown_event
         self.controller_endpoint = controller_endpoint
         self.controller_secret = controller_secret
+        self.profile_root = str(resolve_owned_profile_root(profile_root or None))
+        self._clock = clock
         self.jobs = JobManager(
             capture_factory=self._capture_factory,
             analysis_factory=self._analysis_factory,
@@ -150,8 +157,8 @@ class WorkerServices:
 
     def session_list(self, params: dict[str, Any]) -> dict[str, Any]:
         offset, limit = _pagination(params)
-        scan = self.store.scan()
-        return _session_page(scan, offset=offset, limit=limit)
+        page = self.store.page(offset=offset, limit=limit)
+        return _session_page(page, offset=offset, limit=limit, pre_paginated=True)
 
     def session_scope_resolve(self, params: dict[str, Any]) -> dict[str, Any] | None:
         selectors = {"path", "job_id", "batch_id"} & set(params)
@@ -195,12 +202,14 @@ class WorkerServices:
             scope = self.store.resolve_scope_id(
                 params["scope_id"], allow_missing_capture_group=True
             )
-            scan = self.store.scan_scope(scope.scope_id)
+            page = self.store.page(
+                offset=offset, limit=limit, scope_id=scope.scope_id
+            )
         except (OSError, TypeError, ValueError, SessionStoreError) as exc:
             raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
         return {
             "scope": scope.to_dict(),
-            **_session_page(scan, offset=offset, limit=limit),
+            **_session_page(page, offset=offset, limit=limit, pre_paginated=True),
         }
 
     def session_scope_packet_split_preview(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -353,14 +362,37 @@ class WorkerServices:
         return self.batches.recover_running()
 
     def batch_start(self, params: dict[str, Any]) -> dict[str, Any]:
+        started_at = self._clock()
+        operation_started_at = started_at
+        timings: list[dict[str, Any]] = []
         payload = params.get("job") if set(params) == {"job"} else params
         if not isinstance(payload, dict):
             raise WorkerMethodError("INVALID_PARAMS", "batch.start requires a Job object.")
         spec = BatchJobSpec.from_dict(payload)
         self._require_output_root(spec.output_root)
+        timings.append(
+            _operation_timing("batch.parse", operation_started_at, self._clock())
+        )
+        operation_started_at = self._clock()
         spec.verify_config_sha256()
+        timings.append(_operation_timing(
+            "batch.config_verify", operation_started_at, self._clock()
+        ))
+        operation_started_at = self._clock()
         spec = self._freeze_batch_proxy_protocol(spec)
-        return self.jobs.start_batch({"job": spec.to_dict()})
+        timings.append(_operation_timing(
+            "batch.proxy_protocol_freeze", operation_started_at, self._clock()
+        ))
+        operation_started_at = self._clock()
+        result = self.jobs.start_batch({"job": spec.to_dict()})
+        timings.append(_operation_timing(
+            "batch.job_accept", operation_started_at, self._clock()
+        ))
+        result["startup_timing"] = {
+            "total_ms": _duration_ms(started_at, self._clock()),
+            "operations": timings,
+        }
+        return result
 
     def batch_status(self, params: dict[str, Any]) -> dict[str, Any]:
         batch_id = _batch_id(params)
@@ -494,7 +526,7 @@ class WorkerServices:
         capture = CaptureJob(
             spec,
             runtime=CaptureRuntime(
-                user_data_dir=str(self.store.output_root / ".chrome-profiles"),
+                user_data_dir=self.profile_root,
                 enable_cdp=spec.options.collect_cdp,
                 wait_load_timeout=spec.wait_load_timeout,
                 run_label=spec.run_label,
@@ -634,14 +666,7 @@ class WorkerServices:
         )
 
     def _session_for_job(self, job_id: str) -> str | None:
-        return next(
-            (
-                manifest.session_id
-                for manifest in self.store.scan().sessions
-                if manifest.job_id == job_id
-            ),
-            None,
-        )
+        return self.store.session_id_for_job(job_id)
 
     def _require_output_root(self, value: str) -> None:
         if Path(value).resolve() != self.store.output_root:
@@ -787,6 +812,19 @@ class _PersistentCaptureRunner:
         self.store.save(manifest.transition(state, error=error))
 
 
+def _duration_ms(started_at: float, finished_at: float) -> int:
+    return max(0, int(round((finished_at - started_at) * 1000)))
+
+
+def _operation_timing(
+    operation: str, started_at: float, finished_at: float
+) -> dict[str, Any]:
+    return {
+        "operation": operation,
+        "duration_ms": _duration_ms(started_at, finished_at),
+    }
+
+
 def _item_flow_key(item: object) -> str:
     if not isinstance(item, dict) or not isinstance(item.get("pre_flow"), dict):
         return ""
@@ -849,9 +887,11 @@ def _pagination(
     return offset, limit
 
 
-def _session_page(scan, *, offset: int, limit: int) -> dict[str, Any]:
-    total = len(scan.sessions)
-    page = scan.sessions[offset:offset + limit]
+def _session_page(
+    scan, *, offset: int, limit: int, pre_paginated: bool = False
+) -> dict[str, Any]:
+    total = scan.total if pre_paginated else len(scan.sessions)
+    page = scan.sessions if pre_paginated else scan.sessions[offset:offset + limit]
     return {
         "sessions": [_session_summary(manifest) for manifest in page],
         "offset": offset,

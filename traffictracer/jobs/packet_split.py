@@ -300,6 +300,7 @@ class _SplitChildProgress:
         message: str = "",
         *,
         force: bool = False,
+        operation: str = "",
     ) -> ProgressEvent | None:
         mapped = (self.position + progress) / self.total
         return self.parent.emit(
@@ -308,6 +309,7 @@ class _SplitChildProgress:
             mapped,
             message,
             force=force,
+            operation=(operation.strip() or stage.value),
         )
 
     def finish(self, state: JobState, message: str = "") -> None:

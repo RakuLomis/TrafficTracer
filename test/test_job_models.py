@@ -189,10 +189,22 @@ def test_progress_event_serializes_enum_and_utc_timestamp():
         stage="capture.packets",
         progress=0.25,
         message="capturing",
+        timing={
+            "job_elapsed_ms": 125,
+            "stage_elapsed_ms": 25,
+            "operation": "capture.tshark_tun_start",
+            "operation_elapsed_ms": 25,
+        },
     ).to_dict()
     assert event["state"] == "capturing"
     assert event["progress"] == 0.25
     assert event["timestamp"].endswith("Z")
+    assert event["timing"]["job_elapsed_ms"] == 125
+    assert event["timing"]["operation"] == "capture.tshark_tun_start"
+
+    assert "timing" not in ProgressEvent(
+        "job-2", JobState.CREATED, "created", 0
+    ).to_dict()
 
 
 def test_capture_result_requires_terminal_state_and_serializes_tuples():

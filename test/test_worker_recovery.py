@@ -3,8 +3,10 @@
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
+from uuid import NAMESPACE_URL, uuid5
 
 from traffictracer.contracts import validate_worker_message
+from traffictracer.capture.profile import resolve_owned_profile_root
 from traffictracer.jobs.models import JobState
 from traffictracer.jobs.process_registry import ProcessRecord
 from traffictracer.session.manifest import (
@@ -60,12 +62,14 @@ def test_startup_recovery_terminates_fingerprinted_process_restores_and_notifies
     restored = []
     terminated = []
     notifications = []
+    clock = iter((100.0, 101.25)).__next__
     report = WorkerRecovery(
         store,
         restore_tracing=restored.append,
         notify=notifications.append,
         fingerprint=lambda pid: fingerprint,
         terminate=terminated.append,
+        clock=clock,
     ).run()
     assert report.status == "ok"
     assert report.recovered_sessions == (manifest.session_id,)
@@ -75,6 +79,10 @@ def test_startup_recovery_terminates_fingerprinted_process_restores_and_notifies
     assert store.get(manifest.session_id).state is JobState.INTERRUPTED
     assert not (Path(manifest.session_dir) / "recovery.json").exists()
     assert notifications[0]["params"]["code"] == "RECOVERY_COMPLETE"
+    timing = notifications[0]["params"]["timing"]
+    assert timing["operation"] == "worker.recovery"
+    assert timing["duration_ms"] == 1250
+    assert timing["catalog"]["operation"] == "catalog.cold_rebuild"
     assert validate_worker_message(notifications[0]) is notifications[0]
 
 
@@ -173,3 +181,101 @@ def test_unexpected_recovery_scan_failure_returns_degraded_report(
     assert "filesystem unavailable" in report.errors[0]
     assert notifications[0]["params"]["code"] == "RECOVERY_DEGRADED"
     assert store.get(manifest.session_id).state is JobState.CAPTURING
+
+
+def test_warm_recovery_materializes_only_nonterminal_catalog_candidates(
+    tmp_path, monkeypatch
+):
+    identifiers = iter(
+        uuid5(NAMESPACE_URL, f"recovery-candidate-{index}")
+        for index in range(21)
+    )
+    store = SessionStore(tmp_path, id_factory=lambda: next(identifiers))
+    version = ComponentVersion("complete", "unknown")
+    versions = ComponentVersions(version, version, version)
+    active = None
+    for index in range(21):
+        created = NOW.replace(microsecond=index)
+        manifest = store.create(
+            job_id=str(uuid5(NAMESPACE_URL, f"recovery-job-{index}")),
+            target=SessionTarget(
+                f"https://site-{index}.example/", f"site-{index}.example"
+            ),
+            component_versions=versions,
+            now=created,
+        )
+        manifest = manifest.transition(JobState.PREPARING, now=created)
+        manifest = manifest.transition(JobState.CAPTURING, now=created)
+        if index < 20:
+            manifest = manifest.transition(JobState.COMPLETED, now=created)
+        else:
+            active = manifest
+        store.save(manifest)
+    store.scan()
+
+    warm = SessionStore(tmp_path)
+    loaded = []
+    real_load = warm._load_managed_manifest
+
+    def record_load(session_dir):
+        loaded.append(Path(session_dir))
+        return real_load(session_dir)
+
+    monkeypatch.setattr(warm, "_load_managed_manifest", record_load)
+    report = WorkerRecovery(
+        warm, restore_tracing=lambda snapshot: None
+    ).run()
+
+    assert active is not None
+    assert report.recovered_sessions == (active.session_id,)
+    assert set(loaded) == {Path(active.session_dir)}
+    assert len(loaded) == 2  # candidate materialization plus persisted transition
+    assert warm.catalog_timing["operation"] == "catalog.warm_reconcile"
+
+
+def test_warm_catalog_preserves_corrupt_manifest_recovery_warning(tmp_path):
+    store, manifest = _capturing_store(tmp_path)
+    store.save(manifest.transition(JobState.INTERRUPTED, now=NOW))
+    corrupt = tmp_path / "broken_11111111-1111-4111-8111-111111111111"
+    corrupt.mkdir()
+    (corrupt / "manifest.json").write_text("{bad-json", encoding="utf-8")
+    store.scan()
+
+    warm = SessionStore(tmp_path)
+    report = WorkerRecovery(
+        warm, restore_tracing=lambda snapshot: None
+    ).run()
+
+    assert report.status == "degraded"
+    assert str(corrupt) in report.errors[0]
+    assert warm.catalog_timing["operation"] == "catalog.warm_reconcile"
+
+
+def test_recovery_removes_only_journaled_owned_cold_profile_after_process_exit(
+    tmp_path,
+):
+    store, manifest = _capturing_store(tmp_path / "sessions")
+    root = resolve_owned_profile_root(tmp_path / "scratch" / "profiles")
+    profile = root / "cold" / "example.com" / manifest.session_id
+    profile.mkdir(parents=True)
+    (profile / "state").write_text("owned", encoding="utf-8")
+    fingerprint = ProcessFingerprint(123, "start-1", "/usr/bin/chromium")
+    RecoveryJournal.capture(
+        session_id=manifest.session_id,
+        tracing=TracingSnapshot(False, "", ""),
+        processes=[ProcessRecord(StubProcess(), "chrome", 123, NOW, profile=str(profile))],
+        fingerprint=lambda pid: fingerprint,
+        now=NOW,
+    ).persist(store)
+
+    report = WorkerRecovery(
+        store,
+        restore_tracing=lambda snapshot: None,
+        fingerprint=lambda pid: None,
+    ).run()
+
+    assert report.recovered_sessions == (manifest.session_id,)
+    assert report.skipped_pids == (123,)
+    assert not profile.exists()
+    assert root.is_dir()
+    assert store.get(manifest.session_id).state is JobState.INTERRUPTED

@@ -243,10 +243,10 @@ def assert_real_flow(events: list[dict[str, Any]]) -> tuple[dict[str, Any], dict
 
 
 def write_analysis_inputs(
-    session_dir: Path, domain: str, run_tag: str, target_url: str, pre_flow: dict[str, Any]
+    session_dir: Path, target_url: str, pre_flow: dict[str, Any]
 ) -> None:
-    logs = session_dir / "logs"
-    (logs / f"cdp_{domain}_{run_tag}.json").write_text(
+    raw = session_dir / "raw"
+    (raw / "cdp.json").write_text(
         json.dumps(
             {
                 "visit_url": target_url,
@@ -268,8 +268,53 @@ def write_analysis_inputs(
         ),
         encoding="utf-8",
     )
-    (logs / f"netlog_{domain}_{run_tag}.json").write_text(
-        json.dumps({"constants": {}, "events": []}), encoding="utf-8"
+    (raw / "netlog.json").write_text(
+        json.dumps(
+            {
+                "constants": {
+                    "logFormatVersion": 1,
+                    "timeTickOffset": "1329000000000",
+                    "logSourceType": {
+                        "URL_REQUEST": 1,
+                        "HTTP_STREAM_JOB": 5,
+                        "HTTP_PROXY_CONNECT_JOB": 10,
+                    },
+                    "logEventPhase": {
+                        "PHASE_BEGIN": 0,
+                        "PHASE_END": 1,
+                        "PHASE_NONE": 2,
+                    },
+                },
+                "events": [
+                    {
+                        "time": "1000",
+                        "type": 0,
+                        "phase": 0,
+                        "source": {"id": 100, "type": 1},
+                        "params": {
+                            "url": target_url,
+                            "source_dependency": {"id": 200, "type": 5},
+                        },
+                    },
+                    {
+                        "time": "1200",
+                        "type": 50,
+                        "phase": 2,
+                        "source": {"id": 300, "type": 10},
+                        "params": {
+                            "local_address": (
+                                f"{pre_flow['src_ip']}:{pre_flow['src_port']}"
+                            ),
+                            "remote_address": (
+                                f"{pre_flow['dst_ip']}:{pre_flow['dst_port']}"
+                            ),
+                            "source_dependency": {"id": 200, "type": 5},
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -365,7 +410,9 @@ def run(core_path: Path, worker_path: Path) -> None:
                 if manifest["state"] != "completed":
                     raise E2EFailure(f"capture manifest is not completed: {manifest}")
                 session_dir = Path(manifest["session_dir"])
-                trace_path = next((session_dir / "logs").glob("mihomo_trace_*.jsonl"))
+                trace_path = session_dir / "raw" / "mihomo-trace.jsonl"
+                if not trace_path.is_file():
+                    raise E2EFailure(f"capture trace is missing: {trace_path}")
                 pre_flow, post_flow = assert_real_flow(load_trace(trace_path))
                 if pre_flow["dst_port"] != target_port or post_flow["dst_port"] != target_port:
                     raise E2EFailure(
@@ -378,10 +425,7 @@ def run(core_path: Path, worker_path: Path) -> None:
                     if restored.get(key) != expected:
                         raise E2EFailure(f"tracing state was not restored: {restored}")
 
-                run_dir = next((session_dir / "captures" / domain).iterdir())
-                write_analysis_inputs(
-                    session_dir, domain, run_dir.name, target_url, pre_flow
-                )
+                write_analysis_inputs(session_dir, target_url, pre_flow)
                 analysis_id = str(uuid4())
                 worker.request(
                     "analysis.start",
@@ -402,13 +446,22 @@ def run(core_path: Path, worker_path: Path) -> None:
                 )
                 worker.wait_job(analysis_id)
 
-                correlation = json.loads(
-                    (session_dir / "results" / "correlation.json").read_text(
-                        encoding="utf-8"
-                    )
+                index = json.loads(
+                    (
+                        session_dir / "analysis" / "connection-index-v2.json"
+                    ).read_text(encoding="utf-8")
                 )
-                if not correlation.get(domain, {}).get("flows"):
-                    raise E2EFailure(f"analysis produced no correlation: {correlation}")
+                exact_connections = [
+                    item
+                    for item in index.get("items", [])
+                    if item.get("match", {}).get("status") == "matched"
+                    and item.get("post_flow") is not None
+                ]
+                if len(exact_connections) != 1:
+                    raise E2EFailure(
+                        "analysis produced no exact canonical connection: "
+                        f"connection_index={index}"
+                    )
                 analyzed_manifest = worker.request(
                     "session.get", {"session_id": session_id}
                 )
@@ -416,9 +469,9 @@ def run(core_path: Path, worker_path: Path) -> None:
                     artifact["path"] for artifact in analyzed_manifest["artifacts"]
                 }
                 required_artifacts = {
-                    "results/correlation.json",
-                    "results/flow-index.json",
-                    "results/summary.json",
+                    "analysis/correlation.json",
+                    "analysis/flow-index.json",
+                    "analysis/summary.json",
                 }
                 if not required_artifacts <= artifact_paths:
                     raise E2EFailure(

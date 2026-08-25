@@ -33,6 +33,7 @@ from .cdp import SyncCDPCollector
 from .chrome import launch_chrome, terminate_chrome, wait_chrome_exit
 from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
+from .profile import remove_owned_cold_profile
 from .quiescence import verify_chrome_quiescence
 from .tshark import start_packet_capture, stop_packet_capture
 
@@ -115,7 +116,12 @@ class CaptureJob:
 
     def _run(self) -> None:
         self.cancellation.checkpoint()
-        self.progress.emit(JobState.PREPARING, JobStage.PREPARING, 0.05)
+        self.progress.emit(
+            JobState.PREPARING,
+            JobStage.PREPARING,
+            0.05,
+            operation="capture.prepare_paths",
+        )
         paths = self._prepare_paths()
         previous_tracing: dict[str, Any] | None = None
         tracing_configured = False
@@ -147,15 +153,32 @@ class CaptureJob:
 
         try:
             self.cancellation.checkpoint()
-            self.progress.emit(JobState.PREPARING, JobStage.CORE_CONFIGURE, 0.1)
+            self.progress.emit(
+                JobState.PREPARING,
+                JobStage.CORE_CONFIGURE,
+                0.1,
+                operation="core.trace_status",
+            )
             previous_tracing = self.mihomo.get_tracing_status()
             self._persist_recovery(previous_tracing)
+            self.progress.emit(
+                JobState.PREPARING,
+                JobStage.CORE_CONFIGURE,
+                0.11,
+                operation="core.trace_enable",
+            )
             self.mihomo.enable_tracing(
                 str(paths["mihomo_trace"]), session_id=self.session.session_id
             )
             tracing_configured = True
             self._record(paths["mihomo_trace"])
 
+            self.progress.emit(
+                JobState.PREPARING,
+                JobStage.CORE_CONFIGURE,
+                0.12,
+                operation="core.protocol_snapshot",
+            )
             protocol_snapshot = (
                 self.mihomo.get_proxy_protocol_snapshot(
                     self.spec.options.proxy_selection_group,
@@ -189,13 +212,20 @@ class CaptureJob:
             if self.spec.options.capture_packets:
                 self.cancellation.checkpoint()
                 self.progress.emit(
-                    JobState.CAPTURING, JobStage.CAPTURE_PACKETS, 0.2
+                    JobState.CAPTURING, JobStage.CAPTURE_PACKETS, 0.2,
+                    operation="capture.tshark_tun_start",
                 )
                 tun_capture = start_packet_capture(
                     self.spec.interfaces.tun, paths["tun_pcap"]
                 )
                 self.registry.register(tun_capture.process, "tshark-tun")
                 self._persist_recovery(previous_tracing)
+                self.progress.emit(
+                    JobState.CAPTURING,
+                    JobStage.CAPTURE_PACKETS,
+                    0.25,
+                    operation="capture.tshark_physical_start",
+                )
                 phys_capture = start_packet_capture(
                     self.spec.interfaces.physical, paths["phys_pcap"]
                 )
@@ -205,7 +235,12 @@ class CaptureJob:
                 self._record(paths["phys_pcap"])
 
             self.cancellation.checkpoint()
-            self.progress.emit(JobState.CAPTURING, JobStage.CAPTURE_BROWSER, 0.4)
+            self.progress.emit(
+                JobState.CAPTURING,
+                JobStage.CAPTURE_BROWSER,
+                0.4,
+                operation="capture.chrome_launch",
+            )
             use_cdp = self.runtime.enable_cdp and self.spec.options.collect_cdp
             chrome_proc = launch_chrome(
                 binary=self.spec.chrome_binary,
@@ -225,6 +260,12 @@ class CaptureJob:
             self._record(paths["netlog"])
 
             if use_cdp:
+                self.progress.emit(
+                    JobState.CAPTURING,
+                    JobStage.CAPTURE_BROWSER,
+                    0.45,
+                    operation="capture.cdp_connect",
+                )
                 collector = SyncCDPCollector(
                     debugging_port=self.runtime.remote_debugging_port,
                     cancellation=self.cancellation,
@@ -233,10 +274,22 @@ class CaptureJob:
                 collector.connect()
                 collector.setup()
                 self.cancellation.checkpoint()
+                self.progress.emit(
+                    JobState.CAPTURING,
+                    JobStage.CAPTURE_BROWSER,
+                    0.5,
+                    operation="capture.navigation",
+                )
                 if self.spec.playback is None:
                     collector.navigate(
                         self.spec.url,
                         load_timeout=self.runtime.wait_load_timeout,
+                    )
+                    self.progress.emit(
+                        JobState.CAPTURING,
+                        JobStage.CAPTURE_BROWSER,
+                        0.55,
+                        operation="capture.observation",
                     )
                     collector.collect(self.spec.duration_seconds)
                 else:
@@ -246,19 +299,27 @@ class CaptureJob:
                         wait_for_load=False,
                     )
 
+                    self.progress.emit(
+                        JobState.CAPTURING,
+                        JobStage.CAPTURE_BROWSER,
+                        0.5,
+                        operation="capture.observation",
+                    )
+
                     def playback_progress(status: dict[str, Any]) -> None:
                         duration = max(1.0, self.spec.duration_seconds)
                         elapsed = float(status.get("elapsed_seconds", 0.0))
                         self.progress.emit(
                             JobState.CAPTURING,
                             JobStage.CAPTURE_BROWSER,
-                            min(0.85, 0.4 + 0.45 * elapsed / duration),
+                            min(0.85, 0.5 + 0.35 * elapsed / duration),
                             (
                                 f"{status.get('phase', 'preparation')} "
                                 f"{elapsed:.1f}/{duration:.0f}s; primary "
                                 f"{status.get('primary_content_seconds', 0):.1f}/"
                                 f"{status.get('desired_primary_seconds', 0)}s"
                             ),
+                            operation="capture.observation",
                         )
 
                     playback_result = collector.collect_playback(
@@ -282,6 +343,12 @@ class CaptureJob:
                 ):
                     terminate_chrome(chrome_proc, cancellation=self.cancellation)
             else:
+                self.progress.emit(
+                    JobState.CAPTURING,
+                    JobStage.CAPTURE_BROWSER,
+                    0.5,
+                    operation="capture.observation",
+                )
                 self.cancellation.wait(self.spec.duration_seconds)
                 self.cancellation.checkpoint()
                 terminate_chrome(chrome_proc, cancellation=self.cancellation)
@@ -328,7 +395,11 @@ class CaptureJob:
         attempt(
             "progress cleanup notification",
             lambda: self.progress.emit(
-                JobState.CAPTURING, JobStage.CLEANUP, 0.9, force=True
+                JobState.CAPTURING,
+                JobStage.CLEANUP,
+                0.9,
+                force=True,
+                operation="capture.cleanup",
             ),
         )
         if collector is not None:
@@ -352,7 +423,16 @@ class CaptureJob:
                     timeout=self.runtime.chrome_quiescence_timeout,
                 )
                 if self.spec.options.cache_mode == "cold":
-                    shutil.rmtree(chrome_profile, ignore_errors=True)
+                    raw_dir = self.session.directory / "raw"
+                    if raw_dir.is_dir():
+                        remove_owned_cold_profile(
+                            chrome_profile,
+                            self.runtime.user_data_dir,
+                            self.session.session_id,
+                        )
+                    else:
+                        # Compatibility Sessions predate owned scratch roots.
+                        shutil.rmtree(chrome_profile, ignore_errors=True)
 
             attempt("Chrome quiescence barrier", quiesce_chrome)
         if tracing_configured:
@@ -533,13 +613,18 @@ class CaptureJob:
             ),
             processes=self.registry.snapshot(),
         )
-        journal.persist(self.session.store)
+        journal.persist(
+            self.session.store,
+            session_dir=self.session.directory,
+        )
 
     def _clear_recovery(self) -> None:
         if self.session.store is None:
             return
-        path = self.session.store.artifact_path(
-            self.session.session_id, RECOVERY_JOURNAL_NAME
+        path = self.session.store.artifact_path_for_session(
+            self.session.session_id,
+            self.session.directory,
+            RECOVERY_JOURNAL_NAME,
         )
         try:
             path.unlink()

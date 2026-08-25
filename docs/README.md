@@ -13,6 +13,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 - [Architecture](architecture.md): component ownership, process boundaries, lifecycle, and protocol pins.
 - [Sessions and correlation data](data-model.md): directory layout, canonical indexes, correlation semantics, coverage, and packet evidence.
 - [Deferred multi-tab design](future-multi-tab-capture.md): non-normative notes for a possible post-1.0 browser-group mode; current releases remain single-tab.
+- [Capture startup and Session-store efficiency plan](complete/execution-efficiency-atomic-plan.md): measured bottlenecks, invariants, atomic implementation tasks, and performance gates.
 - [Development and releases](development.md): source setup, tests, packaging, provenance, and release gates.
 - [Standalone tools](standalone-tools.md): compatibility CLI entry points and the legacy NetLog parser.
 - [JSON Schemas](../contracts/): machine-readable Worker, Job, Session, Flow, target, batch, and PCAP contracts.

@@ -318,9 +318,10 @@ class ProgressEvent:
     progress: float
     message: str = ""
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timing: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "job_id": self.job_id,
             "state": self.state.value,
             "stage": self.stage,
@@ -328,6 +329,9 @@ class ProgressEvent:
             "message": self.message,
             "timestamp": self.timestamp.isoformat().replace("+00:00", "Z"),
         }
+        if self.timing:
+            payload["timing"] = dict(self.timing)
+        return payload
 
 
 @dataclass(frozen=True)

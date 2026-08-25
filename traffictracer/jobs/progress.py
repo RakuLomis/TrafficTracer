@@ -59,6 +59,10 @@ class ProgressReporter:
         self._progress = 0.0
         self._last_emitted_at: float | None = None
         self._finished = False
+        self._started_at = self._clock()
+        self._stage_started_at: float | None = None
+        self._operation = ""
+        self._operation_started_at: float | None = None
 
     @property
     def stage(self) -> JobStage | None:
@@ -78,9 +82,12 @@ class ProgressReporter:
         message: str = "",
         *,
         force: bool = False,
+        operation: str = "",
     ) -> ProgressEvent | None:
         if not math.isfinite(progress) or not 0 <= progress <= 1:
             raise ProgressInvariantError("progress must be a finite number between 0 and 1")
+        if not isinstance(operation, str):
+            raise ProgressInvariantError("operation must be a string")
         with self._lock:
             if self._finished:
                 raise ProgressInvariantError("progress cannot be emitted after the final event")
@@ -94,25 +101,56 @@ class ProgressReporter:
                 )
 
             now = self._clock()
+            previous_stage = self._stage
+            previous_stage_started_at = self._stage_started_at
+            previous_operation = self._operation
+            previous_operation_started_at = self._operation_started_at
             stage_changed = stage != self._stage
+            effective_operation = operation.strip() or stage.value
+            operation_changed = effective_operation != self._operation
+            if stage_changed or self._stage_started_at is None:
+                self._stage_started_at = now
+            if operation_changed or self._operation_started_at is None:
+                self._operation_started_at = now
             self._stage = stage
+            self._operation = effective_operation
             self._progress = progress
             terminal = state.terminal or stage is JobStage.FINISHED or progress == 1
             throttled = (
                 not force
                 and not stage_changed
+                and not operation_changed
                 and not terminal
                 and self._last_emitted_at is not None
                 and now - self._last_emitted_at < self._min_interval
             )
             if throttled:
                 return None
+            timing = {
+                "job_elapsed_ms": _duration_ms(self._started_at, now),
+                "stage_elapsed_ms": _duration_ms(self._stage_started_at, now),
+                "operation": effective_operation,
+                "operation_elapsed_ms": _duration_ms(
+                    self._operation_started_at, now
+                ),
+            }
+            if stage_changed and previous_stage is not None:
+                timing["completed_stage"] = previous_stage.value
+                timing["completed_stage_duration_ms"] = _duration_ms(
+                    previous_stage_started_at, now
+                )
+            if operation_changed and previous_operation:
+                timing["completed_operation"] = previous_operation
+                timing["completed_operation_duration_ms"] = _duration_ms(
+                    previous_operation_started_at, now
+                )
             event = ProgressEvent(
                 job_id=self._job_id,
                 state=state,
                 stage=stage.value,
                 progress=progress,
                 message=message,
+                timing=timing,
             )
             self._last_emitted_at = now
             if terminal:
@@ -155,6 +193,7 @@ class ProgressWindow:
         message: str = "",
         *,
         force: bool = False,
+        operation: str = "",
     ) -> ProgressEvent | None:
         if not math.isfinite(progress) or not 0 <= progress <= 1:
             raise ProgressInvariantError(
@@ -162,8 +201,19 @@ class ProgressWindow:
             )
         mapped = self._start + self._span * progress
         return self._reporter.emit(
-            state, stage, mapped, message, force=force
+            state,
+            stage,
+            mapped,
+            message,
+            force=force,
+            operation=operation,
         )
 
     def finish(self, state: JobState, message: str = "") -> ProgressEvent:
         return self._reporter.finish(state, message)
+
+
+def _duration_ms(started_at: float | None, now: float) -> int:
+    if started_at is None:
+        return 0
+    return max(0, int(round((now - started_at) * 1000)))

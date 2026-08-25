@@ -309,6 +309,7 @@ class _ChildProgress:
         message: str = "",
         *,
         force: bool = False,
+        operation: str = "",
     ) -> ProgressEvent | None:
         self._progress = progress
         batch_stage = (
@@ -321,12 +322,16 @@ class _ChildProgress:
         if stage is not JobStage.FINISHED:
             self.stage_callback(batch_stage)
         mapped = (self.position + min(max(progress, 0.0), 1.0)) / self.total
+        child_operation = operation.strip() or stage.value
         return self.parent.emit(
             JobState.CAPTURING,
             JobStage.BATCH_TARGET,
             mapped,
             f"target {self.position + 1}/{self.total}: {stage.value} {message}".strip(),
             force=force,
+            operation=(
+                f"target.{self.position + 1}.{child_operation}"
+            ),
         )
 
     def finish(self, state: JobState, message: str = "") -> ProgressEvent:
