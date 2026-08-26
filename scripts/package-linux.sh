@@ -9,6 +9,7 @@ target="${TT_TARGET:-x86_64-unknown-linux-gnu}"
 ui_dir="${TT_UI_DIR:-${repo_root}/components/clash-verge-rev}"
 prepare_script="${TT_PREPARE_SCRIPT:-${repo_root}/scripts/build-ui.sh}"
 pnpm_bin="${TT_PNPM_BIN:-pnpm}"
+cargo_bin="${CARGO:-cargo}"
 python_bin="${PYTHON:-python}"
 product_version="$(PYTHONPATH="$repo_root" "$python_bin" -c 'from traffictracer.version import COMPLETE_VERSION; print(COMPLETE_VERSION)')"
 ui_version="$("$python_bin" -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["version"])' "$ui_dir/src-tauri/tauri.conf.json")"
@@ -38,6 +39,10 @@ if ! command -v "$pnpm_bin" >/dev/null 2>&1; then
   echo "error: pnpm command is unavailable: $pnpm_bin" >&2
   exit 2
 fi
+if ! command -v "$cargo_bin" >/dev/null 2>&1; then
+  echo "error: cargo command is unavailable: $cargo_bin" >&2
+  exit 2
+fi
 if [[ -e "$output_dir" ]]; then
   echo "error: package output already exists: $output_dir" >&2
   echo "remove it or set TT_PACKAGE_OUTPUT_DIR to a new path" >&2
@@ -55,6 +60,19 @@ cleanup() {
 trap cleanup EXIT
 
 TT_TARGET="$target" TT_UI_DIR="$ui_dir" "$prepare_script" --prepare-only
+
+# Guard both halves of the controller contract before spending time bundling.
+# The lock test prevents the Rust and JavaScript clients from drifting, while
+# the Rust fixtures cover optional fields observed in real Mihomo responses.
+(
+  cd "$ui_dir"
+  "$pnpm_bin" exec node --test scripts/mihomo-plugin-lock.test.mjs
+  TRAFFICTRACER_GOLDEN_DIR="$repo_root/test/fixtures/tracing" \
+    TRAFFICTRACER_CONTRACT_DIR="$repo_root/test/fixtures/contracts" \
+    CARGO_TARGET_DIR="$tauri_target_dir" \
+    "$cargo_bin" test --manifest-path src-tauri/Cargo.toml \
+      mihomo_plugin_accepts_ --lib
+)
 
 # Tauri's AppImage bundler preserves the source icon mode for the root icon.
 # Normalize packaged asset inputs after preparation so a permissive developer

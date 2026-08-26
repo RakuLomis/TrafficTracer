@@ -224,6 +224,40 @@ def smoke_core(core: Path, root: Path) -> None:
         }
         if payload is None or any(payload.get(key) != value for key, value in expected.items()):
             raise SmokeFailure(f"packaged core capabilities mismatch: {payload}")
+
+        # Exercise the controller responses consumed by tauri-plugin-mihomo.
+        # In particular, built-in proxy objects legitimately omit
+        # `provider-name`; a release must preserve that real-world shape.
+        responses = {
+            path: unix_json(controller, path)
+            for path in (
+                "/version",
+                "/configs",
+                "/proxies",
+                "/providers/proxies",
+                "/rules",
+                "/providers/rules",
+            )
+        }
+        if not isinstance(responses["/version"].get("version"), str):
+            raise SmokeFailure("packaged core /version response is invalid")
+        proxies = responses["/proxies"].get("proxies")
+        if not isinstance(proxies, dict) or not proxies:
+            raise SmokeFailure("packaged core /proxies response is invalid")
+        if not any(
+            isinstance(proxy, dict) and "provider-name" not in proxy
+            for proxy in proxies.values()
+        ):
+            raise SmokeFailure(
+                "packaged core smoke fixture no longer covers missing provider-name"
+            )
+        for path, field, expected_type in (
+            ("/providers/proxies", "providers", dict),
+            ("/rules", "rules", list),
+            ("/providers/rules", "providers", dict),
+        ):
+            if not isinstance(responses[path].get(field), expected_type):
+                raise SmokeFailure(f"packaged core {path} response is invalid")
     finally:
         if process.poll() is None:
             process.terminate()
