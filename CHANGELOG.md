@@ -4,6 +4,15 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.12] - 2026-08-26
+
+### Fixed
+
+- Aligned the Rust and JavaScript Mihomo API plugins on one compatible revision.
+- Accepted valid TUIC server configuration responses that omit an empty `ech-key`.
+- Adapted log-level and traffic models to the updated plugin bindings.
+- Added dependency-lock and TUIC deserialization regression coverage.
+
 ## [1.0.11] - 2026-08-26
 
 ### Fixed
