@@ -4,6 +4,16 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.11] - 2026-08-26
+
+### Fixed
+
+- Recovered Home core data after sidecar-to-service controller transitions.
+- Refreshed all Mihomo-backed queries after a real controller readiness probe.
+- Added bounded error-only retries for core configuration, proxies, rules,
+  providers, and version data.
+- Replaced the empty Clash Info failure state with visible feedback and retry.
+
 ## [1.0.10] - 2026-08-26
 
 ### Added
