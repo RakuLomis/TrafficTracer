@@ -57,6 +57,32 @@ class ControllerSpec:
 
 
 @dataclass(frozen=True)
+class PipelineProvenance:
+    pipeline_id: str
+    run_id: str
+    run_ordinal: int
+    profile_uid: str
+    selection_group: str
+    requested_node: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pipeline_id": self.pipeline_id,
+            "run_id": self.run_id,
+            "run_ordinal": self.run_ordinal,
+            "profile_uid": self.profile_uid,
+            "selection_group": self.selection_group,
+            "requested_node": self.requested_node,
+        }
+
+    @classmethod
+    def from_dict(
+        cls, payload: Mapping[str, Any] | None
+    ) -> "PipelineProvenance | None":
+        return cls(**dict(payload)) if payload is not None else None
+
+
+@dataclass(frozen=True)
 class CaptureJobOptions:
     capture_packets: bool = True
     collect_cdp: bool = True
@@ -155,6 +181,7 @@ class CaptureJobSpec:
     page_type: str = "capture"
     capture_group: str = ""
     playback: PlaybackPolicy | None = None
+    orchestration: PipelineProvenance | None = None
 
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="capture", init=False)
@@ -191,6 +218,8 @@ class CaptureJobSpec:
         }
         if self.playback is not None:
             payload["playback"] = self.playback.to_dict()
+        if self.orchestration is not None:
+            payload["orchestration"] = self.orchestration.to_dict()
         if validate:
             validate_job(payload)
         return payload
@@ -244,6 +273,7 @@ class CaptureJobSpec:
             page_type=data.get("page_type", data.get("run_label", "capture")).lower().replace("_", "-"),
             capture_group=data.get("capture_group", ""),
             playback=PlaybackPolicy.from_dict(data.get("playback")),
+            orchestration=PipelineProvenance.from_dict(data.get("orchestration")),
         )
 
 

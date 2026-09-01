@@ -10,6 +10,8 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 
 ## Technical reference
 
+- [Profile and proxy pipelines](profile-proxy-pipelines.md): queue semantics, ownership, barriers, resume behavior, and provenance.
+
 - [Architecture](architecture.md): component ownership, process boundaries, lifecycle, and protocol pins.
 - [Sessions and correlation data](data-model.md): directory layout, canonical indexes, correlation semantics, coverage, and packet evidence.
 - [Deferred multi-tab design](future-multi-tab-capture.md): non-normative notes for a possible post-1.0 browser-group mode; current releases remain single-tab.
@@ -20,7 +22,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 
 ## Release information
 
-- [1.0.12 release notes](releases/v1.0.12.md)
+- [1.0.14 release notes](releases/v1.0.14.md)
 - [1.0.7 release notes](releases/v1.0.7.md)
 - [1.0.4 release notes](releases/v1.0.4.md)
 - [1.0.1 release notes](releases/v1.0.1.md)
@@ -39,4 +41,4 @@ The documentation follows these rules:
 5. Runtime behavior takes precedence over historical design notes. Obsolete implementation plans are not kept in the active documentation tree.
 6. Examples must not contain real proxy credentials, subscription URLs, controller secrets, captures, or user-specific paths.
 
-Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.12 on Linux x86-64. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.
+Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.14 on Linux x86-64. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.

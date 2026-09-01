@@ -48,6 +48,7 @@ def _fixture(name: str) -> dict:
         ("flow_v2", "flow-v2-request-repeated-url.json"),
         ("flow_v2", "flow-v2-request-ambiguous.json"),
         ("pcap_index", "pcap-index-v1-valid.json"),
+        ("pipeline_manifest", "pipeline-manifest-v1-valid.json"),
         ("flow", "flow-valid-unmatched-ipv6.json"),
     ],
 )
@@ -182,6 +183,7 @@ def test_unknown_contract_has_a_deterministic_error():
         "job",
         "packet_split_manifest",
         "pcap_index",
+        "pipeline_manifest",
         "session",
         "session_v2",
         "target_config",

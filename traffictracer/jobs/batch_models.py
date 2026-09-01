@@ -16,7 +16,13 @@ from traffictracer.playback import PlaybackPolicy
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import BATCH_MANIFEST_SCHEMA_VERSION, JOB_SCHEMA_VERSION
 
-from .models import CaptureInterfaces, CaptureJobOptions, ControllerSpec, JobState
+from .models import (
+    CaptureInterfaces,
+    CaptureJobOptions,
+    ControllerSpec,
+    JobState,
+    PipelineProvenance,
+)
 
 
 BATCH_MANIFEST_NAME = "batch-manifest.json"
@@ -107,6 +113,7 @@ class BatchJobSpec:
     controller: ControllerSpec
     options: CaptureJobOptions = field(default_factory=CaptureJobOptions)
     fail_fast: bool = True
+    orchestration: PipelineProvenance | None = None
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="batch", init=False)
 
@@ -182,6 +189,8 @@ class BatchJobSpec:
             "options": self.options.to_dict(),
             "fail_fast": self.fail_fast,
         }
+        if self.orchestration is not None:
+            payload["orchestration"] = self.orchestration.to_dict()
         if validate:
             validate_job(payload)
         return payload
@@ -210,6 +219,7 @@ class BatchJobSpec:
             ),
             options=CaptureJobOptions(**options),
             fail_fast=data["fail_fast"],
+            orchestration=PipelineProvenance.from_dict(data.get("orchestration")),
         )
 
 
@@ -271,6 +281,7 @@ class BatchManifest:
     current_index: int | None
     children: tuple[BatchChild, ...]
     fail_fast: bool
+    orchestration: PipelineProvenance | None = None
     cancel_requested: bool = False
     resume: BatchResume = field(default_factory=BatchResume)
     schema_version: int = BATCH_MANIFEST_SCHEMA_VERSION
@@ -301,6 +312,7 @@ class BatchManifest:
             current_index=None,
             children=tuple(BatchChild(target.index) for target in spec.targets),
             fail_fast=spec.fail_fast,
+            orchestration=spec.orchestration,
         )
         manifest.to_dict()
         return manifest
@@ -613,6 +625,8 @@ class BatchManifest:
             "cancel_requested": self.cancel_requested,
             "resume": self.resume.to_dict(),
         }
+        if self.orchestration is not None:
+            payload["orchestration"] = self.orchestration.to_dict()
         if validate:
             validate_batch_manifest(payload)
         return payload
@@ -652,6 +666,7 @@ class BatchManifest:
             current_index=data["current_index"],
             children=children,
             fail_fast=data["fail_fast"],
+            orchestration=PipelineProvenance.from_dict(data.get("orchestration")),
             cancel_requested=data["cancel_requested"],
             resume=BatchResume(
                 attempt=data["resume"]["attempt"],
@@ -682,6 +697,7 @@ class BatchManifest:
             ),
             options=self.options,
             fail_fast=self.fail_fast,
+            orchestration=self.orchestration,
         )
 
     def persist(self, directory: str | Path) -> Path:

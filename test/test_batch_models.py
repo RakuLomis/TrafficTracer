@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from traffictracer.jobs.models import PipelineProvenance
 from traffictracer.jobs.batch_models import (
     BatchChildState,
     BatchError,
@@ -152,3 +153,19 @@ def test_manifest_decoder_rejects_child_snapshot_drift():
     payload["children"][1]["target_index"] = 99
     with pytest.raises(ValueError, match="exactly match"):
         BatchManifest.from_dict(payload)
+
+
+def test_pipeline_provenance_round_trips_through_batch_manifest():
+    provenance = PipelineProvenance(
+        pipeline_id="6ea29d49-4f0e-4f9b-8a88-0ad095c50b78",
+        run_id="e107516f-335d-42f5-b9f4-f71c081c41e7",
+        run_ordinal=2,
+        profile_uid="profile-two",
+        selection_group="GLOBAL",
+        requested_node="ss-node",
+    )
+    spec = replace(_spec(), orchestration=provenance)
+    assert BatchJobSpec.from_dict(spec.to_dict()).orchestration == provenance
+    manifest = BatchManifest.create(spec)
+    assert BatchManifest.from_dict(manifest.to_dict()).orchestration == provenance
+    assert manifest.to_job_spec().orchestration == provenance

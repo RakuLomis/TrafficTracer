@@ -4,6 +4,21 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.14] - 2026-09-01
+
+### Added
+
+- Added ordered Profile, selector, and node pipelines around existing serial Capture Groups.
+- Added durable pipeline history, progress, interrupt, cancel, and checkpoint-aware resume.
+- Propagated pipeline/run/Profile/node provenance into Batch manifests and Session capture contexts.
+- Recorded resolved proxy chains and bounded Mihomo trace protocol observations per run.
+
+### Safety
+
+- Added owner-scoped capture locking, selector readback, connection draining, and original-state restoration.
+- Made stale supervisors resumable without discarding completed targets or silently accepting changed configuration.
+
+
 ## [1.0.12] - 2026-08-26
 
 ### Fixed

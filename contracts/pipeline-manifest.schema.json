@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traffictracer.local/contracts/pipeline-manifest.schema.json",
+  "title": "TrafficTracer profile and proxy capture pipeline manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "pipeline_id": { "$ref": "#/$defs/uuid" },
+    "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
+    "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "running_batch", "verifying_protocol", "checkpoint", "restoring", "finished"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "output_root": { "$ref": "#/$defs/absolutePath" },
+    "config": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "$ref": "#/$defs/absolutePath" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } },
+    "targets": { "type": "array", "minItems": 1, "maxItems": 1000, "uniqueItems": true, "items": { "$ref": "#/$defs/target" } },
+    "policy": { "type": "object", "additionalProperties": false, "required": ["continue_on_run_failure", "restore_original_state"], "properties": { "continue_on_run_failure": { "type": "boolean" }, "restore_original_state": { "const": true } } },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["tun_interface", "physical_interface", "chrome_binary", "options", "fail_fast"],
+      "properties": {
+        "tun_interface": { "type": "string", "minLength": 1 },
+        "physical_interface": { "type": "string", "minLength": 1 },
+        "chrome_binary": { "$ref": "#/$defs/absolutePath" },
+        "options": { "type": "object" },
+        "fail_fast": { "type": "boolean" }
+      }
+    },
+    "current_run_index": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+    "runs": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/run" } },
+    "restore": { "$ref": "#/$defs/restore" }
+  },
+  "$defs": {
+    "uuid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" },
+    "absolutePath": { "type": "string", "minLength": 1, "pattern": "^/" },
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 256, "not": { "pattern": "[\\r\\n\\u0000]" } },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "url", "domain", "duration_seconds", "network", "run_label", "wait_load_timeout", "page_type"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 }, "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "domain": { "type": "string", "minLength": 1, "maxLength": 253 }, "duration_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "network": { "enum": ["tcp", "udp", "all"] }, "run_label": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+        "wait_load_timeout": { "type": "integer", "minimum": 1, "maximum": 3600 }, "page_type": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$" },
+        "playback": { "type": "object", "additionalProperties": false, "required": ["provider", "ad_policy", "desired_primary_seconds"], "properties": { "provider": { "const": "youtube" }, "ad_policy": { "const": "click_visible_skip" }, "desired_primary_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 } } }
+      }
+    },
+    "error": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": { "code": { "type": "string", "minLength": 1 }, "message": { "type": "string", "minLength": 1 } } }] },
+    "run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "run_id", "profile_uid", "profile_fingerprint", "selection_group", "requested_node", "state", "stage", "resolved_chain", "resolved_leaf", "expected_protocol", "observed_protocol", "batch_id", "output_path", "error", "resume_attempt", "started_at", "completed_at"],
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 1 }, "run_id": { "$ref": "#/$defs/uuid" }, "profile_uid": { "$ref": "#/$defs/identifier" },
+        "profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "selection_group": { "$ref": "#/$defs/identifier" }, "requested_node": { "$ref": "#/$defs/identifier" },
+        "state": { "enum": ["pending", "running", "completed", "degraded", "failed", "interrupted", "skipped", "cancelled"] },
+        "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "running_batch", "verifying_protocol", "checkpoint", "finished"] },
+        "resolved_chain": { "type": "array", "items": { "$ref": "#/$defs/identifier" } }, "resolved_leaf": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "expected_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" }, "observed_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" },
+        "batch_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] }, "output_path": { "$ref": "#/$defs/absolutePath" }, "error": { "$ref": "#/$defs/error" },
+        "resume_attempt": { "type": "integer", "minimum": 0 }, "started_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }, "completed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+      }
+    },
+    "restore": {
+      "type": "object", "additionalProperties": false, "required": ["profile_uid", "selections", "state", "error"],
+      "properties": {
+        "profile_uid": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "selections": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["group", "node"], "properties": { "group": { "$ref": "#/$defs/identifier" }, "node": { "$ref": "#/$defs/identifier" } } } },
+        "state": { "enum": ["pending", "not_required", "restoring", "restored", "failed"] }, "error": { "$ref": "#/$defs/error" }
+      }
+    }
+  }
+}

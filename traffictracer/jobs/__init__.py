@@ -22,6 +22,7 @@ from .models import (
     CaptureJobSpec,
     ControllerSpec,
     JobState,
+    PipelineProvenance,
     ProgressEvent,
 )
 
@@ -51,5 +52,6 @@ __all__ = [
     "CaptureJobSpec",
     "ControllerSpec",
     "JobState",
+    "PipelineProvenance",
     "ProgressEvent",
 ]

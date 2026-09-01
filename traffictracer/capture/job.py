@@ -144,6 +144,8 @@ class CaptureJob:
                 "expected_core_name": "DEFAULT-TUN",
             },
         }
+        if self.spec.orchestration is not None:
+            capture_context["orchestration"] = self.spec.orchestration.to_dict()
         if self.spec.playback is not None:
             capture_context["playback_policy"] = (
                 self.spec.playback.to_dict()

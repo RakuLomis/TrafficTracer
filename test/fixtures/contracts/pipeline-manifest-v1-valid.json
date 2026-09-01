@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "pipeline_id": "6ea29d49-4f0e-4f9b-8a88-0ad095c50b78",
+  "state": "running",
+  "stage": "running_batch",
+  "created_at": "2026-09-01T01:00:00Z",
+  "updated_at": "2026-09-01T01:02:00Z",
+  "output_root": "/tmp/traffictracer/pipeline",
+  "config": { "path": "/tmp/sites.yaml", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+  "targets": [{ "index": 0, "url": "https://example.com/", "domain": "example.com", "duration_seconds": 8, "network": "all", "run_label": "example", "wait_load_timeout": 30, "page_type": "example-main-page" }],
+  "execution": {
+    "tun_interface": "Meta",
+    "physical_interface": "eth0",
+    "chrome_binary": "/usr/bin/google-chrome",
+    "options": { "capture_packets": true },
+    "fail_fast": false
+  },
+  "policy": { "continue_on_run_failure": true, "restore_original_state": true },
+  "current_run_index": 0,
+  "runs": [{
+    "ordinal": 1, "run_id": "e107516f-335d-42f5-b9f4-f71c081c41e7", "profile_uid": "profile-local-1",
+    "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "selection_group": "GLOBAL", "requested_node": "test-node",
+    "state": "running", "stage": "running_batch", "resolved_chain": ["test-node"], "resolved_leaf": "test-node", "expected_protocol": "shadowsocks", "observed_protocol": "",
+    "batch_id": "e38c26b7-789c-4aa0-b1bb-e3d5916390af", "output_path": "/tmp/traffictracer/pipeline/runs/001_0123456789ab", "error": null,
+    "resume_attempt": 0, "started_at": "2026-09-01T01:01:00Z", "completed_at": null
+  }],
+  "restore": { "profile_uid": "profile-local-1", "selections": [{ "group": "GLOBAL", "node": "original-node" }], "state": "pending", "error": null }
+}

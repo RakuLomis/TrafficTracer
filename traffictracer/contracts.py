@@ -27,6 +27,7 @@ _CONTRACT_FILES = {
     "target_config": "target-config.schema.json",
     "batch_manifest": "batch-manifest.schema.json",
     "packet_split_manifest": "packet-split-manifest.schema.json",
+    "pipeline_manifest": "pipeline-manifest.schema.json",
 }
 _CONTRACT_ALIASES = {
     "worker-api": "worker_api",
@@ -36,6 +37,7 @@ _CONTRACT_ALIASES = {
     "pcap-index": "pcap_index",
     "batch-manifest": "batch_manifest",
     "packet-split-manifest": "packet_split_manifest",
+    "pipeline-manifest": "pipeline_manifest",
 }
 T = TypeVar("T")
 

@@ -73,9 +73,11 @@
     },
     "fail_fast": { "type": "boolean" },
     "cancel_requested": { "type": "boolean" },
+    "orchestration": { "$ref": "#/$defs/orchestration" },
     "resume": { "$ref": "#/$defs/resume" }
   },
   "$defs": {
+    "orchestration": { "type": "object", "additionalProperties": false, "required": ["pipeline_id", "run_id", "run_ordinal", "profile_uid", "selection_group", "requested_node"], "properties": { "pipeline_id": { "$ref": "#/$defs/uuid" }, "run_id": { "$ref": "#/$defs/uuid" }, "run_ordinal": { "type": "integer", "minimum": 1 }, "profile_uid": { "type": "string", "minLength": 1, "maxLength": 256 }, "selection_group": { "type": "string", "minLength": 1, "maxLength": 256 }, "requested_node": { "type": "string", "minLength": 1, "maxLength": 256 } } },
     "uuid": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"

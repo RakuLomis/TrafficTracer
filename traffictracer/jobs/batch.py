@@ -246,6 +246,7 @@ class SerialBatchJob:
             page_type=target.page_type,
             playback=target.playback,
             capture_group=capture_group,
+            orchestration=self.spec.orchestration,
             target_source=TargetSource(
                 mode="config",
                 config_path=self.spec.config_path,
