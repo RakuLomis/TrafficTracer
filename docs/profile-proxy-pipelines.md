@@ -4,10 +4,10 @@ TrafficTracer 1.0 captures one ordered target set through one active Mihomo
 selection. Pipeline mode adds a durable outer orchestration layer:
 
 ```text
-pipeline -> profile/selector/node run -> existing serial capture batch -> Session
+pipeline -> profile/selector/node candidate -> repetition -> existing serial capture batch -> Session
 ```
 
-The stable run identity is `(profile_uid, selection_group, requested_node)`.
+The stable candidate identity is `(profile_uid, selection_group, requested_node)`. Each concrete run additionally records a one-based `repetition_index`; the durable logical identity is `(candidate_ordinal, repetition_index)`.
 Node names alone are not unique and do not identify the selector whose state
 must be changed. Every selected `sites.yaml` entry remains an independent
 target; entries are not deduplicated by domain.
@@ -39,7 +39,7 @@ chain, closes old connections, waits for quiescence and performs environment
 checks. Only then may it start the existing serial Batch. A checkpoint must be
 durable before the next node is selected.
 
-Pipeline manifest schema v3 makes this barrier evidence-based. The supervisor
+Pipeline manifest schema v4 makes this barrier evidence-based and records `repetitions_per_candidate`, `candidate_ordinal`, `repetition_index`, and `repetition_total`. The supervisor
 polls Profile, runtime fingerprint, selector, resolved chain and concrete leaf
 until the requested state is observed or a bounded deadline expires. It
 snapshots connection IDs that existed at the transition, closes them, and
@@ -61,7 +61,7 @@ results.
 
 ## Recovery and privacy
 
-Completed runs and targets are skipped on resume. An interrupted target is
+Completed candidate repetitions and targets are skipped on resume. The supervisor expands candidates in candidate-major order: it finishes all requested repetitions for one candidate before activating the next candidate. An interrupted target is
 retried as a new Session inside the same Batch. Deleted or changed Profiles and
 missing nodes block that run instead of selecting a substitute. Original
 Profile and selector state is restored on every terminal path.
@@ -90,7 +90,9 @@ multi-Profile matrix picker.
 
 ## Durable layout and provenance
 
-A pipeline creates one timestamped `__pipeline-<id>` directory below the configured Session output root. Its manifest freezes the ordered target snapshot, capture options, candidate order, effective Profile SHA-256 values, per-run Batch identifiers, resolved proxy chain, expected leaf protocol, and protocols actually observed in bounded Mihomo trace events.
+A pipeline creates one timestamped `__pipeline-<id>` directory below the configured Session output root. Its manifest freezes the ordered target snapshot, capture options, candidate order, effective Profile SHA-256 values, per-repetition run and Batch identifiers, resolved proxy chain, expected leaf protocol, and protocols actually observed in bounded Mihomo trace events.
+
+Every repetition owns a separate run directory and inner Batch checkpoint; the same URL therefore remains distinguishable across samples. `pipeline-aggregate.json` is atomically refreshed with per-candidate run states, Session totals, and Capture/Correlation/Application counters.
 
 Each inner Batch request carries an optional `orchestration` object. The Worker preserves it in `batch-manifest.json`, propagates it to every child capture, and writes it into the Session's `capture-context.json`. Therefore a copied Session remains attributable to its pipeline run even when it is separated from the outer directory.
 
@@ -122,7 +124,7 @@ terminal cancellation.
 
 ## Run quality and persistent progress
 
-`pipeline-manifest.json` schema v3 records three independent quality planes for
+`pipeline-manifest.json` schema v4 records three independent quality planes for
 each terminal run:
 
 - `capture_integrity`: whether the page-attributed evidence is complete enough
@@ -141,6 +143,4 @@ reason and primary-content duration. Non-playback Sessions are counted as
 The desktop progress card is rebuilt from the durable Pipeline and inner Batch
 manifests. After navigating away and back, it shows the active or most recently
 terminal run, current target URL, Batch stage and attempt, elapsed time, last
-durable checkpoint, quality planes and application issues. Schema v1 Pipeline
-manifests from schema v1 and v2 remain readable and are migrated to v3 when
-next persisted.
+durable checkpoint, quality planes and application issues. Schema v1-v3 Pipeline manifests remain readable. They migrate to one repetition per historical run in memory and are persisted as schema v4 at the next checkpoint.

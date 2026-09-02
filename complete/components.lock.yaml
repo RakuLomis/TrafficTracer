@@ -1,7 +1,7 @@
 schema_version: 1
 product:
   name: TrafficTracer Complete
-  version: 1.0.16
+  version: 1.0.17
   branch: Complete
   platforms:
     - x86_64-unknown-linux-gnu
@@ -15,7 +15,7 @@ components:
     path: components/clash-verge-rev
     repository: https://github.com/RakuLomis/clash-verge-rev.git
     branch: feat/traffic-tracer
-    commit: 4d3aabd850b257b92dff2a67b061e125e691621e
+    commit: 77d324e109063590cd9e75831c545ea451aa2a26
   clash_verge_service:
     repository: https://github.com/clash-verge-rev/clash-verge-service-ipc
     tag: v2.6.1
