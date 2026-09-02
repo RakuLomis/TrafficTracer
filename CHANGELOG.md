@@ -4,6 +4,15 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.15] - 2026-09-02
+
+### Fixed
+
+- Serialized Pipeline Worker workspace switching with owner-scoped capture locks.
+- Paused automatic environment diagnostics while a Pipeline owns the capture workspace.
+- Restored the correct Worker Session root before checkpoint-aware Pipeline resume.
+- Replaced oversized Worker ready events with bounded recovery summaries.
+
 ## [1.0.14] - 2026-09-01
 
 ### Added
