@@ -9,6 +9,8 @@ import pytest
 
 from traffictracer.jobs.models import PipelineProvenance
 from traffictracer.jobs.batch_models import (
+    ApplicationRetryPolicy,
+    BatchApplicationOutcome,
     BatchChildState,
     BatchError,
     BatchJobSpec,
@@ -35,7 +37,13 @@ def test_batch_job_and_manifest_fixtures_round_trip():
     job_payload = _payload("job-valid-batch.json")
     assert BatchJobSpec.from_dict(job_payload).to_dict() == job_payload
     manifest_payload = _payload("batch-manifest-v1-valid.json")
-    assert BatchManifest.from_dict(manifest_payload).to_dict() == manifest_payload
+    migrated = BatchManifest.from_dict(manifest_payload).to_dict()
+    assert migrated["schema_version"] == 2
+    assert migrated["application_retry"] == {
+        "enabled": False,
+        "max_retries": 1,
+    }
+    assert all("attempts" in child for child in migrated["children"])
 
 
 def test_empty_and_semantically_duplicate_targets_are_rejected():
@@ -103,6 +111,41 @@ def test_failed_batch_resume_retries_failed_snapshot_position():
     assert resumed.fail_fast is False
     assert resumed.children[0].state is BatchChildState.INTERRUPTED
     assert resumed.start_child(0).current_index == 0
+
+
+def test_manual_resume_attempt_history_is_not_limited_by_auto_retry_budget():
+    manifest = BatchManifest.create(_spec()).begin()
+    for expected_attempts in (1, 2, 3):
+        manifest = manifest.start_child(0)
+        assert len(manifest.children[0].attempts) == expected_attempts
+        manifest = manifest.finish_child(BatchChildState.INTERRUPTED)
+        if expected_attempts < 3:
+            manifest = manifest.begin()
+    assert manifest.to_dict()["children"][0]["attempts"][2][
+        "automatic_retry"
+    ] is False
+
+
+def test_durable_model_rejects_a_second_automatic_retry():
+    spec = replace(
+        _spec(),
+        application_retry=ApplicationRetryPolicy(enabled=True, max_retries=1),
+    )
+    manifest = BatchManifest.create(spec).begin().start_child(0)
+    outcome = BatchApplicationOutcome(
+        state="failed", reason="MEDIA_NOT_ADVANCING"
+    )
+    manifest = manifest.retry_child(
+        session_id="5027aee9-c6e4-41de-8625-7ea0869a3307",
+        application_outcome=outcome,
+        job_id="78fdab68-4e5d-4b67-9910-33da00a2632a",
+    )
+    with pytest.raises(ValueError, match="budget is exhausted"):
+        manifest.retry_child(
+            session_id="78fdab68-4e5d-4b67-9910-33da00a2632a",
+            application_outcome=outcome,
+            job_id="9af6d146-8594-41f4-bb3b-7bd60a7b118a",
+        )
 
 
 def test_successful_reanalysis_reconciles_failed_child_without_recapture():

@@ -1,15 +1,15 @@
 # TrafficTracer Complete UI Guide
 
-TrafficTracer Complete 1.0.15 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
+TrafficTracer Complete 1.0.16 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
 
 ## 1. Verify the release
 
 The release directory contains one Deb, one AppImage, checksums, component provenance, license notices, an SBOM, and an audit report:
 
 ```text
-traffictracer-complete-v1.0.15-linux-x86_64/
-├── TrafficTracer-Complete_1.0.15_linux_x86_64.deb
-├── TrafficTracer-Complete_1.0.15_linux_x86_64.AppImage
+traffictracer-complete-v1.0.16-linux-x86_64/
+├── TrafficTracer-Complete_1.0.16_linux_x86_64.deb
+├── TrafficTracer-Complete_1.0.16_linux_x86_64.AppImage
 ├── SHA256SUMS
 ├── VERSION
 ├── COMPONENTS
@@ -24,11 +24,11 @@ traffictracer-complete-v1.0.15-linux-x86_64/
 Verify the package checksums:
 
 ```bash
-cd /path/to/traffictracer-complete-v1.0.15-linux-x86_64
+cd /path/to/traffictracer-complete-v1.0.16-linux-x86_64
 sha256sum -c SHA256SUMS
 ```
 
-`VERSION` identifies TrafficTracer Complete 1.0.15. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
+`VERSION` identifies TrafficTracer Complete 1.0.16. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
 
 ## 2. Install prerequisites
 
@@ -48,16 +48,16 @@ Some distributions grant capture access through the `wireshark` group instead of
 Install the Deb:
 
 ```bash
-sudo apt install ./TrafficTracer-Complete_1.0.15_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.16_linux_x86_64.deb
 ```
 
-The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.15`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
+The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.16`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
 
 To avoid installing system files, use the AppImage:
 
 ```bash
-chmod +x TrafficTracer-Complete_1.0.15_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.15_linux_x86_64.AppImage
+chmod +x TrafficTracer-Complete_1.0.16_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.16_linux_x86_64.AppImage
 ```
 
 Do not install from `/tmp` if the path may disappear after a reboot. For `apt`, include `./` or an absolute path; otherwise the filename is interpreted as a package name.
@@ -134,6 +134,15 @@ sites:
 ```
 
 Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. Use **Interrupt current capture** to stop a running serial group safely. Completed targets are retained, later targets are not started, and **Resume from interrupted target** retries the interrupted URL as a new Session in the same timestamped group. Failed groups remain resumable from their stored cursor.
+
+**Retry classified playback failure once** is an opt-in Batch/Pipeline policy
+and is off by default. It applies only to YAML targets with a playback policy.
+After analysis explicitly reports a supported transient outcome such as
+PLAYER_NOT_CREATED, MEDIA_NOT_ADVANCING, or PRIMARY_CONTENT_NOT_OBSERVED, the
+Worker completes cleanup and starts one fresh managed Chrome process, Job, and
+Session. The first attempt remains in batch-manifest.json and the UI exposes
+both analyses. Positive but short playback, capture or analysis exceptions,
+protocol failures, and unknown application reasons are not retried.
 
 See [Target configuration](../configuration.md) for normalization and limits.
 The frozen protocol invariant is stored with the Capture Group. Resume reuses it
@@ -245,18 +254,18 @@ See [Sessions and correlation data](../data-model.md) for the full semantics.
 
 ## 11. Protocol versions
 
-`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.15 uses:
+`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.16 uses:
 
 | Contract | Version |
 | --- | ---: |
 | Worker JSONL API | 2 |
-| Job schema | 2 |
+| Job schema | 3 |
 | Session manifest | 2 |
 | Flow result | 1 |
 | Connection index | 2 |
 | Request index | 2 |
 | PCAP index | 1 |
-| Batch manifest | 1 |
+| Batch manifest | 2 |
 | Mihomo tracing API | 1 |
 | Mihomo event schema | 1 |
 

@@ -645,6 +645,7 @@ class WorkerServices:
             progress=progress,
             cancellation=cancellation,
             session_for_job=self._session_for_job,
+            application_outcome_for_session=self._application_outcome_for_session,
             resume=resume,
         )
 
@@ -701,6 +702,19 @@ class WorkerServices:
 
     def _session_for_job(self, job_id: str) -> str | None:
         return self.store.session_id_for_job(job_id)
+
+    def _application_outcome_for_session(
+        self, session_id: str
+    ) -> dict[str, Any] | None:
+        try:
+            manifest = self.store.get(session_id)
+            summary_path = Path(manifest.session_dir) / "analysis" / "summary.json"
+            with summary_path.open(encoding="utf-8") as stream:
+                summary = json.load(stream)
+        except (OSError, ValueError, TypeError, SessionStoreError):
+            return None
+        outcome = summary.get("scenario_outcome")
+        return dict(outcome) if isinstance(outcome, dict) else None
 
     def _require_output_root(self, value: str) -> None:
         if Path(value).resolve() != self.store.output_root:

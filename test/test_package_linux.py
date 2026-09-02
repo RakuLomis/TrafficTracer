@@ -109,13 +109,13 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     )
 
     output = fake_package["output"]
-    deb = output / "TrafficTracer-Complete_1.0.15_linux_x86_64.deb"
-    appimage = output / "TrafficTracer-Complete_1.0.15_linux_x86_64.AppImage"
+    deb = output / "TrafficTracer-Complete_1.0.16_linux_x86_64.deb"
+    appimage = output / "TrafficTracer-Complete_1.0.16_linux_x86_64.AppImage"
     assert deb.read_text() == "deb-package"
     assert appimage.read_text() == "appimage-package"
     assert (output / "SHA256SUMS").read_text().count("\n") == 2
     assert f"target={TARGET}" in (output / "COMPONENTS").read_text()
-    assert "product_version=1.0.15" in (output / "COMPONENTS").read_text()
+    assert "product_version=1.0.16" in (output / "COMPONENTS").read_text()
     assert "version=1.0.15" in (output / "VERSION").read_text()
     calls = fake_package["invocations"].read_text().splitlines()
     assert calls[0] == "prepared"

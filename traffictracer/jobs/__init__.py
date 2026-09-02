@@ -3,6 +3,9 @@
 from .cancellation import CancellationToken, CancelledError, InterruptedError
 from .process_registry import CleanupReport, ProcessRecord, ProcessRegistry
 from .batch_models import (
+    ApplicationRetryPolicy,
+    BatchApplicationOutcome,
+    BatchAttempt,
     BatchChild,
     BatchChildState,
     BatchError,
@@ -27,6 +30,9 @@ from .models import (
 )
 
 __all__ = [
+    "ApplicationRetryPolicy",
+    "BatchApplicationOutcome",
+    "BatchAttempt",
     "CancellationToken",
     "BatchChild",
     "BatchChildState",

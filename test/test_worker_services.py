@@ -158,6 +158,43 @@ def test_capture_service_chains_analysis_and_persists_manifest_artifacts(
     assert any(item["method"] == "job.completed" for item in notifications)
 
 
+def test_application_retry_outcome_is_loaded_only_from_persisted_summary(
+    tmp_path,
+):
+    services = WorkerServices(
+        tmp_path / "sessions",
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+    versions = ComponentVersions(
+        *(ComponentVersion("complete", "unknown") for _ in range(3))
+    )
+    manifest = services.store.create(
+        job_id="2f746e31-d62a-4e1c-a919-3f88ecde31c2",
+        target=SessionTarget(
+            url="https://www.youtube.com/watch?v=fixture",
+            domain="youtube.com",
+        ),
+        component_versions=versions,
+    )
+    analysis = Path(manifest.session_dir) / "analysis"
+    analysis.mkdir()
+    write_json_atomic(analysis / "summary.json", {
+        "scenario_outcome": {
+            "state": "failed",
+            "reason": "MEDIA_NOT_ADVANCING",
+        }
+    })
+
+    assert services._application_outcome_for_session(manifest.session_id) == {
+        "state": "failed",
+        "reason": "MEDIA_NOT_ADVANCING",
+    }
+    assert services._application_outcome_for_session(
+        "5027aee9-c6e4-41de-8625-7ea0869a3307"
+    ) is None
+
+
 def test_capture_failure_records_partial_raw_artifacts_and_non_empty_error(
     tmp_path, monkeypatch
 ):

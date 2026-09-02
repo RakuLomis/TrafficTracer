@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from traffictracer.jobs.batch_models import BatchManifest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,7 +23,15 @@ def test_batch_schemas_and_fixtures_are_valid():
         _load(ROOT / "test" / "fixtures" / "contracts" / "job-valid-batch.json")
     )
     Draft202012Validator(manifest).validate(
-        _load(ROOT / "test" / "fixtures" / "contracts" / "batch-manifest-v1-valid.json")
+        BatchManifest.from_dict(
+            _load(
+                ROOT
+                / "test"
+                / "fixtures"
+                / "contracts"
+                / "batch-manifest-v1-valid.json"
+            )
+        ).to_dict()
     )
 
 

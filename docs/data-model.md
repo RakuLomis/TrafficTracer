@@ -34,6 +34,13 @@ TrafficTracer stores each page visit as a versioned Session. A timestamped captu
 
 Exact raw filenames are registered in `session.json`; consumers should use the artifact list instead of assuming every optional file exists. Analysis generations are immutable. Re-analysis publishes a new generation and updates the manifest rather than overwriting a prior result in place.
 
+For YAML capture groups, Batch manifest v2 records a bounded attempts list for
+every target. Each attempt carries its ordinal, child Job UUID, Session ID,
+terminal state, structured error, classified application outcome, and whether
+it was an automatic retry. The child-level session_id remains the effective
+latest attempt for compatible consumers; earlier Sessions are never deleted or
+hidden from the Session catalog.
+
 The currently published generation appears at `analysis/`. Re-analysis builds in a generation-specific staging directory and atomically replaces the published view only after validation succeeds; artifacts record their generation UUID.
 
 The layout intentionally avoids directories keyed only by opaque connection IDs. Domain, page type, and readable URL identify page Sessions; stable connection IDs live inside canonical indexes.

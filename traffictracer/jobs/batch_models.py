@@ -102,6 +102,21 @@ class BatchTarget:
 
 
 @dataclass(frozen=True)
+class ApplicationRetryPolicy:
+    """Bounded retry policy for classified application outcomes."""
+
+    enabled: bool = False
+    max_retries: int = 1
+
+    def __post_init__(self) -> None:
+        if self.max_retries not in {0, 1}:
+            raise ValueError("application retry max_retries must be 0 or 1")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"enabled": self.enabled, "max_retries": self.max_retries}
+
+
+@dataclass(frozen=True)
 class BatchJobSpec:
     job_id: str
     config_path: str
@@ -113,6 +128,9 @@ class BatchJobSpec:
     controller: ControllerSpec
     options: CaptureJobOptions = field(default_factory=CaptureJobOptions)
     fail_fast: bool = True
+    application_retry: ApplicationRetryPolicy = field(
+        default_factory=ApplicationRetryPolicy
+    )
     orchestration: PipelineProvenance | None = None
     schema_version: int = field(default=JOB_SCHEMA_VERSION, init=False)
     kind: str = field(default="batch", init=False)
@@ -188,6 +206,7 @@ class BatchJobSpec:
             "controller": self.controller.to_dict(),
             "options": self.options.to_dict(),
             "fail_fast": self.fail_fast,
+            "application_retry": self.application_retry.to_dict(),
         }
         if self.orchestration is not None:
             payload["orchestration"] = self.orchestration.to_dict()
@@ -219,6 +238,9 @@ class BatchJobSpec:
             ),
             options=CaptureJobOptions(**options),
             fail_fast=data["fail_fast"],
+            application_retry=ApplicationRetryPolicy(
+                **data.get("application_retry", {})
+            ),
             orchestration=PipelineProvenance.from_dict(data.get("orchestration")),
         )
 
@@ -233,11 +255,46 @@ class BatchError:
 
 
 @dataclass(frozen=True)
+class BatchApplicationOutcome:
+    state: str
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"state": self.state, "reason": self.reason}
+
+
+@dataclass(frozen=True)
+class BatchAttempt:
+    ordinal: int
+    job_id: str | None
+    state: BatchChildState
+    session_id: str | None = None
+    error: BatchError | None = None
+    application_outcome: BatchApplicationOutcome | None = None
+    automatic_retry: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ordinal": self.ordinal,
+            "job_id": self.job_id,
+            "state": self.state.value,
+            "session_id": self.session_id,
+            "error": self.error.to_dict() if self.error else None,
+            "application_outcome": (
+                self.application_outcome.to_dict()
+                if self.application_outcome else None
+            ),
+            "automatic_retry": self.automatic_retry,
+        }
+
+
+@dataclass(frozen=True)
 class BatchChild:
     target_index: int
     state: BatchChildState = BatchChildState.PENDING
     session_id: str | None = None
     error: BatchError | None = None
+    attempts: tuple[BatchAttempt, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +302,7 @@ class BatchChild:
             "state": self.state.value,
             "session_id": self.session_id,
             "error": self.error.to_dict() if self.error else None,
+            "attempts": [attempt.to_dict() for attempt in self.attempts],
         }
 
 
@@ -281,6 +339,9 @@ class BatchManifest:
     current_index: int | None
     children: tuple[BatchChild, ...]
     fail_fast: bool
+    application_retry: ApplicationRetryPolicy = field(
+        default_factory=ApplicationRetryPolicy
+    )
     orchestration: PipelineProvenance | None = None
     cancel_requested: bool = False
     resume: BatchResume = field(default_factory=BatchResume)
@@ -312,6 +373,7 @@ class BatchManifest:
             current_index=None,
             children=tuple(BatchChild(target.index) for target in spec.targets),
             fail_fast=spec.fail_fast,
+            application_retry=spec.application_retry,
             orchestration=spec.orchestration,
         )
         manifest.to_dict()
@@ -391,7 +453,13 @@ class BatchManifest:
             updated_at=_utc(now),
         )
 
-    def start_child(self, target_index: int, *, now: datetime | None = None) -> "BatchManifest":
+    def start_child(
+        self,
+        target_index: int,
+        *,
+        job_id: str | None = None,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
         if self.state is not BatchState.RUNNING or self.current_index is not None:
             raise ValueError("batch must be idle and running before a child starts")
         if target_index != self.resume.next_index:
@@ -403,7 +471,18 @@ class BatchManifest:
         if child.state not in {BatchChildState.PENDING, BatchChildState.INTERRUPTED}:
             raise ValueError("batch child cannot be started from its current state")
         children = list(self.children)
-        children[position] = replace(child, state=BatchChildState.RUNNING, error=None)
+        attempt = BatchAttempt(
+            ordinal=len(child.attempts) + 1,
+            job_id=job_id,
+            state=BatchChildState.RUNNING,
+            automatic_retry=False,
+        )
+        children[position] = replace(
+            child,
+            state=BatchChildState.RUNNING,
+            error=None,
+            attempts=child.attempts + (attempt,),
+        )
         return replace(
             self,
             current_index=target_index,
@@ -437,8 +516,61 @@ class BatchManifest:
         if child.state is not BatchChildState.RUNNING:
             raise ValueError("batch child is not running")
         children = list(self.children)
-        children[position] = replace(child, session_id=session_id)
+        attempts = list(child.attempts)
+        if attempts:
+            attempts[-1] = replace(attempts[-1], session_id=session_id)
+        children[position] = replace(
+            child, session_id=session_id, attempts=tuple(attempts)
+        )
         return replace(self, children=tuple(children), updated_at=_utc(now))
+
+    def retry_child(
+        self,
+        *,
+        session_id: str | None,
+        application_outcome: BatchApplicationOutcome,
+        job_id: str,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        """Checkpoint one completed attempt and begin its sole automatic retry."""
+        if self.state is not BatchState.RUNNING or self.current_index is None:
+            raise ValueError("batch has no running child")
+        position = self.current_index
+        child = self.children[position]
+        if child.state is not BatchChildState.RUNNING or not child.attempts:
+            raise ValueError("batch child has no running attempt")
+        if (
+            not self.application_retry.enabled
+            or sum(attempt.automatic_retry for attempt in child.attempts)
+            >= self.application_retry.max_retries
+        ):
+            raise ValueError("automatic application retry budget is exhausted")
+        attempts = list(child.attempts)
+        attempts[-1] = replace(
+            attempts[-1],
+            state=BatchChildState.COMPLETED,
+            session_id=session_id,
+            application_outcome=application_outcome,
+        )
+        attempts.append(BatchAttempt(
+            ordinal=len(attempts) + 1,
+            job_id=job_id,
+            state=BatchChildState.RUNNING,
+            automatic_retry=True,
+        ))
+        children = list(self.children)
+        children[position] = replace(
+            child,
+            session_id=session_id,
+            error=None,
+            attempts=tuple(attempts),
+        )
+        return replace(
+            self,
+            stage=BatchStage.CAPTURE,
+            children=tuple(children),
+            updated_at=_utc(now),
+        )
 
     def finish_child(
         self,
@@ -446,6 +578,7 @@ class BatchManifest:
         *,
         session_id: str | None = None,
         error: BatchError | None = None,
+        application_outcome: BatchApplicationOutcome | None = None,
         now: datetime | None = None,
     ) -> "BatchManifest":
         if self.state is not BatchState.RUNNING or self.current_index is None:
@@ -461,11 +594,22 @@ class BatchManifest:
         if self.children[position].state is not BatchChildState.RUNNING:
             raise ValueError("batch child state is not running")
         children = list(self.children)
+        child = self.children[position]
+        attempts = list(child.attempts)
+        if attempts:
+            attempts[-1] = replace(
+                attempts[-1],
+                state=state,
+                session_id=session_id,
+                error=error,
+                application_outcome=application_outcome,
+            )
         children[position] = BatchChild(
-            self.children[position].target_index,
-            state,
-            session_id,
-            error,
+            target_index=child.target_index,
+            state=state,
+            session_id=session_id,
+            error=error,
+            attempts=tuple(attempts),
         )
         retry_current = (
             state in {BatchChildState.CANCELLED, BatchChildState.INTERRUPTED}
@@ -622,6 +766,7 @@ class BatchManifest:
             "current_index": self.current_index,
             "children": [child.to_dict() for child in self.children],
             "fail_fast": self.fail_fast,
+            "application_retry": self.application_retry.to_dict(),
             "cancel_requested": self.cancel_requested,
             "resume": self.resume.to_dict(),
         }
@@ -633,21 +778,13 @@ class BatchManifest:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "BatchManifest":
-        data = dict(payload)
+        data = _migrate_batch_manifest(dict(payload))
         validate_batch_manifest(data)
         config = data["config"]
         execution = data["execution"]
         execution_options = dict(execution["options"])
         execution_options.setdefault("cache_mode", "warm")
-        children = tuple(
-            BatchChild(
-                target_index=item["target_index"],
-                state=BatchChildState(item["state"]),
-                session_id=item["session_id"],
-                error=BatchError(**item["error"]) if item["error"] else None,
-            )
-            for item in data["children"]
-        )
+        children = tuple(_batch_child_from_dict(item) for item in data["children"])
         manifest = cls(
             batch_id=data["batch_id"],
             state=BatchState(data["state"]),
@@ -666,6 +803,9 @@ class BatchManifest:
             current_index=data["current_index"],
             children=children,
             fail_fast=data["fail_fast"],
+            application_retry=ApplicationRetryPolicy(
+                **data.get("application_retry", {})
+            ),
             orchestration=PipelineProvenance.from_dict(data.get("orchestration")),
             cancel_requested=data["cancel_requested"],
             resume=BatchResume(
@@ -697,6 +837,7 @@ class BatchManifest:
             ),
             options=self.options,
             fail_fast=self.fail_fast,
+            application_retry=self.application_retry,
             orchestration=self.orchestration,
         )
 
@@ -734,6 +875,67 @@ class BatchManifest:
         ]
         if running != ([] if self.current_index is None else [self.current_index]):
             raise ValueError("batch current index does not match running child")
+        for child in self.children:
+            if any(
+                attempt.ordinal != ordinal
+                for ordinal, attempt in enumerate(child.attempts, start=1)
+            ):
+                raise ValueError("batch attempt ordinals must be contiguous")
+            if (
+                sum(attempt.automatic_retry for attempt in child.attempts)
+                > self.application_retry.max_retries
+            ):
+                raise ValueError("batch exceeds automatic retry budget")
+
+
+def _batch_child_from_dict(item: Mapping[str, Any]) -> BatchChild:
+    attempts = tuple(
+        BatchAttempt(
+            ordinal=attempt["ordinal"],
+            job_id=attempt["job_id"],
+            state=BatchChildState(attempt["state"]),
+            session_id=attempt["session_id"],
+            error=BatchError(**attempt["error"]) if attempt["error"] else None,
+            application_outcome=(
+                BatchApplicationOutcome(**attempt["application_outcome"])
+                if attempt["application_outcome"] else None
+            ),
+            automatic_retry=attempt["automatic_retry"],
+        )
+        for attempt in item["attempts"]
+    )
+    return BatchChild(
+        target_index=item["target_index"],
+        state=BatchChildState(item["state"]),
+        session_id=item["session_id"],
+        error=BatchError(**item["error"]) if item["error"] else None,
+        attempts=attempts,
+    )
+
+
+def _migrate_batch_manifest(data: dict[str, Any]) -> dict[str, Any]:
+    if data.get("schema_version") != 1:
+        return data
+    data["schema_version"] = BATCH_MANIFEST_SCHEMA_VERSION
+    data.setdefault("application_retry", ApplicationRetryPolicy().to_dict())
+    for child in data.get("children", []):
+        if "attempts" in child:
+            continue
+        has_attempt = (
+            child.get("state") != BatchChildState.PENDING.value
+            or child.get("session_id") is not None
+            or child.get("error") is not None
+        )
+        child["attempts"] = [] if not has_attempt else [{
+            "ordinal": 1,
+            "job_id": None,
+            "state": child["state"],
+            "session_id": child.get("session_id"),
+            "error": child.get("error"),
+            "application_outcome": None,
+            "automatic_retry": False,
+        }]
+    return data
 
 
 def _utc(value: datetime | None) -> datetime:

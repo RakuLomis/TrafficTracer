@@ -13,12 +13,14 @@ from traffictracer.capture.quiescence import (
 )
 from traffictracer.jobs.batch import SerialBatchJob
 from traffictracer.jobs.batch_models import (
+    ApplicationRetryPolicy,
     BatchChildState,
     BatchJobSpec,
     BatchManifest,
     BatchState,
     BatchTarget,
 )
+from traffictracer.playback import PlaybackPolicy
 from traffictracer.jobs.cancellation import CancellationToken
 from traffictracer.jobs.models import CaptureJobResult, JobState
 from traffictracer.jobs.progress import JobStage, ProgressReporter
@@ -58,7 +60,7 @@ class _Runnable:
         return self.action()
 
 
-def _execute(spec, factory, token=None):
+def _execute(spec, factory, token=None, outcome_resolver=None):
     events = []
     reporter = ProgressReporter(spec.job_id, events.append, min_interval=0)
     job = SerialBatchJob(
@@ -66,9 +68,30 @@ def _execute(spec, factory, token=None):
         child_factory=factory,
         progress=reporter,
         cancellation=token or CancellationToken(),
+        application_outcome_for_session=outcome_resolver,
     )
     result = job.run()
     return job, result, events
+
+
+def _playback_spec(tmp_path, *, retry_enabled=True):
+    spec = _spec(tmp_path, count=1)
+    target = replace(
+        spec.targets[0],
+        playback=PlaybackPolicy(
+            provider="youtube",
+            ad_policy="click_visible_skip",
+            desired_primary_seconds=5,
+        ),
+    )
+    return replace(
+        spec,
+        targets=(target,),
+        application_retry=ApplicationRetryPolicy(
+            enabled=retry_enabled,
+            max_retries=1,
+        ),
+    )
 
 
 def test_three_targets_run_strictly_in_order_with_max_concurrency_one(tmp_path):
@@ -119,6 +142,84 @@ def test_three_targets_run_strictly_in_order_with_max_concurrency_one(tmp_path):
         event.progress for event in events
     )
     assert BatchManifest.load(job.manifest_path).state is BatchState.COMPLETED
+
+
+def test_retryable_application_failure_gets_one_fresh_preserved_attempt(tmp_path):
+    spec = _playback_spec(tmp_path)
+    session_ids = [
+        "5027aee9-c6e4-41de-8625-7ea0869a3307",
+        "78fdab68-4e5d-4b67-9910-33da00a2632a",
+    ]
+    job_ids = []
+
+    def factory(child, progress, token):
+        position = len(job_ids)
+        job_ids.append(child.job_id)
+        return _Runnable(lambda: CaptureJobResult(
+            child.job_id,
+            JobState.COMPLETED,
+            session_id=session_ids[position],
+        ))
+
+    outcomes = {
+        session_ids[0]: {
+            "state": "failed",
+            "reason": "MEDIA_NOT_ADVANCING",
+        },
+        session_ids[1]: {
+            "state": "passed",
+            "reason": None,
+        },
+    }
+    job, result, _ = _execute(
+        spec,
+        factory,
+        outcome_resolver=outcomes.get,
+    )
+
+    manifest = BatchManifest.load(job.manifest_path)
+    child = manifest.children[0]
+    assert result.state is JobState.COMPLETED
+    assert len(job_ids) == 2
+    assert len(set(job_ids)) == 2
+    assert result.session_ids == tuple(session_ids)
+    assert child.session_id == session_ids[1]
+    assert [attempt.session_id for attempt in child.attempts] == session_ids
+    assert child.attempts[0].application_outcome.reason == "MEDIA_NOT_ADVANCING"
+    assert child.attempts[1].automatic_retry is True
+    assert child.attempts[1].application_outcome.state == "passed"
+
+
+@pytest.mark.parametrize(
+    ("retry_enabled", "state", "reason"),
+    [
+        (False, "failed", "MEDIA_NOT_ADVANCING"),
+        (True, "degraded", "PRIMARY_DURATION_BELOW_TARGET"),
+        (True, "failed", "UNCLASSIFIED_FAILURE"),
+    ],
+)
+def test_application_retry_never_guesses_or_overrides_opt_in(
+    tmp_path, retry_enabled, state, reason
+):
+    spec = _playback_spec(tmp_path, retry_enabled=retry_enabled)
+    session_id = "5027aee9-c6e4-41de-8625-7ea0869a3307"
+    calls = []
+
+    def factory(child, progress, token):
+        calls.append(child.job_id)
+        return _Runnable(lambda: CaptureJobResult(
+            child.job_id, JobState.COMPLETED, session_id=session_id
+        ))
+
+    job, result, _ = _execute(
+        spec,
+        factory,
+        outcome_resolver=lambda value: {"state": state, "reason": reason},
+    )
+    manifest = BatchManifest.load(job.manifest_path)
+    assert result.state is JobState.COMPLETED
+    assert len(calls) == 1
+    assert len(manifest.children[0].attempts) == 1
 
 
 @pytest.mark.parametrize(

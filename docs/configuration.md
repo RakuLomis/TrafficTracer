@@ -150,6 +150,21 @@ Before the next target begins, the Worker:
 
 A resumable interruption stops the current child only after managed Chrome, packet capture, and tracing cleanup completes. Completed targets remain intact, later targets do not start, and the persistent cursor stays on the interrupted target. Resume creates a new child Session for that URL inside the same timestamped capture group. Terminal cancellation remains available through the Worker API for non-resumable administrative shutdowns.
 
+### Bounded application retry
+
+The UI option **Retry classified playback failure once** is outside
+sites.yaml, defaults to disabled, and is frozen into the Batch snapshot. It is
+evaluated only after a playback target has completed capture, Chrome cleanup,
+and analysis. A retry requires an explicit failed or indeterminate
+scenario_outcome.reason from the Worker's fixed transient allowlist. It does
+not parse exception text or infer failure from a slow page.
+
+At most one automatic retry is created for a target. It uses a new Job UUID,
+managed Chrome profile/process, and Session directory. Batch manifest v2 keeps
+both entries in the child's attempts list and keeps the child's top-level
+session_id pointed at the effective final attempt. Resume never resets the
+automatic retry budget.
+
 ## Runtime options outside the target file
 
 These values are selected in the UI and are not overridden by `sites` entries:
@@ -160,6 +175,7 @@ These values are selected in the UI and are not overridden by `sites` entries:
 - `Cold` or `Warm` cache mode;
 - `Standard` or `Full` analysis storage;
 - active Mihomo profile, core, node, TUN, and system-proxy state.
+- bounded application retry policy.
 
 This separation prevents a target list from silently changing privileged networking or filesystem behavior.
 

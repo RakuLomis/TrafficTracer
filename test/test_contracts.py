@@ -20,6 +20,7 @@ from traffictracer.contracts import (
     validate_session_v2,
     validate_worker_message,
 )
+from traffictracer.version import JOB_SCHEMA_VERSION
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -144,7 +145,7 @@ def test_job_error_uses_capture_kind_branch():
 
 def test_job_error_uses_packet_split_kind_branch():
     payload = {
-        "schema_version": 2,
+        "schema_version": JOB_SCHEMA_VERSION,
         "kind": "packet_split_group",
         "job_id": "123e4567-e89b-42d3-a456-426614174000",
         "scope_id": "20260814-120000-000",

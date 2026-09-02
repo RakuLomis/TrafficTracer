@@ -77,7 +77,7 @@ def test_capture_job_can_be_constructed_without_yaml():
     )
     payload = spec.to_dict()
     assert payload["kind"] == "capture"
-    assert payload["schema_version"] == 2
+    assert payload["schema_version"] == 3
     assert payload["options"] == CaptureJobOptions().to_dict()
     assert "secret" not in payload["controller"]
 

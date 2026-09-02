@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Mapping, Protocol
 from uuid import UUID, uuid5
 
 from traffictracer.layout import group_directory_name
@@ -11,6 +11,7 @@ from traffictracer.layout import group_directory_name
 
 from .batch_models import (
     BATCH_MANIFEST_NAME,
+    BatchApplicationOutcome,
     BatchChildState,
     BatchError,
     BatchJobResult,
@@ -35,6 +36,16 @@ ChildFactory = Callable[
     ChildRunnable,
 ]
 SessionResolver = Callable[[str], str | None]
+ApplicationOutcomeResolver = Callable[[str], Mapping[str, Any] | None]
+
+_RETRYABLE_APPLICATION_REASONS = frozenset({
+    "PLAYBACK_STATE_UNKNOWN",
+    "PLAYER_NOT_CREATED",
+    "VIDEO_ELEMENT_NOT_CREATED",
+    "MEDIA_NOT_READY",
+    "MEDIA_NOT_ADVANCING",
+    "PRIMARY_CONTENT_NOT_OBSERVED",
+})
 
 
 class SerialBatchJob:
@@ -48,6 +59,7 @@ class SerialBatchJob:
         progress: ProgressReporter,
         cancellation: CancellationToken,
         session_for_job: SessionResolver | None = None,
+        application_outcome_for_session: ApplicationOutcomeResolver | None = None,
         resume: bool = False,
     ) -> None:
         self.spec = spec
@@ -55,6 +67,9 @@ class SerialBatchJob:
         self.progress = progress
         self.cancellation = cancellation
         self.session_for_job = session_for_job or (lambda job_id: None)
+        self.application_outcome_for_session = (
+            application_outcome_for_session or (lambda session_id: None)
+        )
         self.resume = resume
         self.batch_dir = (
             Path(spec.output_root).resolve() / ".batches" / spec.job_id
@@ -87,88 +102,123 @@ class SerialBatchJob:
                     break
                 self.cancellation.checkpoint()
                 position = manifest.resume.next_index
-                manifest = manifest.start_child(position)
-                self._save(manifest)
                 target = manifest.targets[position]
-                child_spec = self._child_spec(
-                    target,
+                attempt_index = len(manifest.children[position].attempts)
+                child_id = self._child_id(position, attempt_index)
+                manifest = manifest.start_child(
                     position,
-                    manifest.resume.attempt,
-                    group_directory_name(manifest.created_at),
+                    job_id=child_id,
                 )
-                child_progress = _ChildProgress(
-                    self.progress,
-                    position,
-                    len(manifest.targets),
-                    self._record_child_stage,
-                )
-                try:
-                    runnable = self.child_factory(
-                        child_spec,
-                        child_progress,
-                        self.cancellation,
+                self._save(manifest)
+                while manifest.state is BatchState.RUNNING:
+                    child_spec = self._child_spec(
+                        target,
+                        position,
+                        attempt_index,
+                        group_directory_name(manifest.created_at),
                     )
-                    session_id = self.session_for_job(child_spec.job_id)
-                    if session_id:
-                        manifest = (self.manifest or manifest).attach_child_session(
-                            session_id
+                    child_progress = _ChildProgress(
+                        self.progress,
+                        position,
+                        len(manifest.targets),
+                        self._record_child_stage,
+                    )
+                    try:
+                        runnable = self.child_factory(
+                            child_spec,
+                            child_progress,
+                            self.cancellation,
+                        )
+                        session_id = self.session_for_job(child_spec.job_id)
+                        if session_id:
+                            manifest = (
+                                self.manifest or manifest
+                            ).attach_child_session(session_id)
+                            self._save(manifest)
+                        result = runnable.run()
+                        if result.state is not JobState.COMPLETED:
+                            raise RuntimeError(
+                                "child returned non-completed state "
+                                f"{result.state.value}"
+                            )
+                    except InterruptedError:
+                        manifest = self.manifest or manifest
+                        manifest = manifest.finish_child(
+                            BatchChildState.INTERRUPTED,
+                            session_id=self.session_for_job(child_spec.job_id),
+                            error=BatchError(
+                                "INTERRUPTED", self.cancellation.reason
+                            ),
                         )
                         self._save(manifest)
-                    result = runnable.run()
-                    if result.state is not JobState.COMPLETED:
-                        raise RuntimeError(
-                            f"child returned non-completed state {result.state.value}"
+                        raise
+                    except CancelledError:
+                        manifest = self.manifest or manifest
+                        manifest = manifest.request_cancel().finish_child(
+                            BatchChildState.CANCELLED,
+                            session_id=self.session_for_job(child_spec.job_id),
+                            error=BatchError(
+                                "CANCELLED", self.cancellation.reason
+                            ),
                         )
-                except InterruptedError:
-                    manifest = self.manifest or manifest
-                    manifest = manifest.finish_child(
-                        BatchChildState.INTERRUPTED,
-                        session_id=self.session_for_job(child_spec.job_id),
-                        error=BatchError(
-                            "INTERRUPTED", self.cancellation.reason
-                        ),
-                    )
-                    self._save(manifest)
-                    raise
-                except CancelledError:
-                    manifest = self.manifest or manifest
-                    manifest = manifest.request_cancel().finish_child(
-                        BatchChildState.CANCELLED,
-                        session_id=self.session_for_job(child_spec.job_id),
-                        error=BatchError("CANCELLED", self.cancellation.reason),
-                    )
-                    self._save(manifest)
-                    raise
-                except Exception as exc:
-                    manifest = self.manifest or manifest
-                    code = getattr(exc, "code", "BATCH_CHILD_FAILED")
-                    manifest = manifest.finish_child(
-                        BatchChildState.FAILED,
-                        session_id=self.session_for_job(child_spec.job_id),
-                        error=BatchError(
-                            str(code),
-                            exception_message(exc, "batch child failed"),
-                        ),
-                    )
-                    self._save(manifest)
-                    if (
-                        str(code) == "PROXY_PROTOCOL_INVARIANT_FAILED"
-                        and manifest.state is BatchState.RUNNING
-                    ):
-                        manifest = manifest.stop(BatchState.FAILED)
                         self._save(manifest)
-                    if manifest.state is BatchState.FAILED:
-                        return self._result(manifest)
-                    continue
+                        raise
+                    except Exception as exc:
+                        manifest = self.manifest or manifest
+                        code = getattr(exc, "code", "BATCH_CHILD_FAILED")
+                        manifest = manifest.finish_child(
+                            BatchChildState.FAILED,
+                            session_id=self.session_for_job(child_spec.job_id),
+                            error=BatchError(
+                                str(code),
+                                exception_message(exc, "batch child failed"),
+                            ),
+                        )
+                        self._save(manifest)
+                        if (
+                            str(code) == "PROXY_PROTOCOL_INVARIANT_FAILED"
+                            and manifest.state is BatchState.RUNNING
+                        ):
+                            manifest = manifest.stop(BatchState.FAILED)
+                            self._save(manifest)
+                        if manifest.state is BatchState.FAILED:
+                            return self._result(manifest)
+                        break
 
-                manifest = self.manifest or manifest
-                manifest = manifest.set_stage(BatchStage.CHECKPOINT)
-                self._save(manifest)
-                manifest = manifest.finish_child(
-                    BatchChildState.COMPLETED,
-                    session_id=result.session_id or self.session_for_job(child_spec.job_id),
-                )
-                self._save(manifest)
+                    manifest = self.manifest or manifest
+                    session_id = (
+                        result.session_id
+                        or self.session_for_job(child_spec.job_id)
+                    )
+                    outcome = self._application_outcome(session_id)
+                    if self._should_retry_application(
+                        target,
+                        outcome,
+                        automatic_retries=sum(
+                            attempt.automatic_retry
+                            for attempt in manifest.children[position].attempts
+                        ),
+                    ):
+                        attempt_index += 1
+                        retry_id = self._child_id(position, attempt_index)
+                        manifest = manifest.set_stage(BatchStage.CHECKPOINT)
+                        self._save(manifest)
+                        manifest = manifest.retry_child(
+                            session_id=session_id,
+                            application_outcome=outcome,
+                            job_id=retry_id,
+                        )
+                        self._save(manifest)
+                        continue
+                    manifest = manifest.set_stage(BatchStage.CHECKPOINT)
+                    self._save(manifest)
+                    manifest = manifest.finish_child(
+                        BatchChildState.COMPLETED,
+                        session_id=session_id,
+                        application_outcome=outcome,
+                    )
+                    self._save(manifest)
+                    break
         except InterruptedError:
             manifest = self.manifest or manifest
             if (
@@ -199,6 +249,7 @@ class SerialBatchJob:
                 or manifest.config_path != self.spec.config_path
                 or manifest.config_sha256 != self.spec.config_sha256
                 or manifest.targets != self.spec.targets
+                or manifest.application_retry != self.spec.application_retry
             ):
                 raise ValueError("persisted batch snapshot does not match Job specification")
             return manifest
@@ -255,6 +306,46 @@ class SerialBatchJob:
             ),
         )
 
+    def _child_id(self, position: int, attempt_index: int) -> str:
+        return str(uuid5(
+            UUID(self.spec.job_id),
+            f"target:{position}:attempt:{attempt_index}",
+        ))
+
+    def _application_outcome(
+        self, session_id: str | None
+    ) -> BatchApplicationOutcome | None:
+        if session_id is None:
+            return None
+        payload = self.application_outcome_for_session(session_id)
+        if not isinstance(payload, Mapping):
+            return None
+        state = payload.get("state")
+        reason = payload.get("reason")
+        if state not in {"passed", "degraded", "failed", "indeterminate"}:
+            return None
+        return BatchApplicationOutcome(
+            state=str(state),
+            reason=str(reason) if isinstance(reason, str) and reason else None,
+        )
+
+    def _should_retry_application(
+        self,
+        target: BatchTarget,
+        outcome: BatchApplicationOutcome | None,
+        *,
+        automatic_retries: int,
+    ) -> bool:
+        policy = self.spec.application_retry
+        return (
+            policy.enabled
+            and target.playback is not None
+            and automatic_retries < policy.max_retries
+            and outcome is not None
+            and outcome.state in {"failed", "indeterminate"}
+            and outcome.reason in _RETRYABLE_APPLICATION_REASONS
+        )
+
     def _result(self, manifest: BatchManifest) -> BatchJobResult:
         state = {
             BatchState.COMPLETED: JobState.COMPLETED,
@@ -263,7 +354,10 @@ class SerialBatchJob:
             BatchState.INTERRUPTED: JobState.INTERRUPTED,
         }.get(manifest.state, JobState.FAILED)
         session_ids = tuple(
-            child.session_id for child in manifest.children if child.session_id
+            attempt.session_id
+            for child in manifest.children
+            for attempt in child.attempts
+            if attempt.session_id
         )
         return BatchJobResult(
             job_id=self.spec.job_id,

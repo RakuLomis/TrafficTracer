@@ -98,6 +98,15 @@
         }
       }
     },
+    "applicationRetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "max_retries"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_retries": { "enum": [0, 1] }
+      }
+    },
     "analysisOptions": {
       "type": "object",
       "additionalProperties": false,
@@ -128,7 +137,7 @@
         "controller"
       ],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
         "kind": { "const": "capture" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "url": { "type": "string", "pattern": "^https?://[^\\s]+$" },
@@ -168,7 +177,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "kind", "job_id", "session_dir", "output_root"],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
         "kind": { "const": "analysis" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "session_dir": { "$ref": "#/$defs/absolutePath" },
@@ -198,10 +207,10 @@
       "required": [
         "schema_version", "kind", "job_id", "config_path", "config_sha256",
         "targets", "interfaces", "output_root", "chrome_binary", "controller",
-        "options", "fail_fast"
+        "options", "fail_fast", "application_retry"
       ],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
         "kind": { "const": "batch" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "config_path": { "$ref": "#/$defs/absolutePath" },
@@ -216,6 +225,7 @@
         "controller": { "$ref": "#/$defs/controller" },
         "options": { "$ref": "#/$defs/captureOptions" },
         "fail_fast": { "type": "boolean" },
+        "application_retry": { "$ref": "#/$defs/applicationRetry" },
         "orchestration": { "$ref": "#/$defs/orchestration" }
       }
     },
@@ -224,7 +234,7 @@
       "additionalProperties": false,
       "required": ["schema_version", "kind", "job_id", "scope_id", "output_root", "policy"],
       "properties": {
-        "schema_version": { "const": 2 },
+        "schema_version": { "const": 3 },
         "kind": { "const": "packet_split_group" },
         "job_id": { "$ref": "#/$defs/jobId" },
         "scope_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9]{3}$" },

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "kind": "batch",
   "job_id": "8f376a9b-7f7f-43e4-a35f-0f04de7b95ef",
   "config_path": "/tmp/sites.yaml",
@@ -41,5 +41,9 @@
     "proxy_protocol_mode": "strict_single",
     "expected_proxy_protocol": ""
   },
-  "fail_fast": true
+  "fail_fast": true,
+  "application_retry": {
+    "enabled": false,
+    "max_retries": 1
+  }
 }
