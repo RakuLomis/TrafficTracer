@@ -129,7 +129,13 @@ class JobManager:
             allow_terminal_reuse=resume,
         )
 
-    def start_batch(self, params: dict[str, Any], *, resume: bool = False) -> dict[str, Any]:
+    def start_batch(
+        self,
+        params: dict[str, Any],
+        *,
+        resume: bool = False,
+        prepare: Callable[[], None] | None = None,
+    ) -> dict[str, Any]:
         if self._batch_factory is None:
             raise WorkerMethodError("METHOD_NOT_FOUND", "Batch Jobs are unavailable.")
         payload = _job_payload(params)
@@ -139,7 +145,12 @@ class JobManager:
             factory = lambda item, progress, token: self._batch_factory(
                 item, progress, token, resume=True
             )
-        return self._start(spec, factory, allow_terminal_reuse=resume)
+        return self._start(
+            spec,
+            factory,
+            allow_terminal_reuse=resume,
+            prepare=prepare,
+        )
 
     def maybe_status(self, job_id: str) -> dict[str, Any] | None:
         with self._lock:
@@ -219,6 +230,7 @@ class JobManager:
         factory: JobFactory,
         *,
         allow_terminal_reuse: bool = False,
+        prepare: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         token = CancellationToken()
         done = Event()
@@ -238,6 +250,12 @@ class JobManager:
                     raise WorkerMethodError(
                         "INVALID_PARAMS", "job_id has already been used."
                     )
+            # Batch callers use this hook to persist their initial manifest
+            # while the manager lock still prevents another Job from being
+            # accepted. The returned snapshot is immediately queryable.
+            if prepare is not None:
+                prepare()
+
             thread = Thread(
                 target=self._run_job,
                 args=(managed, spec, factory),

@@ -13,7 +13,15 @@ cargo_bin="${CARGO:-cargo}"
 python_bin="${PYTHON:-python}"
 product_version="$(PYTHONPATH="$repo_root" "$python_bin" -c 'from traffictracer.version import COMPLETE_VERSION; print(COMPLETE_VERSION)')"
 ui_version="$("$python_bin" -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text())["version"])' "$ui_dir/src-tauri/tauri.conf.json")"
+bundle_revision="${TT_BUNDLE_REVISION:-}"
+if [[ -n "$bundle_revision" && ! "$bundle_revision" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
+  echo "error: TT_BUNDLE_REVISION must contain valid SemVer build identifiers" >&2
+  exit 2
+fi
 bundle_version="${ui_version}+traffictracer.${product_version}"
+if [[ -n "$bundle_revision" ]]; then
+  bundle_version="${bundle_version}.${bundle_revision}"
+fi
 release_audit_script="${TT_RELEASE_AUDIT_SCRIPT:-${repo_root}/scripts/release-audit.py}"
 tauri_target_dir="${TT_TAURI_TARGET_DIR:-${ui_dir}/target}"
 output_dir="${TT_PACKAGE_OUTPUT_DIR:-${repo_root}/dist/packages/traffictracer-complete-v${product_version}-linux-x86_64}"

@@ -14,7 +14,7 @@ from traffictracer.jobs.batch_models import (
 )
 from traffictracer.jobs.cancellation import CancelledError
 from traffictracer.jobs.models import CaptureJobResult, JobState
-from traffictracer.worker.dispatcher import Dispatcher
+from traffictracer.worker.dispatcher import Dispatcher, WorkerMethodError
 from traffictracer.worker.services import WorkerServices
 
 
@@ -94,6 +94,77 @@ def test_batch_jsonl_start_status_list_and_notification_order(
         if item["method"] == "job.completed"
     ]
     assert completed_positions == [len(notifications) - 1]
+
+
+def test_batch_start_is_immediately_queryable_before_worker_thread_finishes(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.services as module
+
+    payload, _ = _payload(tmp_path, count=1)
+    release = Event()
+
+    class _BlockedCapture(_QuickCapture):
+        def run(self):
+            assert release.wait(timeout=5)
+            return super().run()
+
+    monkeypatch.setattr(module, "CaptureJob", _BlockedCapture)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+
+    started = services.batch_start({"job": payload})
+    status = services.batch_status({"batch_id": payload["job_id"]})
+
+    assert started["job_id"] == payload["job_id"]
+    assert status["batch"]["state"] in {"created", "running"}
+    assert status["job"]["state"] in {"created", "preparing", "capturing"}
+    assert status["status_source"] == "manifest"
+    release.set()
+    assert services.jobs.wait(payload["job_id"], timeout=5)
+
+
+def test_batch_status_falls_back_to_live_job_during_manifest_visibility_gap(
+    tmp_path, monkeypatch
+):
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+
+    def missing_manifest(_batch_id):
+        raise WorkerMethodError("JOB_NOT_FOUND", "not visible yet")
+
+    monkeypatch.setattr(services, "_batch_manifest", missing_manifest)
+    monkeypatch.setattr(
+        services.jobs,
+        "maybe_status",
+        lambda job_id: {"job_id": job_id, "state": "created"},
+    )
+
+    status = services.batch_status({"batch_id": payload["job_id"]})
+
+    assert status == {
+        "batch": None,
+        "job": {"job_id": payload["job_id"], "state": "created"},
+        "status_source": "job_manager",
+    }
+
+
+def test_batch_start_rejects_persisted_job_id_before_accepting_thread(tmp_path):
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+    services.batches.save(BatchManifest.create(BatchJobSpec.from_dict(payload)))
+
+    try:
+        services.batch_start({"job": payload})
+    except WorkerMethodError as error:
+        assert error.code == "INVALID_PARAMS"
+    else:
+        raise AssertionError("persisted batch ID must be rejected synchronously")
 
 
 def test_worker_restart_marks_running_child_interrupted_and_resume_reuses_snapshot(

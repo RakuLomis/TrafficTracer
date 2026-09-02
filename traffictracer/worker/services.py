@@ -26,6 +26,7 @@ from traffictracer.jobs.cancellation import (
 from traffictracer.jobs.batch import SerialBatchJob
 from traffictracer.jobs.batch_models import (
     BatchJobSpec,
+    BatchManifest,
     BatchState,
     BatchStore,
 )
@@ -384,7 +385,25 @@ class WorkerServices:
             "batch.proxy_protocol_freeze", operation_started_at, self._clock()
         ))
         operation_started_at = self._clock()
-        result = self.jobs.start_batch({"job": spec.to_dict()})
+        def prepare_manifest() -> None:
+
+            try:
+                self.batches.get(spec.job_id)
+            except FileNotFoundError:
+                self.batches.save(BatchManifest.create(spec))
+                return
+            except (OSError, ValueError) as exc:
+                raise WorkerMethodError(
+                    "INVALID_PARAMS",
+                    "The requested batch manifest is not reusable.",
+                ) from exc
+            raise WorkerMethodError(
+                "INVALID_PARAMS", "job_id has already been used."
+            )
+
+        result = self.jobs.start_batch(
+            {"job": spec.to_dict()}, prepare=prepare_manifest
+        )
         timings.append(_operation_timing(
             "batch.job_accept", operation_started_at, self._clock()
         ))
@@ -396,10 +415,21 @@ class WorkerServices:
 
     def batch_status(self, params: dict[str, Any]) -> dict[str, Any]:
         batch_id = _batch_id(params)
-        manifest = self._batch_manifest(batch_id)
+        job = self.jobs.maybe_status(batch_id)
+        try:
+            manifest = self._batch_manifest(batch_id)
+        except WorkerMethodError:
+            if job is None:
+                raise
+            return {
+                "batch": None,
+                "job": job,
+                "status_source": "job_manager",
+            }
         return {
             "batch": manifest.to_dict(),
-            "job": self.jobs.maybe_status(batch_id),
+            "job": job,
+            "status_source": "manifest",
         }
 
     def batch_list(self, params: dict[str, Any]) -> dict[str, Any]:
