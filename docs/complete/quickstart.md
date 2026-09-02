@@ -150,6 +150,12 @@ Use **Interrupt** for a resumable stop. **Resume pipeline** reuses the interrupt
 
 Each run directory contains its inner Batch and Sessions. `pipeline-manifest.json`, `batch-manifest.json`, and each Session `capture-context.json` retain the pipeline/run/Profile/selector/node relationship without storing Profile YAML, subscription URLs, credentials, or Controller secrets.
 
+The pipeline card is restored from those manifests when you leave and return to
+TrafficTracer. It reports the current target and attempt plus separate
+**Capture**, **Correlation**, and **Application** quality states. A failed
+playback goal therefore remains visible with its final URL and reason without
+being misreported as failed flow correlation.
+
 
 ## 8. Run the capture
 

@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "enum": [1, 2] },
     "pipeline_id": { "$ref": "#/$defs/uuid" },
     "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
     "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "running_batch", "verifying_protocol", "checkpoint", "restoring", "finished"] },
@@ -47,6 +47,39 @@
       }
     },
     "error": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": { "code": { "type": "string", "minLength": 1 }, "message": { "type": "string", "minLength": 1 } } }] },
+    "qualityPlane": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "passed", "degraded", "failed", "indeterminate", "not_applicable"],
+      "properties": {
+        "state": { "enum": ["passed", "degraded", "failed", "indeterminate", "not_applicable"] },
+        "passed": { "type": "integer", "minimum": 0 }, "degraded": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 }, "indeterminate": { "type": "integer", "minimum": 0 },
+        "not_applicable": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "applicationIssue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["session_id", "target_url", "final_url", "state", "reason", "primary_content_millis", "desired_primary_seconds"],
+      "properties": {
+        "session_id": { "type": "string" }, "target_url": { "type": "string" },
+        "final_url": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "state": { "enum": ["degraded", "failed", "indeterminate"] },
+        "reason": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "primary_content_millis": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "desired_primary_seconds": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] }
+      }
+    },
+    "runQuality": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sessions_total", "capture_integrity", "correlation", "application", "application_issues"],
+      "properties": {
+        "sessions_total": { "type": "integer", "minimum": 0 },
+        "capture_integrity": { "$ref": "#/$defs/qualityPlane" },
+        "correlation": { "$ref": "#/$defs/qualityPlane" },
+        "application": { "$ref": "#/$defs/qualityPlane" },
+        "application_issues": { "type": "array", "items": { "$ref": "#/$defs/applicationIssue" } }
+      }
+    },
     "run": {
       "type": "object", "additionalProperties": false,
       "required": ["ordinal", "run_id", "profile_uid", "profile_fingerprint", "selection_group", "requested_node", "state", "stage", "resolved_chain", "resolved_leaf", "expected_protocol", "observed_protocol", "batch_id", "output_path", "error", "resume_attempt", "started_at", "completed_at"],
@@ -58,6 +91,7 @@
         "resolved_chain": { "type": "array", "items": { "$ref": "#/$defs/identifier" } }, "resolved_leaf": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
         "expected_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" }, "observed_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" },
         "batch_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] }, "output_path": { "$ref": "#/$defs/absolutePath" }, "error": { "$ref": "#/$defs/error" },
+        "quality": { "$ref": "#/$defs/runQuality" },
         "resume_attempt": { "type": "integer", "minimum": 0 }, "started_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }, "completed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
       }
     },

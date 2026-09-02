@@ -65,3 +65,27 @@ Each inner Batch request carries an optional `orchestration` object. The Worker 
 Interrupt is resumable; cancel is terminal. A clean interrupt stops the active Batch and restores the original Profile/selector state. Resume reactivates the frozen tuple and invokes the existing Batch resume operation when a Batch ID already exists, so completed targets remain completed. The interrupted child is retried using the Batch attempt rules.
 
 If the desktop application exits while a supervisor is active, the next status read converts the stale running checkpoint to `interrupted` without deleting its Batch ID. Resume then follows the same path. It refuses to run when the target configuration hash changed. A missing or changed Profile, selector, node, or effective Profile fingerprint fails that run explicitly; no substitute is selected.
+
+## Run quality and persistent progress
+
+`pipeline-manifest.json` schema v2 records three independent quality planes for
+each terminal run:
+
+- `capture_integrity`: whether the page-attributed evidence is complete enough
+  to analyze;
+- `correlation`: whether the captured pre-proxy and post-proxy flows correlate
+  consistently;
+- `application`: whether an application-level goal such as observed YouTube
+  primary playback was met.
+
+An application failure does not rewrite valid correlation evidence as a
+correlation failure. Playback-enabled Sessions that do not meet their goal are
+listed in `application_issues` with their requested URL, observed final URL,
+reason and primary-content duration. Non-playback Sessions are counted as
+`not_applicable` on the application plane.
+
+The desktop progress card is rebuilt from the durable Pipeline and inner Batch
+manifests. After navigating away and back, it shows the active or most recently
+terminal run, current target URL, Batch stage and attempt, elapsed time, last
+durable checkpoint, quality planes and application issues. Schema v1 Pipeline
+manifests remain readable and are migrated to v2 when next persisted.
