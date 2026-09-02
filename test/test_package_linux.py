@@ -120,7 +120,7 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     calls = fake_package["invocations"].read_text().splitlines()
     assert calls[0] == "prepared"
     assert "tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage" in calls[1]
-    assert '"version": "2.5.2+traffictracer.1.0.15"' in calls[1]
+    assert '"version": "2.5.2+traffictracer.1.0.16"' in calls[1]
     assert 'createUpdaterArtifacts": false' in calls[1]
     assert calls[2].startswith("verify:linux-bundle -- --target ")
     assert "Package directory:" in result.stdout
