@@ -6,6 +6,8 @@ from pathlib import Path
 import time
 from threading import Event
 
+import pytest
+
 from traffictracer.jobs.batch_models import (
     BatchChildState,
     BatchJobSpec,
@@ -165,6 +167,92 @@ def test_batch_start_rejects_persisted_job_id_before_accepting_thread(tmp_path):
         assert error.code == "INVALID_PARAMS"
     else:
         raise AssertionError("persisted batch ID must be rejected synchronously")
+
+
+def test_batch_start_rolls_back_manifest_when_thread_handoff_fails(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.job_manager as job_manager_module
+
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+
+    class _RejectedThread:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("injected thread start failure")
+
+    monkeypatch.setattr(job_manager_module, "Thread", _RejectedThread)
+
+    with pytest.raises(RuntimeError, match="injected thread start failure"):
+        services.batch_start({"job": payload})
+
+    assert services.jobs.maybe_status(payload["job_id"]) is None
+    with pytest.raises(FileNotFoundError):
+        services.batches.get(payload["job_id"])
+
+
+def test_batch_start_does_not_register_job_when_initial_manifest_write_fails(
+    tmp_path, monkeypatch
+):
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+
+    def reject_manifest(_manifest):
+        raise OSError("injected initial manifest persistence failure")
+
+    monkeypatch.setattr(services.batches, "save", reject_manifest)
+
+    with pytest.raises(OSError, match="injected initial manifest persistence failure"):
+        services.batch_start({"job": payload})
+
+    assert services.jobs.maybe_status(payload["job_id"]) is None
+    with pytest.raises(FileNotFoundError):
+        services.batches.get(payload["job_id"])
+
+
+def test_batch_start_rolls_back_manifest_when_job_registration_fails(
+    tmp_path, monkeypatch
+):
+    import traffictracer.worker.job_manager as job_manager_module
+
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+
+    class _RejectedThread:
+        def __init__(self, **_kwargs):
+            raise RuntimeError("injected Job registration failure")
+
+    monkeypatch.setattr(job_manager_module, "Thread", _RejectedThread)
+
+    with pytest.raises(RuntimeError, match="injected Job registration failure"):
+        services.batch_start({"job": payload})
+
+    assert services.jobs.maybe_status(payload["job_id"]) is None
+    with pytest.raises(FileNotFoundError):
+        services.batches.get(payload["job_id"])
+
+
+def test_batch_store_refuses_to_discard_started_manifest(tmp_path):
+    payload, _ = _payload(tmp_path, count=1)
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+    manifest = BatchManifest.create(BatchJobSpec.from_dict(payload)).begin().start_child(0)
+    services.batches.save(manifest)
+
+    with pytest.raises(ValueError, match="unstarted"):
+        services.batches.discard_created(payload["job_id"])
+
+    assert services.batches.get(payload["job_id"]).state is BatchState.RUNNING
 
 
 def test_worker_restart_marks_running_child_interrupted_and_resume_reuses_snapshot(

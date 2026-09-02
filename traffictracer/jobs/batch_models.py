@@ -809,6 +809,17 @@ class BatchStore:
     def save(self, manifest: BatchManifest) -> Path:
         return manifest.persist(self.path(manifest.batch_id).parent)
 
+    def discard_created(self, batch_id: str) -> None:
+        """Remove only an unstarted manifest left by a failed Job handoff."""
+        manifest = self.get(batch_id)
+        if manifest.state is not BatchState.CREATED or manifest.current_index is not None:
+            raise ValueError("only an unstarted batch manifest can be discarded")
+        if any(child.state is not BatchChildState.PENDING for child in manifest.children):
+            raise ValueError("a batch manifest with started children cannot be discarded")
+        path = self.path(batch_id)
+        path.unlink()
+        path.parent.rmdir()
+
     def scan(self) -> BatchScan:
         batches = []
         corrupt = []

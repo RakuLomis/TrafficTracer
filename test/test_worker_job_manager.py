@@ -132,6 +132,37 @@ def test_cancel_is_idempotent_and_job_becomes_cancelled():
     assert status["error"]["code"] == "CANCELLED"
 
 
+def test_generic_interrupt_is_idempotent_and_job_becomes_interrupted():
+    notifications = []
+    started = Event()
+    release = Event()
+
+    def blocking(spec, progress, token):
+        return BlockingJob(spec, progress, token, started, release)
+
+    manager = _manager(notifications, capture_factory=blocking)
+    dispatcher = Dispatcher(manager.handlers())
+    capture = _payload(CAPTURE_FIXTURE)
+    manager.start_capture(capture)
+    assert started.wait(1)
+
+    first = dispatcher.dispatch({
+        "api_version": 2,
+        "type": "request",
+        "id": "interrupt-one",
+        "method": "job.interrupt",
+        "params": {"job_id": capture["job_id"], "reason": "pause now"},
+    })
+    second = manager.interrupt({"job_id": capture["job_id"], "reason": "again"})
+
+    assert first["result"]["interrupt_requested_now"] is True
+    assert second["interrupt_requested_now"] is False
+    assert manager.wait(capture["job_id"], timeout=2)
+    status = manager.status({"job_id": capture["job_id"]})
+    assert status["state"] == "interrupted"
+    assert status["error"]["code"] == "INTERRUPTED"
+
+
 def test_failed_job_is_observable_and_does_not_block_next_job():
     notifications = []
 

@@ -386,7 +386,6 @@ class WorkerServices:
         ))
         operation_started_at = self._clock()
         def prepare_manifest() -> None:
-
             try:
                 self.batches.get(spec.job_id)
             except FileNotFoundError:
@@ -401,8 +400,13 @@ class WorkerServices:
                 "INVALID_PARAMS", "job_id has already been used."
             )
 
+        def rollback_manifest() -> None:
+            self.batches.discard_created(spec.job_id)
+
         result = self.jobs.start_batch(
-            {"job": spec.to_dict()}, prepare=prepare_manifest
+            {"job": spec.to_dict()},
+            prepare=prepare_manifest,
+            rollback_prepare=rollback_manifest,
         )
         timings.append(_operation_timing(
             "batch.job_accept", operation_started_at, self._clock()

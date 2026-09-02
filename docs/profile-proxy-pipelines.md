@@ -23,6 +23,14 @@ The supervisor holds one capture lock for the complete pipeline. Internal
 profile and selector transitions are authorized only for that lock owner. User
 changes to Profile, selector, TUN, system proxy or core remain blocked.
 
+Before the supervisor is launched, a lightweight whole-queue preflight checks
+the immutable target/config hash, unique `(Profile, selector, node)` identities,
+the existence of every queued Profile, the active Profile fingerprint, active
+runtime node membership, output path, interfaces, TUN state, tracing
+capabilities and required tools. Inactive Profiles are deliberately validated
+again when their run becomes active: a stored YAML document is not proof that a
+provider-backed runtime node is ready.
+
 ## Run barrier
 
 Before each run the supervisor activates the Profile, waits for the real
@@ -90,7 +98,27 @@ Each inner Batch request carries an optional `orchestration` object. The Worker 
 
 Interrupt is resumable; cancel is terminal. A clean interrupt stops the active Batch and restores the original Profile/selector state. Resume reactivates the frozen tuple and invokes the existing Batch resume operation when a Batch ID already exists, so completed targets remain completed. The interrupted child is retried using the Batch attempt rules.
 
-If the desktop application exits while a supervisor is active, the next status read converts the stale running checkpoint to `interrupted` without deleting its Batch ID. Resume then follows the same path. It refuses to run when the target configuration hash changed. A missing or changed Profile, selector, node, or effective Profile fingerprint fails that run explicitly; no substitute is selected.
+The supervisor refreshes a small `pipeline-owner.json` record beside the
+Pipeline manifest. It contains only the Pipeline ID, application PID, stage,
+current Batch ID and heartbeat timestamp. On a UI reload or application
+restart, status recovery compares that record with the in-memory supervisor,
+capture lock, Worker manager and OS process evidence before it declares the
+checkpoint abandoned. It never terminates a core, browser or process merely
+because a heartbeat is stale.
+
+If no live ownership evidence remains, the next status read converts the stale
+running checkpoint to `interrupted` without deleting its Batch ID. Resume then
+follows the same path. It refuses to run when the target configuration hash
+changed. A missing or changed Profile, selector, node, or effective Profile
+fingerprint fails that run explicitly; no substitute is selected.
+
+Batch acceptance is also reconciled by its pre-generated Job ID. A lost start
+response or timeout keeps capture ownership and enters `starting_batch` or
+`reconciling_batch`; it is not reported as a terminal failure while the Worker
+may still be active. A terminal Batch remains in `finalizing_batch` until the
+Worker Job is terminal. Generic `job.interrupt` preserves resumable semantics
+when the Batch manifest is temporarily unavailable; it is never downgraded to
+terminal cancellation.
 
 ## Run quality and persistent progress
 

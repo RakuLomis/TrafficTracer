@@ -144,6 +144,12 @@ instead of silently accepting the node or protocol currently selected in the UI.
 
 Enable **Profile / node pipeline** when the same ordered YAML target set must be sampled through several `(Profile, selector, node)` tuples. Activate each desired Profile and concrete node, click **Add current pair**, and repeat in experiment order. Then select the YAML targets and start the pipeline.
 
+Start performs one whole-queue preflight before the first Session. It checks
+the frozen target hash, unique queued tuples, Profile existence, the active
+runtime fingerprint and node membership, writable output path, interfaces,
+TUN/tracing state and required tools. Provider-backed inactive Profiles are
+validated again immediately before their own run.
+
 The UI runs one existing serial Capture Group per queued tuple; it never captures two nodes or two sites concurrently. Profile, node, TUN, core, and proxy controls stay locked for the whole pipeline. The progress card survives page navigation, and **Profile / node pipeline history** can reopen a manifest from the selected output directory.
 
 Use **Interrupt** for a resumable stop. **Resume pipeline** reuses the interrupted inner Capture Group checkpoint, skips completed targets and creates a new Session only for the interrupted target attempt. Resume is rejected if the frozen `sites.yaml` content changed, or if a queued Profile/node no longer resolves exactly. **Cancel** is terminal. Original Profile and selector state is restored on all terminal paths.
@@ -163,6 +169,11 @@ barrier; unrelated connections opened afterward do not stall the Pipeline.
 `node drift`, `protocol mismatch`, and unavailable observation are retained as
 different outcomes. If restoration fails, the Profile or selector request and
 readback failure remains visible instead of being reduced to a transient toast.
+`pipeline-owner.json` supplies a lightweight supervisor heartbeat. UI reload
+and restart recovery cross-check it with the capture lock, Worker Job and OS
+process evidence; stale UI state alone never stops the core or managed browser.
+Start-response loss stays in reconciliation rather than displaying a terminal
+error while capture may still be active.
 After correcting a transient Controller or node problem, use **Retry
 restoration**. This action does not capture any target again.
 

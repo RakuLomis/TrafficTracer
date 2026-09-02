@@ -28,6 +28,7 @@ METHODS = (
     "config.targets.load",
     "job.start",
     "job.cancel",
+    "job.interrupt",
     "job.status",
     "analysis.start",
     "packet_split.start",

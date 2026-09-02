@@ -104,6 +104,7 @@ class JobManager:
             "analysis.start": self.start_analysis,
             "packet_split.start": self.start_packet_split,
             "job.cancel": self.cancel,
+            "job.interrupt": self.interrupt,
             "job.status": self.status,
         }
 
@@ -135,6 +136,7 @@ class JobManager:
         *,
         resume: bool = False,
         prepare: Callable[[], None] | None = None,
+        rollback_prepare: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         if self._batch_factory is None:
             raise WorkerMethodError("METHOD_NOT_FOUND", "Batch Jobs are unavailable.")
@@ -150,6 +152,7 @@ class JobManager:
             factory,
             allow_terminal_reuse=resume,
             prepare=prepare,
+            rollback_prepare=rollback_prepare,
         )
 
     def maybe_status(self, job_id: str) -> dict[str, Any] | None:
@@ -231,6 +234,7 @@ class JobManager:
         *,
         allow_terminal_reuse: bool = False,
         prepare: Callable[[], None] | None = None,
+        rollback_prepare: Callable[[], None] | None = None,
     ) -> dict[str, Any]:
         token = CancellationToken()
         done = Event()
@@ -256,18 +260,33 @@ class JobManager:
             if prepare is not None:
                 prepare()
 
-            thread = Thread(
-                target=self._run_job,
-                args=(managed, spec, factory),
-                name=f"traffictracer-{spec.kind}-{spec.job_id}",
-                daemon=True,
-            )
-            managed.thread = thread
-            self._jobs[spec.job_id] = managed
-            self._active_job_id = spec.job_id
-            snapshot = managed.snapshot()
+            try:
+                thread = Thread(
+                    target=self._run_job,
+                    args=(managed, spec, factory),
+                    name=f"traffictracer-{spec.kind}-{spec.job_id}",
+                    daemon=True,
+                )
+                managed.thread = thread
+                self._jobs[spec.job_id] = managed
+                self._active_job_id = spec.job_id
+                snapshot = managed.snapshot()
+            except Exception:
+                if rollback_prepare is not None:
+                    rollback_prepare()
+                raise
         self._emit("job.state_changed", snapshot)
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                if self._jobs.get(spec.job_id) is managed:
+                    self._jobs.pop(spec.job_id, None)
+                if self._active_job_id == spec.job_id:
+                    self._active_job_id = None
+            if rollback_prepare is not None:
+                rollback_prepare()
+            raise
         return snapshot
 
     def _run_job(
