@@ -50,6 +50,7 @@ def _fixture(name: str) -> dict:
         ("pcap_index", "pcap-index-v1-valid.json"),
         ("pipeline_manifest", "pipeline-manifest-v1-valid.json"),
         ("pipeline_manifest", "pipeline-manifest-v2-valid.json"),
+        ("pipeline_manifest", "pipeline-manifest-v3-valid.json"),
         ("flow", "flow-valid-unmatched-ipv6.json"),
     ],
 )

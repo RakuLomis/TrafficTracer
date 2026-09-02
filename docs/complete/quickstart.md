@@ -156,6 +156,16 @@ TrafficTracer. It reports the current target and attempt plus separate
 playback goal therefore remains visible with its final URL and reason without
 being misreported as failed flow correlation.
 
+Before each inner Capture Group, the card also reports the old-connection drain
+and later the **Node evidence** and **Protocol evidence** results. Only
+connections that existed before the node transition are part of the drain
+barrier; unrelated connections opened afterward do not stall the Pipeline.
+`node drift`, `protocol mismatch`, and unavailable observation are retained as
+different outcomes. If restoration fails, the Profile or selector request and
+readback failure remains visible instead of being reduced to a transient toast.
+After correcting a transient Controller or node problem, use **Retry
+restoration**. This action does not capture any target again.
+
 
 ## 8. Run the capture
 

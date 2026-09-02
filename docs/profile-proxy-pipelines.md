@@ -31,9 +31,25 @@ chain, closes old connections, waits for quiescence and performs environment
 checks. Only then may it start the existing serial Batch. A checkpoint must be
 durable before the next node is selected.
 
+Pipeline manifest schema v3 makes this barrier evidence-based. The supervisor
+polls Profile, runtime fingerprint, selector, resolved chain and concrete leaf
+until the requested state is observed or a bounded deadline expires. It
+snapshots connection IDs that existed at the transition, closes them, and
+requires those old IDs to remain absent for the minimum quiet interval. New
+connections created after the transition are not mistaken for undrained old
+node traffic. A second chain snapshot immediately before Batch start must match
+the first snapshot exactly.
+
 The pipeline may contain different proxy protocols. The strict protocol
 invariant is applied separately to every inner Batch and verified afterward
 against actual trace evidence. A mismatch is never relabelled silently.
+
+After the Batch becomes terminal, the supervisor reads Profile, selector,
+chain, leaf and protocol again and compares them with the pre-Batch snapshot
+and Session-scoped Mihomo trace evidence. `node_drift`, `protocol_mismatch` and
+`observation_unavailable` are independent outcomes. Any of them degrades a
+completed run without deleting its Sessions or rewriting valid correlation
+results.
 
 ## Recovery and privacy
 
@@ -41,6 +57,16 @@ Completed runs and targets are skipped on resume. An interrupted target is
 retried as a new Session inside the same Batch. Deleted or changed Profiles and
 missing nodes block that run instead of selecting a substitute. Original
 Profile and selector state is restored on every terminal path.
+
+Restoration is not considered successful merely because a change request
+returned. The original Profile fingerprint and every affected selector are
+read back through the real Controller. Profile request failure, selector
+request failure, Controller unavailability and readback mismatch are persisted
+as separate restore checks. A failed check changes the Pipeline to
+`restore_failed` and remains visible in its manifest and UI. **Retry
+restoration** repeats only the bounded Profile/selector restoration transaction;
+it restores the saved pre-restore terminal state and never repeats a Batch or
+Session.
 
 Manifests must not contain raw Profile YAML, subscription URLs, Controller
 secrets or proxy credentials. They store identifiers, content fingerprints,
@@ -68,7 +94,7 @@ If the desktop application exits while a supervisor is active, the next status r
 
 ## Run quality and persistent progress
 
-`pipeline-manifest.json` schema v2 records three independent quality planes for
+`pipeline-manifest.json` schema v3 records three independent quality planes for
 each terminal run:
 
 - `capture_integrity`: whether the page-attributed evidence is complete enough
@@ -88,4 +114,5 @@ The desktop progress card is rebuilt from the durable Pipeline and inner Batch
 manifests. After navigating away and back, it shows the active or most recently
 terminal run, current target URL, Batch stage and attempt, elapsed time, last
 durable checkpoint, quality planes and application issues. Schema v1 Pipeline
-manifests remain readable and are migrated to v2 when next persisted.
+manifests from schema v1 and v2 remain readable and are migrated to v3 when
+next persisted.
