@@ -256,11 +256,31 @@ A single overall percentage would hide important distinctions. For example, all 
 Old schema-v1 Sessions remain readable and can be re-analyzed when their raw artifacts are available. Re-analysis never changes the recorded target provenance or raw capture files.
 
 
-## Scenario outcome
+## Page activity outcome
 
-A configured browser scenario is evaluated separately from flow integrity.
-YouTube playback Sessions include scenario_outcome in analysis/summary.json
-with passed, degraded, or indeterminate state, the bounded primary-content
-duration, the configured goal, and a machine-readable reason. A degraded
-scenario does not invalidate otherwise consistent request, connection, flow, or
-PCAP indexes.
+Browser activity is evaluated separately from capture and correlation integrity.
+`analysis/summary.json` publishes three evidence-backed views:
+
+- `navigation_outcome` follows only the top-level document frame, records the
+  requested and final URL, HTTP status chain, final status, and recovery state;
+- `resource_health` summarizes unrecovered failures among render-critical
+  scripts, stylesheets, and fonts without treating every auxiliary request as a
+  page failure;
+- `activity_outcome` combines navigation, resource health, and an optional
+  provider-specific scenario into the effective result shown by the UI and
+  pipeline aggregate.
+
+A final top-level 4xx or 5xx response is an application failure even when raw
+capture and flow correlation are valid. Authentication iframe failures do not
+override a successful main document. A later successful response in the same
+main-frame chain is preserved as recovered degradation instead of failure.
+Navigation command timeouts followed by an observed successful document are
+also classified as recovered degradation. Missing CDP evidence is
+`not_applicable`, not guessed as success or failure.
+
+YouTube playback Sessions continue to include the backward-compatible
+`scenario_outcome`. It records the bounded primary-content duration, configured
+goal, and machine-readable playback reason. `activity_outcome` incorporates that
+scenario result while also applying the generic page checks. None of these
+application states invalidates otherwise consistent request, connection, flow,
+or PCAP indexes.

@@ -502,9 +502,38 @@ def test_same_request_id_is_isolated_between_cdp_sessions():
     }, "S2")
 
     requests = collector.get_structured_data()["requests"]
-
     assert [item["redirect_index"] for item in requests] == [0, 0]
     assert collector._warnings == []
+
+
+def test_main_frame_navigation_evidence_excludes_child_frames():
+    collector = _make_collector_with_ws(FakeWS())
+    collector._page_session = "PAGE-SESSION"
+    collector._navigation = {"requested_url": "https://example.com/"}
+
+    collector._dispatch_event({
+        "method": "Page.frameNavigated",
+        "sessionId": "PAGE-SESSION",
+        "params": {"frame": {
+            "id": "MAIN",
+            "loaderId": "LOADER",
+            "url": "https://www.example.com/",
+        }},
+    })
+    collector._dispatch_event({
+        "method": "Page.frameNavigated",
+        "sessionId": "PAGE-SESSION",
+        "params": {"frame": {
+            "id": "IFRAME",
+            "parentId": "MAIN",
+            "loaderId": "CHILD",
+            "url": "https://accounts.example/login",
+        }},
+    })
+
+    assert collector._navigation["frame_id"] == "MAIN"
+    assert collector._navigation["loader_id"] == "LOADER"
+    assert collector._navigation["final_url"] == "https://www.example.com/"
 
 
 def test_playback_interaction_dispatches_cdp_mouse_sequence_to_page_session():

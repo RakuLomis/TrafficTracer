@@ -39,6 +39,13 @@ SessionResolver = Callable[[str], str | None]
 ApplicationOutcomeResolver = Callable[[str], Mapping[str, Any] | None]
 
 _RETRYABLE_APPLICATION_REASONS = frozenset({
+    "CRITICAL_RESOURCE_FAILURE_BURST",
+    "MAIN_DOCUMENT_NETWORK_ERROR",
+    "MAIN_DOCUMENT_NOT_OBSERVED",
+    "MAIN_DOCUMENT_RESPONSE_UNKNOWN",
+    "MAIN_DOCUMENT_SERVER_ERROR",
+    "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR",
+    "NAVIGATION_COMPLETION_UNCERTAIN",
     "PLAYBACK_STATE_UNKNOWN",
     "PLAYER_NOT_CREATED",
     "VIDEO_ELEMENT_NOT_CREATED",
@@ -339,10 +346,15 @@ class SerialBatchJob:
         policy = self.spec.application_retry
         return (
             policy.enabled
-            and target.playback is not None
             and automatic_retries < policy.max_retries
             and outcome is not None
-            and outcome.state in {"failed", "indeterminate"}
+            and (
+                outcome.state in {"failed", "indeterminate"}
+                or (
+                    outcome.state == "degraded"
+                    and outcome.reason == "CRITICAL_RESOURCE_FAILURE_BURST"
+                )
+            )
             and outcome.reason in _RETRYABLE_APPLICATION_REASONS
         )
 

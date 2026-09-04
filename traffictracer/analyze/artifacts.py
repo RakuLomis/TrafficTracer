@@ -15,6 +15,7 @@ from traffictracer.models import CarrierBinding, FlowTuple
 from traffictracer.session.atomic import write_json_atomic
 from traffictracer.version import FLOW_SCHEMA_VERSION
 
+from .activity import session_activity_outcomes
 from .flow_index import FlowIndex, FlowMapping
 from .mihomo_log import trace_snapshot_info
 from .outcomes import (
@@ -106,6 +107,13 @@ def persist_analysis_artifacts(
         "items": items,
     }
     playback = _playback_summary(session)
+    playback_outcome = (
+        _playback_scenario_outcome(playback)
+        if playback is not None else None
+    )
+    navigation_outcome, resource_health, activity_outcome = (
+        session_activity_outcomes(session, playback_outcome)
+    )
     summary_payload = {
         "schema_version": FLOW_SCHEMA_VERSION,
         "session_id": session_id,
@@ -150,10 +158,13 @@ def persist_analysis_artifacts(
         "carrier_bindings": _carrier_binding_summary(items),
         "proxy_protocol": _capture_protocol_summary(session),
         "inbound": _capture_inbound_summary(session, items),
+        "navigation_outcome": navigation_outcome,
+        "resource_health": resource_health,
+        "activity_outcome": activity_outcome,
     }
     if playback is not None:
         summary_payload["playback"] = playback
-        summary_payload["scenario_outcome"] = _playback_scenario_outcome(playback)
+        summary_payload["scenario_outcome"] = playback_outcome
     summary_payload["coverage"] = layered_coverage(
         request_records,
         connection_records,

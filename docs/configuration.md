@@ -152,13 +152,20 @@ A resumable interruption stops the current child only after managed Chrome, pack
 
 ### Bounded application retry
 
-The UI option **Retry classified playback failure once** is outside
+The UI option **Retry classified activity failure once** is outside
 `sites.yaml`, defaults to enabled, can be explicitly disabled, and is frozen
-into the Batch snapshot. It is
-evaluated only after a playback target has completed capture, Chrome cleanup,
-and analysis. A retry requires an explicit failed or indeterminate
-scenario_outcome.reason from the Worker's fixed transient allowlist. It does
-not parse exception text or infer failure from a slow page.
+into the Batch snapshot. It is evaluated only after a target has completed
+capture, Chrome cleanup, and analysis. A retry requires an explicit failed or
+indeterminate `activity_outcome.reason` from the Worker's fixed transient
+allowlist. A systemic render-critical resource failure burst is the only
+degraded state eligible for retry. The policy does not parse exception text or
+infer failure from a slow page.
+
+Eligible reasons cover transient main-document network, timeout, unknown
+response, HTTP 408/429, HTTP 5xx, critical-resource bursts, and classified
+playback startup or progress failures. Deterministic HTTP 4xx responses such as
+404, recovered navigation, and positive playback below its duration goal are
+recorded but are not retried.
 
 At most one automatic retry is created for a target. It uses a new Job UUID,
 managed Chrome profile/process, and Session directory. Batch manifest v2 keeps

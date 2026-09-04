@@ -191,11 +191,66 @@ def test_retryable_application_failure_gets_one_fresh_preserved_attempt(tmp_path
 
 
 @pytest.mark.parametrize(
+    ("state", "reason"),
+    [
+        ("failed", "MAIN_DOCUMENT_NETWORK_ERROR"),
+        ("degraded", "CRITICAL_RESOURCE_FAILURE_BURST"),
+    ],
+)
+def test_generic_navigation_failure_gets_one_bounded_retry(
+    tmp_path, state, reason
+):
+    base = _spec(tmp_path, count=1)
+    spec = replace(
+        base,
+        application_retry=ApplicationRetryPolicy(enabled=True, max_retries=1),
+    )
+    session_ids = [
+        "5027aee9-c6e4-41de-8625-7ea0869a3307",
+        "78fdab68-4e5d-4b67-9910-33da00a2632a",
+    ]
+    calls = []
+
+    def factory(child, progress, token):
+        position = len(calls)
+        calls.append(child.job_id)
+        return _Runnable(lambda: CaptureJobResult(
+            child.job_id,
+            JobState.COMPLETED,
+            session_id=session_ids[position],
+        ))
+
+    outcomes = {
+        session_ids[0]: {
+            "state": state,
+            "reason": reason,
+        },
+        session_ids[1]: {
+            "state": "passed",
+            "reason": None,
+        },
+    }
+    job, result, _ = _execute(
+        spec,
+        factory,
+        outcome_resolver=outcomes.get,
+    )
+
+    child = BatchManifest.load(job.manifest_path).children[0]
+    assert result.state is JobState.COMPLETED
+    assert len(calls) == 2
+    assert child.attempts[0].application_outcome.reason == reason
+    assert child.attempts[1].automatic_retry is True
+
+
+
+@pytest.mark.parametrize(
     ("retry_enabled", "state", "reason"),
     [
         (False, "failed", "MEDIA_NOT_ADVANCING"),
         (True, "degraded", "PRIMARY_DURATION_BELOW_TARGET"),
         (True, "failed", "UNCLASSIFIED_FAILURE"),
+        (True, "failed", "MAIN_DOCUMENT_HTTP_ERROR"),
     ],
 )
 def test_application_retry_never_guesses_or_overrides_opt_in(

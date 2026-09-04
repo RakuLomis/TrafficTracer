@@ -713,7 +713,10 @@ class WorkerServices:
                 summary = json.load(stream)
         except (OSError, ValueError, TypeError, SessionStoreError):
             return None
-        outcome = summary.get("scenario_outcome")
+        outcome = summary.get("activity_outcome")
+        if not isinstance(outcome, dict):
+            # Backward compatibility for provider-only legacy summaries.
+            outcome = summary.get("scenario_outcome")
         return dict(outcome) if isinstance(outcome, dict) else None
 
     def _require_output_root(self, value: str) -> None:
@@ -970,6 +973,12 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
         "analysis_integrity_state": None,
         "network_outcome_state": None,
         "scenario_outcome_state": None,
+        "navigation_outcome_state": None,
+        "navigation_outcome_reason": None,
+        "navigation_final_url": None,
+        "navigation_final_status": None,
+        "resource_health_state": None,
+        "activity_outcome_state": None,
         "coverage": None,
         "packet_split": inspect_packet_split(manifest).to_dict(),
     }
@@ -1020,6 +1029,20 @@ def _session_summary(manifest: SessionManifest) -> dict[str, Any]:
                 if isinstance(scenario, dict):
                     payload["scenario_outcome_state"] = scenario.get("state")
                 coverage = summary.get("coverage")
+                navigation = summary.get("navigation_outcome", {})
+                if isinstance(navigation, dict):
+                    payload["navigation_outcome_state"] = navigation.get("state")
+                    payload["navigation_outcome_reason"] = navigation.get("reason")
+                    payload["navigation_final_url"] = navigation.get("final_url")
+                    payload["navigation_final_status"] = navigation.get(
+                        "final_status"
+                    )
+                resources = summary.get("resource_health", {})
+                if isinstance(resources, dict):
+                    payload["resource_health_state"] = resources.get("state")
+                activity = summary.get("activity_outcome", {})
+                if isinstance(activity, dict):
+                    payload["activity_outcome_state"] = activity.get("state")
                 if isinstance(coverage, dict):
                     page = coverage.get("page_attributed")
                     if isinstance(page, dict):

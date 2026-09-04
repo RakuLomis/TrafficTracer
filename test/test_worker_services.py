@@ -190,6 +190,20 @@ def test_application_retry_outcome_is_loaded_only_from_persisted_summary(
         "state": "failed",
         "reason": "MEDIA_NOT_ADVANCING",
     }
+    write_json_atomic(analysis / "summary.json", {
+        "activity_outcome": {
+            "state": "passed",
+            "reason": None,
+        },
+        "scenario_outcome": {
+            "state": "failed",
+            "reason": "MEDIA_NOT_ADVANCING",
+        },
+    })
+    assert services._application_outcome_for_session(manifest.session_id) == {
+        "state": "passed",
+        "reason": None,
+    }
     assert services._application_outcome_for_session(
         "5027aee9-c6e4-41de-8625-7ea0869a3307"
     ) is None

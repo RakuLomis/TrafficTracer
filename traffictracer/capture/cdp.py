@@ -142,6 +142,8 @@ class CDPCollector:
             load_event = self._load_events.get(session_id)
             if load_event is not None:
                 load_event.set()
+        elif method == "Page.frameNavigated":
+            self._on_frame_navigated(params, session_id)
 
     def _on_target_attached(self, params: dict) -> None:
         info = params.get("targetInfo", {})
@@ -285,6 +287,23 @@ class CDPCollector:
             "timestamp": params.get("timestamp", 0.0),
         })
 
+    def _on_frame_navigated(self, params: dict, session_id: str) -> None:
+        """Keep explicit main-frame evidence for deterministic post-analysis."""
+        if session_id != self._page_session:
+            return
+        frame = params.get("frame", {})
+        if not isinstance(frame, dict) or frame.get("parentId"):
+            return
+        frame_id = frame.get("id")
+        loader_id = frame.get("loaderId")
+        url = frame.get("url")
+        if frame_id:
+            self._navigation["frame_id"] = frame_id
+        if loader_id:
+            self._navigation["loader_id"] = loader_id
+        if url:
+            self._navigation["final_url"] = url
+
     async def send(self, method: str, params: dict | None = None,
                    timeout: float = 10.0, session_id: str = "") -> dict:
         async with self._lock:
@@ -383,16 +402,29 @@ class CDPCollector:
         self._page_session = page_session
         load_event = asyncio.Event()
         navigate_command_timed_out = False
-        self._navigation = {"url": url, "status": "started"}
+        self._navigation = {
+            "url": url,
+            "requested_url": url,
+            "target_id": target_id,
+            "status": "started",
+        }
         self._load_events[page_session] = load_event
         try:
             self._navigation_started_at = asyncio.get_running_loop().time()
             try:
-                await self.send(
+                navigate_result = await self.send(
                     "Page.navigate",
                     {"url": url},
                     session_id=page_session,
                 )
+                for source, destination in (
+                    ("frameId", "frame_id"),
+                    ("loaderId", "loader_id"),
+                    ("errorText", "error_text"),
+                ):
+                    value = navigate_result.get(source)
+                    if value:
+                        self._navigation[destination] = value
             except asyncio.TimeoutError:
                 navigate_command_timed_out = True
                 warning = {
