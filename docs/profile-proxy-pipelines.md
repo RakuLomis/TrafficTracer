@@ -23,13 +23,13 @@ The supervisor holds one capture lock for the complete pipeline. Internal
 profile and selector transitions are authorized only for that lock owner. User
 changes to Profile, selector, TUN, system proxy or core remain blocked.
 
-Before the supervisor is launched, a lightweight whole-queue preflight checks
-the immutable target/config hash, unique `(Profile, selector, node)` identities,
-the existence of every queued Profile, the active Profile fingerprint, active
-runtime node membership, output path, interfaces, TUN state, tracing
-capabilities and required tools. Inactive Profiles are deliberately validated
-again when their run becomes active: a stored YAML document is not proof that a
-provider-backed runtime node is ready.
+Before the first Batch, the supervisor materializes every queued candidate in
+order. It activates the Profile, waits for the Controller, selects and resolves
+the requested node, determines its leaf protocol, and binds the candidate to a
+canonical semantic fingerprint of the effective runtime configuration. A stale
+queue fingerprint is recorded as a rebind, not treated as a run failure. If a
+Profile, selector, or node is genuinely unavailable, the first repetition fails
+and the remaining repetitions are marked `skipped` without starting Workers.
 
 ## Run barrier
 
@@ -39,8 +39,11 @@ chain, closes old connections, waits for quiescence and performs environment
 checks. Only then may it start the existing serial Batch. A checkpoint must be
 durable before the next node is selected.
 
-Pipeline manifest schema v4 makes this barrier evidence-based and records `repetitions_per_candidate`, `candidate_ordinal`, `repetition_index`, and `repetition_total`. The supervisor
-polls Profile, runtime fingerprint, selector, resolved chain and concrete leaf
+Pipeline manifest schema v6 makes this barrier evidence-based and records
+`repetitions_per_candidate`, `candidate_ordinal`, `repetition_index`,
+`repetition_total`, fingerprint kind, queued fingerprint, binding time, and
+whether materialization refreshed the queued snapshot. The supervisor polls
+Profile, runtime fingerprint, selector, resolved chain and concrete leaf
 until the requested state is observed or a bounded deadline expires. It
 snapshots connection IDs that existed at the transition, closes them, and
 requires those old IDs to remain absent for the minimum quiet interval. New
@@ -61,10 +64,15 @@ results.
 
 ## Recovery and privacy
 
-Completed candidate repetitions and targets are skipped on resume. The supervisor expands candidates in candidate-major order: it finishes all requested repetitions for one candidate before activating the next candidate. An interrupted target is
-retried as a new Session inside the same Batch. Deleted or changed Profiles and
-missing nodes block that run instead of selecting a substitute. Original
-Profile and selector state is restored on every terminal path.
+Completed candidate repetitions and targets are skipped on resume. The
+supervisor expands candidates in candidate-major order: it finishes all
+requested repetitions for one candidate before activating the next candidate.
+An interrupted target is retried as a new Session inside the same Batch. A
+semantic configuration change after materialization raises
+`CANDIDATE_CONFIG_DRIFT`; the current repetition fails and the remaining
+repetitions for that candidate are skipped. Deleted Profiles and missing nodes
+are handled by the same candidate-level circuit breaker. Original Profile and
+selector state is restored on every terminal path.
 
 Restoration is not considered successful merely because a change request
 returned. The original Profile fingerprint and every affected selector are
@@ -124,7 +132,7 @@ terminal cancellation.
 
 ## Run quality and persistent progress
 
-`pipeline-manifest.json` schema v4 records three independent quality planes for
+`pipeline-manifest.json` schema v6 records durable Profile activation and configuration-binding evidence plus three independent quality planes for
 each terminal run:
 
 - `capture_integrity`: whether the page-attributed evidence is complete enough
@@ -140,7 +148,16 @@ listed in `application_issues` with their requested URL, observed final URL,
 reason and primary-content duration. Non-playback Sessions are counted as
 `not_applicable` on the application plane.
 
+Each run checkpoints Profile activation as `activation_requested`,
+`profile_committed`, and `controller_verified`. Runtime YAML is parsed and
+canonicalized before hashing, so mapping order, indentation, and comments do not
+create false drift. Real changes to proxy, DNS, TUN, rule, merge, or script
+output still change the fingerprint. The capture lock blocks subscription
+updates and manual Profile/node mutations while the pipeline owns the
+experiment. Profile persistence is time-bounded, while tray refreshes remain
+non-blocking auxiliary work.
+
 The desktop progress card is rebuilt from the durable Pipeline and inner Batch
 manifests. After navigating away and back, it shows the active or most recently
 terminal run, current target URL, Batch stage and attempt, elapsed time, last
-durable checkpoint, quality planes and application issues. Schema v1-v3 Pipeline manifests remain readable. They migrate to one repetition per historical run in memory and are persisted as schema v4 at the next checkpoint.
+durable checkpoint, quality planes and application issues. Schema v1-v5 Pipeline manifests remain readable. Legacy byte fingerprints are marked as v1 snapshots and rebound to semantic v2 at the next safe materialization checkpoint. Schema v1-v3 manifests migrate to one repetition per historical run in memory, and all active historical manifests are persisted as schema v6 at the next checkpoint.

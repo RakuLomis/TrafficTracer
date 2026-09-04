@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 from uuid import uuid4
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from traffictracer.layout import safe_url_slug
@@ -299,6 +299,7 @@ def split_flows_v2(
     phys_pcap: str,
     output_base: str,
     split_mode: str = SPLIT_UNIQUE_CONNECTIONS,
+    carrier_registry: Mapping[tuple[str, int], tuple[FlowTuple, ...]] | None = None,
 ) -> list[ConnectionPcapResult]:
     if split_mode not in {SPLIT_NONE, SPLIT_UNIQUE_CONNECTIONS}:
         raise ValueError(f"unsupported PCAP split mode: {split_mode}")
@@ -441,11 +442,16 @@ def split_flows_v2(
         ) for entry in entries]
 
     carrier_filters: dict[str, set[str]] = {}
+    carrier_paths_by_id: dict[str, tuple[FlowTuple, ...]] = {}
     for entry in entries:
         carrier_id = entry["carrier_id"]
         if not carrier_id:
             continue
         filters = carrier_filters.setdefault(carrier_id, set())
+        existing_paths = carrier_paths_by_id.get(carrier_id, ())
+        carrier_paths_by_id[carrier_id] = tuple(
+            dict.fromkeys((*existing_paths, *entry["carrier_paths"]))
+        )
         filters.update(
             build_flow_tuple_filter(path)
             for path in entry["carrier_paths"]
@@ -453,6 +459,18 @@ def split_flows_v2(
         )
         if entry["post_filter"]:
             filters.add(entry["post_filter"])
+
+    all_carrier_paths_by_id = dict(carrier_paths_by_id)
+    for (registry_carrier_id, _generation), registry_paths in (
+        carrier_registry or {}
+    ).items():
+        existing = all_carrier_paths_by_id.get(registry_carrier_id, ())
+        all_carrier_paths_by_id[registry_carrier_id] = tuple(
+            dict.fromkeys((*existing, *registry_paths))
+        )
+    carrier_fallback_filters = _unique_carrier_local_endpoint_filters(
+        all_carrier_paths_by_id,
+    )
 
     groups: dict[str, list[dict]] = {}
     for entry in entries:
@@ -492,11 +510,27 @@ def split_flows_v2(
                     display_filter = " or ".join(
                         f"({item})" for item in sorted(carrier_filters[carrier_id])
                     )
+                    carrier_output_path = (
+                        Path(output_base) / "carriers" / carrier_slug / "post.pcap"
+                    )
                     carrier_outputs[carrier_id] = _extract_side(
-                        phys_pcap, display_filter,
-                        Path(output_base) / "carriers" / carrier_slug / "post.pcap",
+                        phys_pcap, display_filter, carrier_output_path,
                         f"pcap-{carrier_slug}-post",
                     )
+                    fallback_filter = carrier_fallback_filters.get(carrier_id, "")
+                    if (
+                        carrier_outputs[carrier_id].status == "empty"
+                        and fallback_filter
+                        and fallback_filter != display_filter
+                    ):
+                        logger.info(
+                            "exact carrier paths empty for %s; retrying unique local endpoint",
+                            carrier_id,
+                        )
+                        carrier_outputs[carrier_id] = _extract_side(
+                            phys_pcap, fallback_filter, carrier_output_path,
+                            f"pcap-{carrier_slug}-post",
+                        )
                 post = carrier_outputs[carrier_id]
             else:
                 post = _extract_side(
@@ -616,6 +650,41 @@ def _resource_key(url: str) -> str:
         parsed.scheme.lower(), parsed.netloc.lower(), parsed.path,
         urlencode(sorted(query)), "",
     ))
+
+
+def _unique_carrier_local_endpoint_filters(
+    paths_by_id: dict[str, tuple[FlowTuple, ...]],
+) -> dict[str, str]:
+    """Return a socket-only fallback solely for uniquely owned UDP endpoints."""
+    carrier_endpoints: dict[str, set[tuple[str, str, int]]] = {}
+    owners: dict[tuple[str, str, int], set[str]] = {}
+    for carrier_id, paths in paths_by_id.items():
+        endpoints = {
+            (path.network.lower(), _normalize_ip(path.src_ip), path.src_port)
+            for path in paths
+            if (
+                path.network.lower() == "udp"
+                and _normalize_ip(path.src_ip)
+                and path.src_port
+                and path.shared
+            )
+        }
+        carrier_endpoints[carrier_id] = endpoints
+        for endpoint in endpoints:
+            owners.setdefault(endpoint, set()).add(carrier_id)
+
+    filters: dict[str, str] = {}
+    for carrier_id, endpoints in carrier_endpoints.items():
+        if len(endpoints) != 1:
+            continue
+        network, address, port = next(iter(endpoints))
+        if len(owners.get((network, address, port), set())) != 1:
+            continue
+        family = "ipv6" if ":" in address else "ip"
+        filters[carrier_id] = (
+            f"{network} and {family}.addr=={address} and {network}.port=={port}"
+        )
+    return filters
 
 
 def _carrier_slug(carrier_id: str) -> str:

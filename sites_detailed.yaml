@@ -1,0 +1,147 @@
+sites:
+
+  # Confirmatory repeated-capture set.
+  #
+  # Experimental unit:
+  #   activity = fixed URL/query/view + the interaction implemented by TrafficTracer
+  #
+  # The set is organized by natural visit-to-visit variability rather than by
+  # forcing two sites into every content category. Configure repetitions in the
+  # UI. Use a cold temporary Chrome profile for every visit.
+  #
+  # IMPORTANT:
+  # - Only YouTube currently has a deterministic playback policy and an explicit
+  #   activity-success signal. Other fixed media URLs remain high-variability
+  #   page-load samples until provider-specific automation is implemented.
+  # - Protocol order cannot be randomized by this YAML file. Rotate/randomize
+  #   the (profile, proxy) queue between capture groups so Protocol and Time do
+  #   not remain confounded.
+  # - High-noise, anti-automation, and network-adaptive targets live in
+  #   sites_detailed_stress.yaml and must not contribute to primary estimates.
+
+  # ============================================================
+  # A. Very low / low natural variability
+  # Stable controls with fixed document or repository content.
+  # ============================================================
+
+  - domain: example.com
+    url: "https://example.com/"
+    wait: 8
+    traffic_type: all
+    page_type: control-document-example
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Computer_network"
+    wait: 12
+    traffic_type: all
+    page_type: document-wikipedia-computer-network
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP"
+    wait: 12
+    traffic_type: all
+    page_type: document-mdn-http
+
+  - domain: github.com
+    url: "https://github.com/RakuLomis/TrafficTracer"
+    wait: 15
+    traffic_type: all
+    page_type: developer-github-traffictracer-repository
+
+  - domain: arxiv.org
+    url: "https://arxiv.org/abs/1706.03762"
+    wait: 12
+    traffic_type: all
+    page_type: document-arxiv-attention-paper
+
+  # ============================================================
+  # B. Medium natural variability
+  # Fixed query, viewport, content, product family, or location.
+  # ============================================================
+
+  - domain: baidu.com
+    url: "https://www.baidu.com/s?wd=network%20traffic%20analysis"
+    wait: 15
+    traffic_type: all
+    page_type: search-baidu-fixed-network-traffic-query
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=network%20traffic%20analysis"
+    wait: 15
+    traffic_type: all
+    page_type: search-bing-fixed-network-traffic-query
+
+  - domain: openstreetmap.org
+    url: "https://www.openstreetmap.org/#map=13/32.0603/118.7969"
+    wait: 20
+    traffic_type: all
+    page_type: map-osm-nanjing-z13
+
+  - domain: douban.com
+    url: "https://movie.douban.com/subject/1292052/"
+    wait: 15
+    traffic_type: all
+    page_type: community-douban-fixed-movie
+
+  - domain: zhihu.com
+    url: "https://www.zhihu.com/question/23646318"
+    wait: 15
+    traffic_type: all
+    page_type: community-zhihu-fixed-question
+
+  - domain: apple.com
+    url: "https://www.apple.com/iphone/"
+    wait: 18
+    traffic_type: all
+    page_type: ecommerce-apple-fixed-product-family
+
+  - domain: weather.com
+    url: "https://weather.com/zh-CN/cn/jiangsu/city/nanjing/today"
+    wait: 20
+    traffic_type: all
+    page_type: realtime-weather-fixed-nanjing
+
+  # ============================================================
+  # C. High natural variability
+  # Fixed target identity, but media/CDN/realtime content remains variable.
+  # ============================================================
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
+    wait: 25
+    traffic_type: all
+    page_type: video-bilibili-fixed-page
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
+    wait: 35
+    traffic_type: all
+    page_type: video-youtube-fixed-playback
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: vimeo.com
+    url: "https://vimeo.com/513177164"
+    wait: 25
+    traffic_type: all
+    page_type: video-vimeo-fixed-page
+
+  - domain: unsplash.com
+    url: "https://unsplash.com/"
+    wait: 20
+    traffic_type: all
+    page_type: image-unsplash-dynamic-homepage
+
+  - domain: tradingview.com
+    url: "https://www.tradingview.com/chart/?symbol=NASDAQ%3AAAPL"
+    wait: 25
+    traffic_type: all
+    page_type: realtime-tradingview-aapl-chart
+
+  - domain: cloudflare.com
+    url: "https://www.cloudflare.com/"
+    wait: 15
+    traffic_type: all
+    page_type: dynamic-cloudflare-homepage

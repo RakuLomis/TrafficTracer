@@ -23,6 +23,9 @@ from .mihomo_log import (
     TcpConnect,
     TcpProxyDial,
     UdpConnection,
+    build_carrier_path_registry,
+    enrich_carrier_bindings,
+    parse_carrier_events,
     parse_tracing_log,
     parse_udp_tracing_log,
     trace_snapshot_info,
@@ -124,6 +127,15 @@ def run_analysis(
                 if trace_path.exists()
                 else {}
             )
+            carrier_registry = (
+                build_carrier_path_registry(parse_carrier_events(
+                    str(trace_path),
+                    max_event_seq=trace_cutoff,
+                    include_event_seqs=causal_tail,
+                ))
+                if trace_path.exists()
+                else {}
+            )
             token.checkpoint()
 
             advance(JobStage.ANALYZE_CORRELATE, 0.6, tag)
@@ -133,6 +145,14 @@ def run_analysis(
                     run_mihomo_conns, domain, tag, trace_cutoff, causal_tail,
                 )
                 if result_v2 is not None:
+                    enriched = enrich_carrier_bindings(
+                        result_v2.flows, carrier_registry,
+                    )
+                    if enriched:
+                        logger.info(
+                            "enriched %d carrier bindings from lifecycle for %s",
+                            enriched, tag,
+                        )
                     connection_results.append(result_v2)
                     advance(JobStage.ANALYZE_SPLIT, 0.8, tag)
                     pcap_results.extend(
@@ -141,6 +161,7 @@ def run_analysis(
                             run_dir,
                             Path(results_dir) / "pcap",
                             split_mode,
+                            carrier_registry,
                         )
                     )
                     token.checkpoint()
@@ -467,6 +488,7 @@ def _try_split_v2(
     run_dir: Path,
     output_base: Path,
     split_mode: str,
+    carrier_registry=None,
 ) -> list[ConnectionPcapResult]:
     tun_pcap = str(run_dir / "tun.pcap")
     phys_pcap = str(run_dir / "phys.pcap")
@@ -487,6 +509,7 @@ def _try_split_v2(
             phys_pcap,
             str(output_base),
             effective_mode,
+            carrier_registry,
         )
     except Exception as e:
         logger.error("pcap splitting failed: %s", e)

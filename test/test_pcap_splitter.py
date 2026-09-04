@@ -18,6 +18,7 @@ from traffictracer.analyze.pcap_splitter import (
     recover_post_flow_from_pcap,
     split_flows_v2,
     _sanitize_name,
+    _unique_carrier_local_endpoint_filters,
 )
 from traffictracer.models import (
     CarrierBinding,
@@ -272,6 +273,68 @@ def test_shared_hy2_carrier_is_extracted_once_and_referenced(tmp_path, monkeypat
     )
     assert carrier_file.is_file()
     assert Path(outputs[0].post_proxy.path) == carrier_file
+
+
+def test_shared_udp_carrier_retries_with_unique_local_endpoint(
+    tmp_path, monkeypatch,
+):
+    connection_id = "conn-" + "b" * 32
+    advertised = FlowTuple(
+        "udp", "192.0.2.10", 55000, "203.0.113.20", 443,
+        key="udp|192.0.2.10:55000|203.0.113.20:443",
+        complete=True, source="dialer_socket", scope="physical", shared=True,
+    )
+    flow = _flow(connection_id, "request-1")
+    flow.post_flow = advertised
+    flow.carrier_binding = CarrierBinding(
+        carrier_id="hy2-carrier-1", relation="reused", generation=1,
+        protocol="hysteria2", paths=(advertised,),
+    )
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        if "-w" in command:
+            output = Path(command[-1])
+            display_filter = command[command.index("-Y") + 1]
+            if "203.0.113.20" in display_filter:
+                output.write_bytes(b"x" * 24)
+            else:
+                output.write_bytes(b"pcap" + b"x" * 32)
+            return subprocess.CompletedProcess(command, 0)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="60\n70\n", stderr="",
+        )
+
+    monkeypatch.setattr(
+        "traffictracer.analyze.pcap_splitter.subprocess.run", run,
+    )
+
+    output = split_flows_v2(
+        _result([flow]), "tun.pcap", "phys.pcap", str(tmp_path),
+    )[0]
+
+    assert output.post_proxy.status == "success"
+    assert output.post_proxy.packet_count == 2
+    assert "ip.addr==192.0.2.10" in output.post_proxy.display_filter
+    assert "udp.port==55000" in output.post_proxy.display_filter
+    post_extracts = [
+        call for call in calls
+        if "-w" in call and "carriers" in str(call[-1])
+    ]
+    assert len(post_extracts) == 2
+
+
+def test_shared_udp_fallback_requires_session_unique_local_endpoint():
+    path = FlowTuple(
+        "udp", "192.0.2.10", 55000, "203.0.113.20", 443,
+        complete=True, scope="physical", shared=True,
+    )
+
+    assert _unique_carrier_local_endpoint_filters({
+        "carrier-one": (path,),
+        "carrier-two": (path,),
+    }) == {}
 
 
 def test_local_endpoint_skips_post_pcap_as_not_applicable(tmp_path, monkeypatch):

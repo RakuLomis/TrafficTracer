@@ -6,10 +6,10 @@
   "additionalProperties": false,
   "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3] },
+    "schema_version": { "enum": [1, 2, 3, 4, 5, 6] },
     "pipeline_id": { "$ref": "#/$defs/uuid" },
-    "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
-    "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "checkpoint", "restoring", "finished"] },
+    "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_degraded", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
+    "stage": { "enum": ["queued", "materializing", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "checkpoint", "restoring", "finished"] },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },
     "output_root": { "$ref": "#/$defs/absolutePath" },
@@ -27,8 +27,9 @@
         "fail_fast": { "type": "boolean" }
       }
     },
+    "repetitions_per_candidate": { "type": "integer", "minimum": 1, "maximum": 20 },
     "current_run_index": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
-    "runs": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/run" } },
+    "runs": { "type": "array", "minItems": 1, "maxItems": 5120, "items": { "$ref": "#/$defs/run" } },
     "restore": { "$ref": "#/$defs/restore" }
   },
   "$defs": {
@@ -114,9 +115,24 @@
         "details": { "type": "array", "items": { "type": "string" } }, "checked_at": { "type": "string", "format": "date-time" }
       }
     },
+    "profileActivation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_profile_uid", "target_profile_uid", "requested_at", "profile_already_active", "resumed_from_committed_state", "profile_committed_at", "controller_verified_at", "last_completed_step"],
+      "properties": {
+        "source_profile_uid": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
+        "target_profile_uid": { "$ref": "#/$defs/identifier" },
+        "requested_at": { "type": "string", "format": "date-time" },
+        "profile_already_active": { "type": "boolean" },
+        "resumed_from_committed_state": { "type": "boolean" },
+        "profile_committed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+        "controller_verified_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+        "last_completed_step": { "enum": ["activation_requested", "profile_committed", "controller_verified"] }
+      }
+    },
     "runEvidence": {
       "type": "object", "additionalProperties": false,
       "properties": {
+        "profile_activation": { "$ref": "#/$defs/profileActivation" },
         "selection_snapshot": { "$ref": "#/$defs/proxySnapshot" }, "drain": { "$ref": "#/$defs/connectionDrain" },
         "pre_batch_snapshot": { "$ref": "#/$defs/proxySnapshot" }, "end_snapshot": { "$ref": "#/$defs/proxySnapshot" },
         "verification": { "$ref": "#/$defs/runVerification" }
@@ -137,8 +153,10 @@
       "type": "object", "additionalProperties": false,
       "required": ["ordinal", "run_id", "profile_uid", "profile_fingerprint", "selection_group", "requested_node", "state", "stage", "resolved_chain", "resolved_leaf", "expected_protocol", "observed_protocol", "batch_id", "output_path", "error", "resume_attempt", "started_at", "completed_at"],
       "properties": {
-        "ordinal": { "type": "integer", "minimum": 1 }, "run_id": { "$ref": "#/$defs/uuid" }, "profile_uid": { "$ref": "#/$defs/identifier" },
-        "profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "selection_group": { "$ref": "#/$defs/identifier" }, "requested_node": { "$ref": "#/$defs/identifier" },
+        "ordinal": { "type": "integer", "minimum": 1 }, "candidate_ordinal": { "type": "integer", "minimum": 1 },
+        "repetition_index": { "type": "integer", "minimum": 1 }, "repetition_total": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "run_id": { "$ref": "#/$defs/uuid" }, "profile_uid": { "$ref": "#/$defs/identifier" },
+        "profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "profile_fingerprint_kind": { "enum": ["runtime_bytes_v1", "runtime_semantic_v2"] }, "queued_profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "profile_bound_at": { "type": "string", "format": "date-time" }, "profile_snapshot_changed": { "type": "boolean" }, "selection_group": { "$ref": "#/$defs/identifier" }, "requested_node": { "$ref": "#/$defs/identifier" },
         "state": { "enum": ["pending", "running", "completed", "degraded", "failed", "interrupted", "skipped", "cancelled"] },
         "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "checkpoint", "finished"] },
         "resolved_chain": { "type": "array", "items": { "$ref": "#/$defs/identifier" } }, "resolved_leaf": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
@@ -154,7 +172,7 @@
       "properties": {
         "profile_uid": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
         "profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "terminal_state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_errors", "failed", "cancelled"] },
+        "terminal_state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_degraded", "completed_with_errors", "failed", "cancelled"] },
         "selections": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["group", "node"], "properties": { "group": { "$ref": "#/$defs/identifier" }, "node": { "$ref": "#/$defs/identifier" } } } },
         "checks": { "type": "array", "items": { "$ref": "#/$defs/restoreCheck" } },
         "state": { "enum": ["pending", "not_required", "restoring", "restored", "failed"] }, "error": { "$ref": "#/$defs/error" }

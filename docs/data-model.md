@@ -189,6 +189,15 @@ New core traces add a carrier binding to each logical proxy flow:
 - physical paths retain all observed local/remote carrier tuples;
 - shared marks a many-to-one carrier rather than an exclusive NAT mapping.
 
+Analysis folds every bounded `carrier_open`, `carrier_path_update`, binding, and
+close snapshot into the matching `(carrier_id, generation)` before publishing
+connection artifacts. Exact physical five-tuples remain the first choice. If a
+shared UDP carrier changes peer address and every exact tuple is absent from the
+PCAP, extraction may fall back to its local UDP socket only when that endpoint is
+owned by exactly one carrier in the Session. Ambiguous endpoints remain
+unresolved; TrafficTracer does not assign all traffic from a proxy protocol or
+node to a page.
+
 The canonical carrier state is exclusive_bound, shared_bound, not_applicable,
 failed_before_carrier, or observation_missing. In Full split mode, a shared carrier
 is extracted once below the carrier artifact directory. All bound connection

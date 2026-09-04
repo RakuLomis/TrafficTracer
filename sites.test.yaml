@@ -1,0 +1,29 @@
+sites:
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/"
+    wait: 15
+    traffic_type: all
+    page_type: bilibili-main-page
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
+    wait: 35
+    traffic_type: all
+    page_type: youtube-video-play-1
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: google.com
+    url: "https://www.google.com/"
+    wait: 15
+    traffic_type: all
+    page_type: google-search-main-page
+
+  - domain: example.com
+    url: "https://example.com/"
+    wait: 8
+    traffic_type: all
+    page_type: example-static-baseline

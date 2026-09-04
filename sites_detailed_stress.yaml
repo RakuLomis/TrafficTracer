@@ -1,0 +1,79 @@
+sites:
+
+  # Stress / ecological repeated-capture set.
+  #
+  # These targets intentionally include high page dynamics, access-policy
+  # sensitivity, uncertain media execution, or application/network feedback.
+  # Analyze them separately from sites_detailed.yaml; they must not determine
+  # the primary Protocol x Visit effect estimates.
+
+  # Dynamic news and portal homepages.
+  - domain: qq.com
+    url: "https://news.qq.com/"
+    wait: 18
+    traffic_type: all
+    page_type: stress-news-tencent-homepage
+
+  - domain: reuters.com
+    url: "https://www.reuters.com/"
+    wait: 18
+    traffic_type: all
+    page_type: stress-news-reuters-homepage
+
+  # Dynamic commerce pages whose recommendations and promotions change often.
+  - domain: jd.com
+    url: "https://www.jd.com/"
+    wait: 18
+    traffic_type: all
+    page_type: stress-ecommerce-jd-homepage
+
+  - domain: taobao.com
+    url: "https://www.taobao.com/"
+    wait: 18
+    traffic_type: all
+    page_type: stress-ecommerce-taobao-homepage
+
+  # Anti-automation / browser-state-sensitive pages.
+  - domain: stackoverflow.com
+    url: "https://stackoverflow.com/questions"
+    wait: 15
+    traffic_type: all
+    page_type: stress-developer-stackoverflow-question-list
+
+  - domain: pinterest.com
+    url: "https://www.pinterest.com/"
+    wait: 20
+    traffic_type: all
+    page_type: stress-image-pinterest-homepage
+
+  # Media portals without a provider-specific activity-success implementation.
+  - domain: twitch.tv
+    url: "https://www.twitch.tv/"
+    wait: 30
+    traffic_type: all
+    page_type: stress-live-twitch-homepage
+
+  - domain: douyu.com
+    url: "https://www.douyu.com/"
+    wait: 30
+    traffic_type: all
+    page_type: stress-live-douyu-homepage
+
+  - domain: music.163.com
+    url: "https://music.163.com/"
+    wait: 20
+    traffic_type: all
+    page_type: stress-audio-netease-homepage
+
+  - domain: soundcloud.com
+    url: "https://soundcloud.com/"
+    wait: 20
+    traffic_type: all
+    page_type: stress-audio-soundcloud-homepage
+
+  # Active network measurement: workload depends on observed network capacity.
+  - domain: speed.cloudflare.com
+    url: "https://speed.cloudflare.com/"
+    wait: 20
+    traffic_type: all
+    page_type: stress-network-cloudflare-speed

@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from ..models import FlowTuple
+from ..models import CarrierBinding, FlowTuple
 from .outcomes import terminal_error_class
 
 _ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
@@ -416,6 +416,88 @@ def parse_carrier_events(
             physical_paths=_event_carrier_paths(event),
         ))
     return records
+
+
+def build_carrier_path_registry(
+    records: list[CarrierLifecycleRecord],
+) -> dict[tuple[str, int], tuple[FlowTuple, ...]]:
+    """Fold lifecycle snapshots into complete paths per carrier generation."""
+    accumulated: dict[tuple[str, int], list[FlowTuple]] = {}
+    seen: dict[tuple[str, int], set[tuple]] = {}
+    for record in sorted(records, key=lambda item: item.event_seq):
+        if not record.carrier_id:
+            continue
+        identity = (record.carrier_id, record.generation)
+        paths = accumulated.setdefault(identity, [])
+        path_keys = seen.setdefault(identity, set())
+        candidates = list(record.physical_paths)
+        if (
+            record.post_flow is not None
+            and record.post_flow.complete
+            and record.post_flow.scope == "physical"
+            and record.post_flow.shared
+        ):
+            candidates.append(record.post_flow)
+        for path in candidates:
+            key = (
+                path.network.lower(), path.src_ip, path.src_port,
+                path.dst_ip, path.dst_port,
+            )
+            if not path.complete or key in path_keys:
+                continue
+            path_keys.add(key)
+            paths.append(path)
+    return {identity: tuple(paths) for identity, paths in accumulated.items()}
+
+
+def enrich_carrier_bindings(
+    flows: list[object],
+    registry: dict[tuple[str, int], tuple[FlowTuple, ...]],
+) -> int:
+    """Apply final lifecycle paths to logical bindings of the same generation."""
+    enriched = 0
+    for flow in flows:
+        binding = getattr(flow, "carrier_binding", None)
+        if binding is None or not binding.carrier_id:
+            continue
+        paths = registry.get((binding.carrier_id, binding.generation))
+        if paths is None and binding.generation == 0:
+            candidates = [
+                value for (carrier_id, _generation), value in registry.items()
+                if carrier_id == binding.carrier_id
+            ]
+            if len(candidates) == 1:
+                paths = candidates[0]
+        if not paths:
+            continue
+        merged = list(binding.paths)
+        known = {
+            (item.network.lower(), item.src_ip, item.src_port, item.dst_ip, item.dst_port)
+            for item in merged
+        }
+        for path in paths:
+            key = (
+                path.network.lower(), path.src_ip, path.src_port,
+                path.dst_ip, path.dst_port,
+            )
+            if key not in known:
+                known.add(key)
+                merged.append(path)
+        if tuple(merged) == binding.paths:
+            continue
+        flow.carrier_binding = CarrierBinding(
+            carrier_id=binding.carrier_id, relation=binding.relation,
+            generation=binding.generation, protocol=binding.protocol,
+            paths=tuple(merged),
+        )
+        evidence = getattr(flow, "match_evidence", None)
+        if (
+            isinstance(evidence, list)
+            and "carrier_paths_enriched_from_lifecycle" not in evidence
+        ):
+            evidence.append("carrier_paths_enriched_from_lifecycle")
+        enriched += 1
+    return enriched
 
 
 def parse_tracing_log(

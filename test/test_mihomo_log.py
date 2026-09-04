@@ -239,7 +239,10 @@ def test_observed_proxy_protocols_respects_cutoff_and_ignores_direct(tmp_path):
 
 
 def test_parse_carrier_lifecycle_and_binding_events(tmp_path):
-    from traffictracer.analyze.mihomo_log import parse_carrier_events
+    from traffictracer.analyze.mihomo_log import (
+        build_carrier_path_registry,
+        parse_carrier_events,
+    )
     path_value = {
         "network": "udp", "src_ip": "192.0.2.10", "src_port": 55000,
         "dst_ip": "203.0.113.20", "dst_port": 443,
@@ -268,6 +271,55 @@ def test_parse_carrier_lifecycle_and_binding_events(tmp_path):
     ]
     assert records[1].logical_conn_id == "tcp-1"
     assert records[1].physical_paths[0].shared is True
+
+    registry = build_carrier_path_registry(records)
+    assert list(registry) == [("carrier-1", 1)]
+    assert registry[("carrier-1", 1)] == (records[0].physical_paths[0],)
+
+
+def test_carrier_registry_merges_late_path_update(tmp_path):
+    from traffictracer.analyze.mihomo_log import (
+        build_carrier_path_registry,
+        parse_carrier_events,
+    )
+    first = {
+        "network": "udp", "src_ip": "192.0.2.10", "src_port": 55000,
+        "dst_ip": "203.0.113.20", "dst_port": 443,
+        "complete": True, "scope": "physical", "shared": True,
+    }
+    second = dict(first, dst_ip="203.0.113.21", dst_port=8443)
+    path = tmp_path / "carrier-update.jsonl"
+    path.write_text("\n".join(json.dumps(event) for event in [
+        {"type": "carrier_open", "event_seq": 1,
+         "carrier_id": "carrier-1", "carrier_generation": 7,
+         "carrier_protocol": "hysteria2", "carrier_paths": [first]},
+        {"type": "logical_carrier_bind", "event_seq": 2,
+         "carrier_id": "carrier-1", "carrier_generation": 7,
+         "logical_conn_id": "tcp-1", "carrier_paths": [first]},
+        {"type": "carrier_path_update", "event_seq": 3,
+         "carrier_id": "carrier-1", "carrier_generation": 7,
+         "carrier_protocol": "hysteria2", "carrier_paths": [first, second]},
+    ]))
+
+    registry = build_carrier_path_registry(parse_carrier_events(str(path)))
+
+    assert [item.dst_ip for item in registry[("carrier-1", 7)]] == [
+        "203.0.113.20", "203.0.113.21",
+    ]
+
+    from types import SimpleNamespace
+    from traffictracer.models import CarrierBinding
+    flow = SimpleNamespace(
+        carrier_binding=CarrierBinding(
+            carrier_id="carrier-1", relation="reused", generation=7,
+            protocol="hysteria2", paths=(registry[("carrier-1", 7)][0],),
+        ),
+        match_evidence=[],
+    )
+    from traffictracer.analyze.mihomo_log import enrich_carrier_bindings
+    assert enrich_carrier_bindings([flow], registry) == 1
+    assert len(flow.carrier_binding.paths) == 2
+    assert flow.match_evidence == ["carrier_paths_enriched_from_lifecycle"]
 
 
 def test_legacy_binding_recovers_protocol_and_path_from_explicit_evidence(tmp_path):

@@ -153,7 +153,8 @@ A resumable interruption stops the current child only after managed Chrome, pack
 ### Bounded application retry
 
 The UI option **Retry classified playback failure once** is outside
-sites.yaml, defaults to disabled, and is frozen into the Batch snapshot. It is
+`sites.yaml`, defaults to enabled, can be explicitly disabled, and is frozen
+into the Batch snapshot. It is
 evaluated only after a playback target has completed capture, Chrome cleanup,
 and analysis. A retry requires an explicit failed or indeterminate
 scenario_outcome.reason from the Worker's fixed transient allowlist. It does
