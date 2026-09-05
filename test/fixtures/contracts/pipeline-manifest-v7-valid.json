@@ -1,0 +1,188 @@
+{
+  "schema_version": 7,
+  "pipeline_id": "6ea29d49-4f0e-4f9b-8a88-0ad095c50b78",
+  "state": "completed_with_degraded",
+  "stage": "finished",
+  "created_at": "2026-09-02T01:00:00Z",
+  "updated_at": "2026-09-02T02:00:00Z",
+  "output_root": "/tmp/traffictracer/pipeline",
+  "config": {
+    "path": "/tmp/sites.yaml",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "targets": [
+    {
+      "index": 0,
+      "url": "https://example.com/",
+      "domain": "example.com",
+      "duration_seconds": 8,
+      "network": "all",
+      "run_label": "example",
+      "wait_load_timeout": 30,
+      "page_type": "example-main-page"
+    }
+  ],
+  "execution": {
+    "tun_interface": "Meta",
+    "physical_interface": "eth0",
+    "chrome_binary": "/usr/bin/google-chrome",
+    "options": {},
+    "fail_fast": false
+  },
+  "policy": {
+    "continue_on_run_failure": true,
+    "restore_original_state": true
+  },
+  "current_run_index": null,
+  "runs": [
+    {
+      "ordinal": 1,
+      "run_id": "e107516f-335d-42f5-b9f4-f71c081c41e7",
+      "profile_uid": "profile-one",
+      "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "selection_group": "GLOBAL",
+      "requested_node": "edge",
+      "state": "degraded",
+      "stage": "finished",
+      "resolved_chain": [
+        "edge",
+        "leaf"
+      ],
+      "resolved_leaf": "leaf",
+      "expected_protocol": "hysteria2",
+      "observed_protocol": "hysteria2",
+      "batch_id": "e38c26b7-789c-4aa0-b1bb-e3d5916390af",
+      "output_path": "/tmp/traffictracer/pipeline/runs/001_e107516f335d",
+      "error": null,
+      "evidence": {
+        "selection_snapshot": {
+          "profile_uid": "profile-one",
+          "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "selection_group": "GLOBAL",
+          "selected_node": "edge",
+          "resolved_chain": [
+            "edge",
+            "leaf"
+          ],
+          "resolved_leaf": "leaf",
+          "protocol": "hysteria2",
+          "captured_at": "2026-09-02T01:01:00Z"
+        },
+        "drain": {
+          "state": "preserved",
+          "initial_connections": 4,
+          "final_connections": 0,
+          "polls": 4,
+          "quiet_millis": 750,
+          "error": null,
+          "completed_at": "2026-09-02T01:01:01Z"
+        },
+        "pre_batch_snapshot": {
+          "profile_uid": "profile-one",
+          "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "selection_group": "GLOBAL",
+          "selected_node": "edge",
+          "resolved_chain": [
+            "edge",
+            "leaf"
+          ],
+          "resolved_leaf": "leaf",
+          "protocol": "hysteria2",
+          "captured_at": "2026-09-02T01:01:02Z"
+        },
+        "end_snapshot": {
+          "profile_uid": "profile-one",
+          "profile_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "selection_group": "GLOBAL",
+          "selected_node": "edge",
+          "resolved_chain": [
+            "edge",
+            "leaf"
+          ],
+          "resolved_leaf": "leaf",
+          "protocol": "hysteria2",
+          "captured_at": "2026-09-02T01:59:00Z"
+        },
+        "verification": {
+          "node_state": "passed",
+          "protocol_state": "observation_unavailable",
+          "observed_protocols": [],
+          "observed_selected_nodes": [
+            "edge"
+          ],
+          "observed_leaf_nodes": [
+            "leaf"
+          ],
+          "details": [
+            "bounded Mihomo trace contains no proxy protocol observation"
+          ],
+          "checked_at": "2026-09-02T01:59:01Z"
+        },
+        "profile_activation": {
+          "source_profile_uid": "profile-original",
+          "target_profile_uid": "profile-one",
+          "requested_at": "2026-09-02T01:00:55Z",
+          "profile_already_active": false,
+          "resumed_from_committed_state": false,
+          "profile_committed_at": "2026-09-02T01:00:58Z",
+          "controller_verified_at": "2026-09-02T01:01:00Z",
+          "last_completed_step": "controller_verified"
+        }
+      },
+      "resume_attempt": 0,
+      "started_at": "2026-09-02T01:01:00Z",
+      "completed_at": "2026-09-02T01:59:02Z",
+      "candidate_ordinal": 1,
+      "repetition_index": 1,
+      "repetition_total": 1,
+      "profile_fingerprint_kind": "runtime_semantic_v2",
+      "queued_profile_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "profile_bound_at": "2026-09-02T01:00:59Z",
+      "profile_snapshot_changed": true,
+      "target_index": 0,
+      "session_ids": [
+        "5027aee9-c6e4-41de-8625-7ea0869a3307"
+      ],
+      "analysis_job_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+      "application_retry_attempt": 0,
+      "prior_session_ids": []
+    }
+  ],
+  "restore": {
+    "profile_uid": "profile-original",
+    "profile_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "terminal_state": "completed_with_degraded",
+    "selections": [
+      {
+        "group": "GLOBAL",
+        "node": "original-node"
+      }
+    ],
+    "checks": [
+      {
+        "component": "profile",
+        "target": "profile-original",
+        "requested": "profile-original",
+        "observed": "profile-original",
+        "state": "passed",
+        "code": null,
+        "message": null,
+        "checked_at": "2026-09-02T01:59:05Z"
+      }
+    ],
+    "state": "restored",
+    "error": null
+  },
+  "repetitions_per_candidate": 1,
+  "schedule": {
+    "mode": "repetition_target_candidate",
+    "candidate_order_policy": "fixed",
+    "random_seed": null,
+    "algorithm_version": 1,
+    "repetition_candidate_orders": [
+      [
+        1
+      ]
+    ]
+  }
+}

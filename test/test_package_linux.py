@@ -8,6 +8,8 @@ import subprocess
 
 import pytest
 
+from traffictracer.version import COMPLETE_VERSION
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "scripts" / "package-linux.sh"
@@ -109,18 +111,18 @@ def test_package_collects_only_verified_fresh_artifacts(fake_package) -> None:
     )
 
     output = fake_package["output"]
-    deb = output / "TrafficTracer-Complete_1.0.18_linux_x86_64.deb"
-    appimage = output / "TrafficTracer-Complete_1.0.18_linux_x86_64.AppImage"
+    deb = output / f"TrafficTracer-Complete_{COMPLETE_VERSION}_linux_x86_64.deb"
+    appimage = output / f"TrafficTracer-Complete_{COMPLETE_VERSION}_linux_x86_64.AppImage"
     assert deb.read_text() == "deb-package"
     assert appimage.read_text() == "appimage-package"
     assert (output / "SHA256SUMS").read_text().count("\n") == 2
     assert f"target={TARGET}" in (output / "COMPONENTS").read_text()
-    assert "product_version=1.0.18" in (output / "COMPONENTS").read_text()
-    assert "version=1.0.18" in (output / "VERSION").read_text()
+    assert f"product_version={COMPLETE_VERSION}" in (output / "COMPONENTS").read_text()
+    assert f"version={COMPLETE_VERSION}" in (output / "VERSION").read_text()
     calls = fake_package["invocations"].read_text().splitlines()
     assert calls[0] == "prepared"
     assert "tauri build --target x86_64-unknown-linux-gnu --bundles deb,appimage" in calls[1]
-    assert '"version": "2.5.2+traffictracer.1.0.18"' in calls[1]
+    assert f'"version": "2.5.2+traffictracer.{COMPLETE_VERSION}"' in calls[1]
     assert 'createUpdaterArtifacts": false' in calls[1]
     assert calls[2].startswith("verify:linux-bundle -- --target ")
     assert "Package directory:" in result.stdout

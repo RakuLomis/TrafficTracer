@@ -1,6 +1,6 @@
 # Balanced Randomized Repetition Plan
 
-Status: future implementation plan
+Status: matrix execution implemented; optional schedule preview remains future work
 
 ## Purpose
 
@@ -16,19 +16,17 @@ fresh Chrome profile per visit
 + explicit Web activity and activity-success evidence
 ```
 
-## Current Limitation
+## Implemented baseline
 
-The current pipeline expands candidates in candidate-major order:
+New pipelines freeze a seeded balanced candidate order for every repetition and
+execute `repetition -> target -> candidate`. All targets within one repetition
+reuse that candidate order. The full capture wave completes before deferred
+analysis begins, and the next repetition waits for the analysis and bounded
+retry waves. Legacy manifests remain candidate-major for resume compatibility.
 
-```text
-candidate A repeat 1..N
-candidate B repeat 1..N
-candidate C repeat 1..N
-```
-
-This makes candidate/protocol and elapsed experiment time strongly correlated.
-The YAML target file cannot correct this ordering because it describes Web
-targets, not proxy scheduling.
+The UI displays the persisted seed, current repetition order, and separate
+captured/analyzed cell totals. A pre-start schedule preview and a user-facing
+legacy-order selector remain optional future enhancements.
 
 ## Required Execution Model
 
@@ -103,7 +101,8 @@ resume.
 ## Failure and Resume Semantics
 
 - Checkpoint before and after profile activation, node selection, connection
-  draining, batch start, batch completion, verification, and restoration.
+  observation, batch start, batch completion, verification, and restoration.
+- Connection observation is read-only and must never close unrelated traffic.
 - If the application stops during profile activation, recovery must identify
   whether activation committed before deciding whether to retry it.
 - Resume continues the interrupted visit in its original block position.
@@ -135,9 +134,9 @@ resume.
 8. Unit, integration, restart, and cancellation tests cover both scheduling
    modes.
 
-## Interim Procedure
+## Operational note
 
-Until this plan is implemented, set repetitions per candidate to one and run
-multiple capture groups with manually rotated candidate order. Record the order
-and group timestamp with the dataset. Do not combine all repetitions of one
-protocol before starting the next protocol when estimating protocol effects.
+Record `pipeline-manifest.json` with every dataset. It contains the exact seed
+and frozen candidate order needed to reconstruct temporal ordering. Do not
+infer order from node labels or directory timestamps when the manifest is
+available.

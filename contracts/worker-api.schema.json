@@ -42,6 +42,7 @@
         "batch.cancel",
         "batch.list",
         "batch.resume",
+        "batch.validate",
         "worker.shutdown"
       ]
     },

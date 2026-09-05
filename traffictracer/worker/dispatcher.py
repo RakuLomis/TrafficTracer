@@ -36,6 +36,7 @@ METHODS = (
     "session.scope.packet_split.preview",
     "session.list",
     "session.scope.resolve",
+    "batch.validate",
     "session.scope.list",
     "session.get",
     "session.delete",

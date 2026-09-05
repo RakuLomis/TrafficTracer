@@ -65,6 +65,36 @@ class _QuickCapture:
         )
 
 
+def test_batch_validate_capture_only_is_side_effect_free(tmp_path):
+    payload, _ = _payload(tmp_path, count=1)
+    payload["options"]["analyze_after_capture"] = False
+    payload["orchestration"] = {
+        "pipeline_id": "6ea29d49-4f0e-4f9b-8a88-0ad095c50b78",
+        "run_id": "95ec960a-aa98-48cb-b583-22caaf88b7aa",
+        "run_ordinal": 1,
+        "repetition_index": 1,
+        "target_index": 0,
+        "candidate_ordinal": 1,
+        "candidate_position": 1,
+        "profile_uid": "profile-validation",
+        "selection_group": "GLOBAL",
+        "requested_node": "validation-node",
+    }
+    services = WorkerServices(
+        tmp_path / "sessions", notify=lambda _: None, shutdown_event=Event()
+    )
+    dispatcher = Dispatcher(services.handlers())
+
+    response = dispatcher.dispatch(
+        _request("validate", "batch.validate", {"job": payload})
+    )
+
+    assert response["result"]["valid"] is True
+    assert response["result"]["target_count"] == 1
+    assert services.jobs.maybe_status(payload["job_id"]) is None
+    assert not (tmp_path / "sessions" / ".batches" / payload["job_id"]).exists()
+
+
 def test_batch_jsonl_start_status_list_and_notification_order(
     tmp_path, monkeypatch
 ):

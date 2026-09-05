@@ -1,15 +1,15 @@
 # TrafficTracer Complete UI Guide
 
-TrafficTracer Complete 1.0.19 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
+TrafficTracer Complete 1.0.20 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
 
 ## 1. Verify the release
 
 The release directory contains one Deb, one AppImage, checksums, component provenance, license notices, an SBOM, and an audit report:
 
 ```text
-traffictracer-complete-v1.0.19-linux-x86_64/
-├── TrafficTracer-Complete_1.0.19_linux_x86_64.deb
-├── TrafficTracer-Complete_1.0.19_linux_x86_64.AppImage
+traffictracer-complete-v1.0.20-linux-x86_64/
+├── TrafficTracer-Complete_1.0.20_linux_x86_64.deb
+├── TrafficTracer-Complete_1.0.20_linux_x86_64.AppImage
 ├── SHA256SUMS
 ├── VERSION
 ├── COMPONENTS
@@ -24,11 +24,11 @@ traffictracer-complete-v1.0.19-linux-x86_64/
 Verify the package checksums:
 
 ```bash
-cd /path/to/traffictracer-complete-v1.0.19-linux-x86_64
+cd /path/to/traffictracer-complete-v1.0.20-linux-x86_64
 sha256sum -c SHA256SUMS
 ```
 
-`VERSION` identifies TrafficTracer Complete 1.0.19. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
+`VERSION` identifies TrafficTracer Complete 1.0.20. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
 
 ## 2. Install prerequisites
 
@@ -48,16 +48,16 @@ Some distributions grant capture access through the `wireshark` group instead of
 Install the Deb:
 
 ```bash
-sudo apt install ./TrafficTracer-Complete_1.0.19_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.20_linux_x86_64.deb
 ```
 
-The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.19`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
+The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.20`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
 
 To avoid installing system files, use the AppImage:
 
 ```bash
-chmod +x TrafficTracer-Complete_1.0.19_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.19_linux_x86_64.AppImage
+chmod +x TrafficTracer-Complete_1.0.20_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.20_linux_x86_64.AppImage
 ```
 
 Do not install from `/tmp` if the path may disappear after a reboot. For `apt`, include `./` or an absolute path; otherwise the filename is interpreted as a package name.
@@ -160,11 +160,26 @@ runtime fingerprint and node membership, writable output path, interfaces,
 TUN/tracing state and required tools. Provider-backed inactive Profiles are
 validated again immediately before their own run.
 
-Set **Repetitions per node** from 1 to 20. The UI shows the planned Batch count as `queued nodes × repetitions`. Execution is candidate-major: all repetitions of the first tuple run before the next tuple is activated. Each repetition is a new full serial Capture Group with an independent run ID, Batch checkpoint, and output directory. This sampling count is separate from the optional one-time application retry for a failed URL. The UI never captures two nodes, repetitions, or sites concurrently. Profile, node, TUN, core, and proxy controls stay locked for the whole pipeline. The progress card survives page navigation, and **Profile / node pipeline history** can reopen a manifest from the selected output directory.
+Set **Repetitions per node** from 1 to 20. New pipelines execute in
+`repetition → selected target → candidate` order. One balanced seeded candidate
+order is frozen for a repetition and reused for every target; later repetitions
+rotate the order. Each cell captures one fresh-profile Session. After every cell
+in the repetition finishes capture, the pipeline analyzes those Sessions
+serially. The next repetition cannot start before that analysis wave finishes.
 
-Use **Interrupt** for a resumable stop. **Resume pipeline** skips completed repetitions, reuses the interrupted inner Capture Group checkpoint, skips completed targets, and creates a new Session only for the interrupted target attempt. Resume is rejected if the frozen `sites.yaml` content changed, or if a queued Profile/node no longer resolves exactly. **Cancel** is terminal. Original Profile and selector state is restored on all terminal paths.
+Use **Interrupt** for a resumable stop. **Resume pipeline** follows the frozen
+schedule. Interrupted capture resumes its Batch checkpoint; interrupted analysis
+reuses the existing raw Session and does not recapture it. Completed cells are
+skipped. Resume is rejected if the frozen `sites.yaml` content changed, or if a
+queued Profile/node no longer resolves exactly. **Cancel** is terminal. Original
+Profile and selector state is restored on all terminal paths.
 
-Each repetition run directory is named with its execution, candidate, and repetition ordinals and contains its inner Batch and Sessions. `pipeline-aggregate.json` summarizes per-candidate completion and the three quality planes across repetitions. `pipeline-manifest.json`, `batch-manifest.json`, and each Session `capture-context.json` retain the pipeline/run/Profile/selector/node relationship without storing Profile YAML, subscription URLs, credentials, or Controller secrets.
+Each matrix cell directory is named with its execution, repetition, target, and
+candidate ordinals and contains its capture-only Batch and Session. The manifest
+stores the seed, every repetition order, capture/analysis state, current Session,
+and superseded retry Sessions. `pipeline-aggregate.json` separates repetition
+and cell totals. No Profile YAML, subscription URL, credential, or Controller
+secret is stored.
 
 The pipeline card is restored from those manifests when you leave and return to
 TrafficTracer. It reports the current target and attempt plus separate
@@ -173,10 +188,12 @@ Application plane uses the generic activity outcome, so a failed top-level
 document or playback goal remains visible with its final URL, HTTP status, and
 reason without being misreported as failed flow correlation.
 
-Before each inner Capture Group, the card also reports the old-connection drain
-and later the **Node evidence** and **Protocol evidence** results. Only
-connections that existed before the node transition are part of the drain
-barrier; unrelated connections opened afterward do not stall the Pipeline.
+Before each inner Capture Group, the card records a read-only connection
+inventory and later the **Node evidence** and **Protocol evidence** results.
+TrafficTracer never invokes Mihomo's global close-connections operation during
+the Pipeline, so SSH, remote desktop, and unrelated system-proxy traffic are
+preserved. Isolation is instead provided by a fresh owned Chrome process and
+temporary browser Profile for every capture cell.
 `node drift`, `protocol mismatch`, and unavailable observation are retained as
 different outcomes. If restoration fails, the Profile or selector request and
 readback failure remains visible instead of being reduced to a transient toast.
@@ -256,7 +273,7 @@ See [Sessions and correlation data](../data-model.md) for the full semantics.
 
 ## 11. Protocol versions
 
-`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.19 uses:
+`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.20 uses:
 
 | Contract | Version |
 | --- | ---: |

@@ -65,8 +65,14 @@ class PipelineProvenance:
     selection_group: str
     requested_node: str
 
+    repetition_index: int | None = None
+    target_index: int | None = None
+    candidate_ordinal: int | None = None
+    candidate_position: int | None = None
+    application_retry_attempt: int = 0
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "pipeline_id": self.pipeline_id,
             "run_id": self.run_id,
             "run_ordinal": self.run_ordinal,
@@ -74,6 +80,16 @@ class PipelineProvenance:
             "selection_group": self.selection_group,
             "requested_node": self.requested_node,
         }
+        if self.repetition_index is not None:
+            payload["repetition_index"] = self.repetition_index
+        if self.target_index is not None:
+            payload["target_index"] = self.target_index
+        if self.candidate_ordinal is not None:
+            payload["candidate_ordinal"] = self.candidate_ordinal
+        if self.candidate_position is not None:
+            payload["candidate_position"] = self.candidate_position
+        payload["application_retry_attempt"] = self.application_retry_attempt
+        return payload
 
     @classmethod
     def from_dict(

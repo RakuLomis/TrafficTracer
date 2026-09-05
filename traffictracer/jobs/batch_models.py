@@ -156,8 +156,9 @@ class BatchJobSpec:
         ]
         if len(identities) != len(set(identities)):
             raise ValueError("capture group targets must not contain duplicates")
-        if not self.options.analyze_after_capture:
-            raise ValueError("capture group requires analyze_after_capture")
+        if not self.options.analyze_after_capture and self.orchestration is None:
+            raise ValueError("capture-only batch requires pipeline orchestration")
+
         for target in self.targets:
             if target.playback is None:
                 continue

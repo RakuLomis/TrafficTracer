@@ -212,3 +212,38 @@ def test_pipeline_provenance_round_trips_through_batch_manifest():
     manifest = BatchManifest.create(spec)
     assert BatchManifest.from_dict(manifest.to_dict()).orchestration == provenance
     assert manifest.to_job_spec().orchestration == provenance
+
+
+def test_capture_only_batch_contract_round_trips_for_pipeline_orchestration():
+    spec = _spec()
+    capture_only = replace(
+        spec,
+        options=replace(spec.options, analyze_after_capture=False),
+        orchestration=PipelineProvenance(
+            pipeline_id="6ea29d49-4f0e-4f9b-8a88-0ad095c50b78",
+            run_id="e107516f-335d-42f5-b9f4-f71c081c41e7",
+            run_ordinal=1,
+            repetition_index=2,
+            target_index=7,
+            candidate_ordinal=3,
+            candidate_position=1,
+            application_retry_attempt=1,
+            profile_uid="profile-one",
+            selection_group="GLOBAL",
+            requested_node="node-one",
+        ),
+    )
+    manifest = BatchManifest.create(capture_only)
+    decoded = BatchJobSpec.from_dict(capture_only.to_dict())
+    assert decoded.options.analyze_after_capture is False
+    assert decoded.orchestration == capture_only.orchestration
+    assert manifest.options.analyze_after_capture is False
+    assert BatchManifest.from_dict(manifest.to_dict()) == manifest
+
+
+def test_capture_only_batch_is_rejected_without_pipeline_orchestration():
+    spec = _spec()
+    with pytest.raises(
+        ValueError, match="capture-only batch requires pipeline orchestration"
+    ):
+        replace(spec, options=replace(spec.options, analyze_after_capture=False))

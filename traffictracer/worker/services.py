@@ -94,6 +94,7 @@ class WorkerServices:
             "environment.diagnose": self.diagnose,
             "config.targets.load": self.load_targets,
             "session.list": self.session_list,
+            "batch.validate": self.batch_validate,
             "session.scope.resolve": self.session_scope_resolve,
             "session.scope.list": self.session_scope_list,
             "session.scope.packet_split.preview": self.session_scope_packet_split_preview,
@@ -361,6 +362,29 @@ class WorkerServices:
 
     def recover_batches(self) -> tuple[str, ...]:
         return self.batches.recover_running()
+
+    def batch_validate(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Validate a batch request without creating jobs or filesystem state."""
+        payload = params.get("job") if set(params) == {"job"} else params
+        if not isinstance(payload, dict):
+            raise WorkerMethodError(
+                "INVALID_PARAMS", "batch.validate requires a Job object."
+            )
+        try:
+            spec = BatchJobSpec.from_dict(payload)
+            self._require_output_root(spec.output_root)
+            spec.verify_config_sha256()
+            manifest = BatchManifest.create(spec)
+        except WorkerMethodError:
+            raise
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            raise WorkerMethodError("INVALID_PARAMS", str(exc)) from exc
+        return {
+            "valid": True,
+            "job_id": spec.job_id,
+            "target_count": len(spec.targets),
+            "manifest_schema_version": manifest.schema_version,
+        }
 
     def batch_start(self, params: dict[str, Any]) -> dict[str, Any]:
         started_at = self._clock()

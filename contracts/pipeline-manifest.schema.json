@@ -6,10 +6,10 @@
   "additionalProperties": false,
   "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3, 4, 5, 6] },
+    "schema_version": { "enum": [1, 2, 3, 4, 5, 6, 7] },
     "pipeline_id": { "$ref": "#/$defs/uuid" },
     "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_degraded", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
-    "stage": { "enum": ["queued", "materializing", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "checkpoint", "restoring", "finished"] },
+    "stage": { "enum": ["queued", "materializing", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "capture_wave", "analysis_wave", "checkpoint", "restoring", "finished"] },
     "created_at": { "type": "string", "format": "date-time" },
     "updated_at": { "type": "string", "format": "date-time" },
     "output_root": { "$ref": "#/$defs/absolutePath" },
@@ -28,10 +28,26 @@
       }
     },
     "repetitions_per_candidate": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "schedule": { "$ref": "#/$defs/schedule" },
     "current_run_index": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
-    "runs": { "type": "array", "minItems": 1, "maxItems": 5120, "items": { "$ref": "#/$defs/run" } },
+    "runs": { "type": "array", "minItems": 1, "maxItems": 20000, "items": { "$ref": "#/$defs/run" } },
     "restore": { "$ref": "#/$defs/restore" }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schema_version": { "const": 7 } }, "required": ["schema_version"] },
+      "then": {
+        "required": ["repetitions_per_candidate", "schedule"],
+        "properties": {
+          "runs": {
+            "items": {
+              "required": ["candidate_ordinal", "repetition_index", "repetition_total", "target_index", "session_ids", "application_retry_attempt", "prior_session_ids"]
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "uuid": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" },
     "absolutePath": { "type": "string", "minLength": 1, "pattern": "^/" },
@@ -47,6 +63,21 @@
         "playback": { "type": "object", "additionalProperties": false, "required": ["provider", "ad_policy", "desired_primary_seconds"], "properties": { "provider": { "const": "youtube" }, "ad_policy": { "const": "click_visible_skip" }, "desired_primary_seconds": { "type": "integer", "minimum": 1, "maximum": 86400 } } }
       }
     },
+    "schedule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "candidate_order_policy", "random_seed", "algorithm_version", "repetition_candidate_orders"],
+      "properties": {
+        "mode": { "enum": ["candidate_major", "repetition_target_candidate"] },
+        "candidate_order_policy": { "enum": ["fixed", "balanced_seeded"] },
+        "random_seed": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "algorithm_version": { "type": "integer", "const": 1 },
+        "repetition_candidate_orders": {
+          "type": "array",
+          "items": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } }
+        }
+      }
+    },
+
     "error": { "oneOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["code", "message"], "properties": { "code": { "type": "string", "minLength": 1 }, "message": { "type": "string", "minLength": 1 } } }] },
     "qualityPlane": {
       "type": "object", "additionalProperties": false,
@@ -96,7 +127,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["state", "initial_connections", "final_connections", "polls", "quiet_millis", "error", "completed_at"],
       "properties": {
-        "state": { "enum": ["drained", "timeout", "controller_unavailable", "close_failed"] },
+        "state": { "enum": ["preserved", "drained", "timeout", "controller_unavailable", "close_failed"] },
         "initial_connections": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
         "final_connections": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
         "polls": { "type": "integer", "minimum": 0 }, "quiet_millis": { "type": "integer", "minimum": 0 },
@@ -155,13 +186,18 @@
       "properties": {
         "ordinal": { "type": "integer", "minimum": 1 }, "candidate_ordinal": { "type": "integer", "minimum": 1 },
         "repetition_index": { "type": "integer", "minimum": 1 }, "repetition_total": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "target_index": { "type": "integer", "minimum": 0 },
         "run_id": { "$ref": "#/$defs/uuid" }, "profile_uid": { "$ref": "#/$defs/identifier" },
         "profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "profile_fingerprint_kind": { "enum": ["runtime_bytes_v1", "runtime_semantic_v2"] }, "queued_profile_fingerprint": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "profile_bound_at": { "type": "string", "format": "date-time" }, "profile_snapshot_changed": { "type": "boolean" }, "selection_group": { "$ref": "#/$defs/identifier" }, "requested_node": { "$ref": "#/$defs/identifier" },
-        "state": { "enum": ["pending", "running", "completed", "degraded", "failed", "interrupted", "skipped", "cancelled"] },
-        "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "checkpoint", "finished"] },
+        "state": { "enum": ["pending", "running", "captured", "analyzing", "retry_pending", "completed", "degraded", "failed", "interrupted", "skipped", "cancelled"] },
+        "stage": { "enum": ["queued", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "capture_wave", "analysis_wave", "checkpoint", "finished"] },
         "resolved_chain": { "type": "array", "items": { "$ref": "#/$defs/identifier" } }, "resolved_leaf": { "oneOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }] },
         "expected_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" }, "observed_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" },
         "batch_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] }, "output_path": { "$ref": "#/$defs/absolutePath" }, "error": { "$ref": "#/$defs/error" },
+        "session_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/uuid" } },
+        "analysis_job_id": { "$ref": "#/$defs/uuid" },
+        "application_retry_attempt": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "prior_session_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/uuid" } },
         "quality": { "$ref": "#/$defs/runQuality" },
         "evidence": { "$ref": "#/$defs/runEvidence" },
         "resume_attempt": { "type": "integer", "minimum": 0 }, "started_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }, "completed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }

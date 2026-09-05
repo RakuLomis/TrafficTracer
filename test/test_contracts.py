@@ -54,12 +54,24 @@ def _fixture(name: str) -> dict:
         ("pipeline_manifest", "pipeline-manifest-v3-valid.json"),
         ("pipeline_manifest", "pipeline-manifest-v5-valid.json"),
         ("pipeline_manifest", "pipeline-manifest-v6-valid.json"),
+        ("pipeline_manifest", "pipeline-manifest-v7-valid.json"),
         ("flow", "flow-valid-unmatched-ipv6.json"),
     ],
 )
 def test_all_golden_fixtures_use_the_shared_validator(contract, fixture):
     payload = _fixture(fixture)
     assert validate_contract(contract, payload) is payload
+
+
+def test_pipeline_manifest_v7_requires_the_frozen_matrix_schedule():
+    payload = _fixture("pipeline-manifest-v7-valid.json")
+    del payload["schedule"]
+
+    with pytest.raises(ValidationError) as caught:
+        validate_contract("pipeline_manifest", payload)
+
+    assert caught.value.path == ("schedule",)
+    assert caught.value.rule == "required"
 
 
 @pytest.mark.parametrize(
