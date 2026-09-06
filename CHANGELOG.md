@@ -4,6 +4,16 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.21] - 2026-09-06
+
+### Fixed
+
+- Decoupled pipeline profile commits from native UI refresh and tray operations.
+- Bounded and coalesced profile notifications; disposed late frontend listeners.
+- Added durable activation-stall diagnostics and cooperative interruption.
+- Corrected capture-only Session totals and pipeline progress display.
+- Added a 270-cell regression preserving 35 captured Sessions across recovery.
+
 ## [1.0.15] - 2026-09-02
 
 ### Fixed

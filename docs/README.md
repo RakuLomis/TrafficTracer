@@ -11,6 +11,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 ## Technical reference
 
 - [Profile and proxy pipelines](profile-proxy-pipelines.md): queue semantics, ownership, barriers, resume behavior, and provenance.
+- [Profile activation hang repair](complete/profile-activation-hang-repair.md): notification isolation, recovery regression, and outstanding desktop acceptance checks.
 
 - [Architecture](architecture.md): component ownership, process boundaries, lifecycle, and protocol pins.
 - [Sessions and correlation data](data-model.md): directory layout, canonical indexes, correlation semantics, coverage, and packet evidence.
@@ -22,6 +23,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 
 ## Release information
 
+- [1.0.21 release notes](releases/v1.0.21.md)
 - [1.0.15 release notes](releases/v1.0.15.md)
 - [1.0.7 release notes](releases/v1.0.7.md)
 - [1.0.4 release notes](releases/v1.0.4.md)
