@@ -28,6 +28,8 @@ from traffictracer.utils import logger
 from .pipeline import run_analysis
 from .artifacts import persist_analysis_artifacts
 from .consistency import AnalysisConsistencyError
+from .health import analysis_health
+from .process import analysis_process_scope
 
 
 class AnalysisJob:
@@ -59,6 +61,12 @@ class AnalysisJob:
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
+        with analysis_health(self.spec.session_dir, self.spec.job_id, self.progress) as health, analysis_process_scope(self.cancellation):
+            result = self._run()
+            health["state"] = result.state.value
+            return result
+
+    def _run(self) -> CaptureJobResult:
         try:
             self.cancellation.checkpoint()
             self._begin_manifest()

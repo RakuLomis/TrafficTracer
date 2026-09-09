@@ -7,11 +7,16 @@ import ipaddress
 import os
 from pathlib import Path
 import subprocess
+import shutil
+from .pcap_batch import BatchExtraction
+from .pcap_metrics import classic_pcap_metrics
+from .process import run_analysis_command, analysis_checkpoint
 from uuid import uuid4
 from typing import Any, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from traffictracer.layout import safe_url_slug
+from traffictracer.jobs.cancellation import CancelledError
 from traffictracer.session.atomic import write_json_atomic
 
 from ..models import FlowTuple, VisitCorrelation
@@ -152,11 +157,12 @@ def recover_post_flow_from_pcap(
         "-e", "ip.dst", "-e", "ipv6.dst", "-e", f"{flow.network}.dstport",
     ]
     try:
-        completed = subprocess.run(
+        completed = run_analysis_command(
             command,
             capture_output=True,
             text=True,
             check=False,
+            stdout_consumer=lambda lines: _post_source_candidates(lines, flow),
         )
     except OSError:
         return (None, "tshark_unavailable")
@@ -164,8 +170,30 @@ def recover_post_flow_from_pcap(
         return (None, "inspect_failed")
 
     destination = _normalize_ip(flow.dst_ip)
+    candidates = completed.stdout
+    if not candidates:
+        return (None, "not_found")
+    if len(candidates) != 1:
+        return (None, "ambiguous")
+    source = candidates.pop()
+    recovered = replace(
+        flow,
+        src_ip=source,
+        key=_flow_key(
+            flow.network, source, flow.src_port,
+            destination, flow.dst_port,
+        ),
+        complete=True,
+    )
+    return (recovered, "recovered")
+
+
+def _post_source_candidates(lines, flow):
+    destination = _normalize_ip(flow.dst_ip)
     candidates: set[str] = set()
-    for line in completed.stdout.splitlines():
+    for index, line in enumerate(lines):
+        if index % 4096 == 0:
+            analysis_checkpoint()
         fields = line.split("\t")
         fields.extend([""] * (6 - len(fields)))
         src_ip = _normalize_ip(fields[0] or fields[1])
@@ -187,21 +215,9 @@ def recover_post_flow_from_pcap(
         ):
             candidates.add(dst_ip)
 
-    if not candidates:
-        return (None, "not_found")
-    if len(candidates) != 1:
-        return (None, "ambiguous")
-    source = candidates.pop()
-    recovered = replace(
-        flow,
-        src_ip=source,
-        key=_flow_key(
-            flow.network, source, flow.src_port,
-            destination, flow.dst_port,
-        ),
-        complete=True,
-    )
-    return (recovered, "recovered")
+        if len(candidates) > 1:
+            break  # Two distinct sources suffice to prove ambiguity.
+    return candidates
 
 
 def _build_filter_from_addr(src: str, dst: str) -> str:
@@ -294,12 +310,21 @@ def split_flows(
 
 
 def split_flows_v2(
+    *args, **kwargs,
+) -> list[ConnectionPcapResult]:
+    with BatchExtraction() as batch:
+        return _split_flows_v2(*args, **kwargs, batch=batch)
+
+
+def _split_flows_v2(
     result: VisitCorrelation,
     tun_pcap: str,
     phys_pcap: str,
     output_base: str,
     split_mode: str = SPLIT_UNIQUE_CONNECTIONS,
     carrier_registry: Mapping[tuple[str, int], tuple[FlowTuple, ...]] | None = None,
+    *,
+    batch: BatchExtraction,
 ) -> list[ConnectionPcapResult]:
     if split_mode not in {SPLIT_NONE, SPLIT_UNIQUE_CONNECTIONS}:
         raise ValueError(f"unsupported PCAP split mode: {split_mode}")
@@ -478,6 +503,26 @@ def split_flows_v2(
             _resource_key(entry["primary_url"]), [],
         ).append(entry)
 
+    batch.prepare(tun_pcap, [entry["pre_filter"] for entry in entries])
+    post_filters = [entry["post_filter"] for entry in entries if not entry["carrier_id"]
+                    and not entry["post_not_applicable"] and entry["post_recovery_status"] != "ambiguous"]
+    post_filters.extend(" or ".join(f"({item})" for item in sorted(filters))
+                        for filters in carrier_filters.values())
+    # Fallback carrier filters are evaluated only when exact paths are empty.
+    batch.prepare(phys_pcap, post_filters)
+
+    def extract_side(source, expression, destination, artifact_id):
+        cached = batch.cache.get((source, expression))
+        if cached is None:
+            return _extract_side(source, expression, destination, artifact_id)
+        path, (count, byte_count) = cached
+        if not count:
+            return PcapSideResult("empty", expression)
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        shutil.copyfile(path, destination)
+        return PcapSideResult("success", expression, packet_count=count,
+                              byte_count=byte_count, artifact_id=artifact_id, path=str(destination))
+
     outputs: list[ConnectionPcapResult] = []
     carrier_outputs: dict[str, PcapSideResult] = {}
     for ordinal, resource_entries in enumerate(groups.values(), start=1):
@@ -490,7 +535,7 @@ def split_flows_v2(
         for candidate_ordinal, entry in enumerate(resource_entries, start=1):
             stem = f".candidate-{candidate_ordinal:02d}"
             connection_id = entry["connection_id"]
-            pre = _extract_side(
+            pre = extract_side(
                 tun_pcap, entry["pre_filter"],
                 resource_dir / f"{stem}-pre.pcap",
                 f"pcap-{connection_id[5:]}-pre",
@@ -513,7 +558,7 @@ def split_flows_v2(
                     carrier_output_path = (
                         Path(output_base) / "carriers" / carrier_slug / "post.pcap"
                     )
-                    carrier_outputs[carrier_id] = _extract_side(
+                    carrier_outputs[carrier_id] = extract_side(
                         phys_pcap, display_filter, carrier_output_path,
                         f"pcap-{carrier_slug}-post",
                     )
@@ -527,13 +572,13 @@ def split_flows_v2(
                             "exact carrier paths empty for %s; retrying unique local endpoint",
                             carrier_id,
                         )
-                        carrier_outputs[carrier_id] = _extract_side(
+                        carrier_outputs[carrier_id] = extract_side(
                             phys_pcap, fallback_filter, carrier_output_path,
                             f"pcap-{carrier_slug}-post",
                         )
                 post = carrier_outputs[carrier_id]
             else:
-                post = _extract_side(
+                post = extract_side(
                     phys_pcap, entry["post_filter"],
                     resource_dir / f"{stem}-post.pcap",
                     f"pcap-{connection_id[5:]}-post",
@@ -709,12 +754,15 @@ def _extract_side(
     command = ["tshark", "-r", input_pcap, "-Y", display_filter, "-w", str(temporary)]
     logger.info("tshark extract for %s", artifact_id)
     try:
-        completed = subprocess.run(
+        completed = run_analysis_command(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
         )
+    except CancelledError:
+        temporary.unlink(missing_ok=True)
+        raise
     except OSError:
         temporary.unlink(missing_ok=True)
         return PcapSideResult(
@@ -729,12 +777,31 @@ def _extract_side(
         temporary.unlink(missing_ok=True)
         return PcapSideResult("empty", display_filter)
     try:
-        metrics = subprocess.run(
+        native_metrics = classic_pcap_metrics(temporary)
+    except (OSError, ValueError):
+        temporary.unlink(missing_ok=True)
+        return PcapSideResult("failed", display_filter, error_code="PCAP_INSPECT_FAILED")
+    if native_metrics is not None:
+        count, byte_count = native_metrics
+        if not count:
+            temporary.unlink(missing_ok=True)
+            return PcapSideResult("empty", display_filter)
+        os.replace(temporary, output_path)
+        return PcapSideResult(
+            "success", display_filter, packet_count=count, byte_count=byte_count,
+            artifact_id=artifact_id, path=str(output_path),
+        )
+    try:
+        metrics = run_analysis_command(
             ["tshark", "-r", str(temporary), "-T", "fields", "-e", "frame.len"],
             capture_output=True,
             text=True,
             check=False,
+            stdout_consumer=_count_frame_lengths,
         )
+    except CancelledError:
+        temporary.unlink(missing_ok=True)
+        raise
     except OSError:
         temporary.unlink(missing_ok=True)
         return PcapSideResult(
@@ -745,22 +812,33 @@ def _extract_side(
     if metrics.returncode != 0:
         temporary.unlink(missing_ok=True)
         return PcapSideResult("failed", display_filter, error_code="PCAP_INSPECT_FAILED")
-    lengths = [int(line) for line in metrics.stdout.splitlines() if line.strip().isdigit()]
-    if not lengths:
+    count, byte_count = metrics.stdout
+    if not count:
         temporary.unlink(missing_ok=True)
         return PcapSideResult("empty", display_filter)
     os.replace(temporary, output_path)
     return PcapSideResult(
         "success", display_filter,
-        packet_count=len(lengths),
-        byte_count=sum(lengths),
+        packet_count=count,
+        byte_count=byte_count,
         artifact_id=artifact_id,
         path=str(output_path),
     )
 
 
+def _count_frame_lengths(lines):
+    count = total = 0
+    for index, line in enumerate(lines):
+        if index % 4096 == 0:
+            analysis_checkpoint()
+        if line.strip().isdigit():
+            count += 1
+            total += int(line)
+    return count, total
+
+
 def _run_legacy_extract(input_pcap: str, display_filter: str, output_path: str) -> None:
-    subprocess.run(
+    run_analysis_command(
         ["tshark", "-r", input_pcap, "-Y", display_filter, "-w", output_path],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
     )

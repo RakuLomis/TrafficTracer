@@ -17,6 +17,12 @@ def parse_cdp_attribution(path: str) -> list[AttributedRequest]:
     with open(fp, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    return parse_cdp_attribution_data(data)
+
+
+def parse_cdp_attribution_data(data: dict) -> list[AttributedRequest]:
+    """Parse an already loaded capture without retaining a second JSON tree."""
+
     raw_requests = data.get("requests", [])
     result: list[AttributedRequest] = []
     occurrence_counts: dict[tuple[str, str], int] = {}

@@ -7,10 +7,12 @@ import os
 from dataclasses import asdict
 from pathlib import Path
 import tempfile
+from subprocess import TimeoutExpired
+from .process import AnalysisCommandLimitError
 from typing import Callable
 from uuid import NAMESPACE_URL, uuid5
 
-from ..jobs.cancellation import CancellationToken
+from ..jobs.cancellation import CancellationToken, CancelledError
 from ..jobs.models import JobState
 from ..jobs.progress import JobStage, ProgressReporter
 from ..session.atomic import write_json_atomic
@@ -38,7 +40,7 @@ from .pcap_splitter import (
     split_flows,
     split_flows_v2,
 )
-from .cdp_attribution import parse_cdp_attribution
+from .cdp_attribution import parse_cdp_attribution_data
 from .netlog_transport import trace_transport
 from .connection_artifacts import (
     persist_connection_artifacts,
@@ -48,22 +50,42 @@ from .legacy_projection import build_legacy_projection, merge_legacy_projection
 
 
 def _fix_netlog(path: str) -> str:
-    with open(path, "r", encoding="utf-8") as f:
-        data = f.read().rstrip()
-    if data.endswith("}]"):
-        fixed = data + "\n}\n"
-    elif data.endswith("},"):
-        fixed = data[:-1] + "\n]}\n"
-    elif data.endswith("}"):
-        fixed = data + "\n]}\n"
-    else:
-        fixed = data + "\n]}\n"
-    json.loads(fixed)
+    from parser.netlog_reader import open_netlog
+    from .process import analysis_checkpoint
     handle, repaired_path = tempfile.mkstemp(
         prefix="traffictracer-netlog-", suffix=".json"
     )
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        stream.write(fixed)
+    try:
+        with os.fdopen(handle, "wb") as target, open(path, "rb") as source:
+            size = source.seek(0, os.SEEK_END)
+            # Locate the final non-whitespace bytes without retaining the file.
+            end = size
+            tail = b""
+            while end and not tail:
+                analysis_checkpoint()
+                start = max(0, end - 65536)
+                source.seek(start)
+                tail = source.read(end - start).rstrip()
+                end = start + len(tail)
+            suffix = b"\n}\n" if tail.endswith(b"}]") else b"\n]}\n"
+            if tail.endswith(b"},"):
+                end -= 1
+            source.seek(0)
+            remaining = end
+            while remaining:
+                analysis_checkpoint()
+                chunk = source.read(min(remaining, 65536))
+                if not chunk:
+                    raise OSError("NetLog changed during repair")
+                target.write(chunk)
+                remaining -= len(chunk)
+            target.write(suffix)
+        with open_netlog(repaired_path, analysis_checkpoint) as (_, events):
+            for _ in events:
+                pass
+    except BaseException:
+        Path(repaired_path).unlink(missing_ok=True)
+        raise
     logger.info("Using repaired temporary NetLog copy for %s", path)
     return repaired_path
 
@@ -364,17 +386,21 @@ def _analyze_cdp_path(
         return None
 
     try:
-        attributed = parse_cdp_attribution(cdp_path)
+        attributed = parse_cdp_attribution_data(raw_cdp)
     except Exception as e:
         logger.error("Failed to parse CDP data for %s: %s", tag, e)
         return None
 
+    # Do not retain raw CDP alongside the much larger NetLog event graph.
+    del raw_cdp
     try:
         transport_conns = trace_transport(attributed, netlog_path)
-    except Exception:
+    except json.JSONDecodeError:
         repaired_path = _fix_netlog(netlog_path)
         try:
             transport_conns = trace_transport(attributed, repaired_path)
+        except (CancelledError, MemoryError):
+            raise
         except Exception as e:
             logger.error("Failed to trace transport for %s: %s", tag, e)
             transport_conns = []
@@ -470,10 +496,12 @@ def _analyze_domain_path(
 ) -> CorrelationResult | None:
     try:
         netlog_conns = extract_five_tuples(netlog_path, domain)
-    except Exception:
+    except json.JSONDecodeError:
         repaired_path = _fix_netlog(netlog_path)
         try:
             netlog_conns = extract_five_tuples(repaired_path, domain)
+        except (CancelledError, MemoryError):
+            raise
         except Exception as e:
             logger.error("Failed to parse NetLog for %s: %s", tag, e)
             return None
@@ -511,6 +539,8 @@ def _try_split_v2(
             effective_mode,
             carrier_registry,
         )
+    except (CancelledError, MemoryError, TimeoutExpired, AnalysisCommandLimitError):
+        raise
     except Exception as e:
         logger.error("pcap splitting failed: %s", e)
         return []
@@ -523,6 +553,8 @@ def _try_split_v1(result: CorrelationResult, run_dir: Path) -> None:
     if os.path.exists(tun_pcap) and os.path.exists(phys_pcap):
         try:
             split_flows(result, tun_pcap, phys_pcap, flows_base)
+        except (CancelledError, MemoryError, TimeoutExpired, AnalysisCommandLimitError):
+            raise
         except Exception as e:
             logger.error("pcap splitting failed: %s", e)
 

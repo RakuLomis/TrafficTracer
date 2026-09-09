@@ -2,23 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, Iterable
 
 from .constants import NetLogConstants
 from .source_entry import SourceEntry
 
 
 def process_events(
-    events: list[dict[str, Any]],
+    events: Iterable[dict[str, Any]],
     constants: NetLogConstants,
+    *,
+    progress: Callable[[str, int, int | None], None] | None = None,
 ) -> dict[int, SourceEntry]:
     """Group all events by source.id and extract descriptions.
 
     Returns a dict mapping source_id → SourceEntry.
     """
     entries: dict[int, SourceEntry] = {}
+    total = len(events) if hasattr(events, "__len__") else None
 
-    for raw_event in events:
+    for index, raw_event in enumerate(events):
+        if progress is not None and index % 1024 == 0:
+            progress("normalize_events", index, total)
         source = raw_event.get("source")
         if not isinstance(source, dict):
             continue
@@ -43,8 +48,13 @@ def process_events(
     for sid, entry in entries.items():
         registry[sid] = entry.description
 
-    for entry in entries.values():
+    for index, entry in enumerate(entries.values()):
+        if progress is not None and index % 1024 == 0:
+            progress("describe_sources", index, len(entries))
         entry.description = entry._extract_description(constants, registry)
+
+    if progress is not None:
+        progress("describe_sources", len(entries), len(entries))
 
     return entries
 

@@ -4,6 +4,26 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.22] - 2026-09-09
+
+### Fixed
+
+- Bounded native UI progress delivery with JavaScript receipt acknowledgements.
+- Journaled non-progress Worker notifications before bounded UI presentation.
+- Added native desktop unlock recovery with explicit snapshot confirmation.
+- Guarded terminal job state, asynchronous listener cleanup and visible polling.
+- Batched packet-analysis work and reduced repeated NetLog parsing and indexing.
+- Added analysis subprocess health checks and bounded Worker lifecycle operations.
+- Increased video observation windows and replaced Douban targets with public
+  Rotten Tomatoes pages in the example experiment configurations.
+
+### Validation scope
+
+- The isolated native UI recovered after a 62m48s desktop lock during a
+  90-minute observation, with user-confirmed interaction after unlocking.
+- This build is for real capture/Resume validation. Isolated UI results do not
+  certify all long-running real Worker analysis workloads.
+
 ## [1.0.21] - 2026-09-06
 
 ### Fixed

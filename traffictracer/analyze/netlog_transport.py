@@ -8,6 +8,8 @@ from urllib.parse import urldefrag, urlparse
 
 from ..models import AttributedRequest, TransportConnection
 from ..utils import logger
+from .process import analysis_checkpoint
+from .health import record_analysis_progress
 
 from parser.constants import (
     NetLogConstants, SRC_URL_REQUEST, SRC_TRANSPORT_CONNECT_JOB, SRC_SOCKET,
@@ -20,6 +22,7 @@ from parser.dependency_graph import (
     build_connection_chain,
     _build_children_index,
     _parse_ip_port,
+    dependency_checkpoints,
 )
 
 
@@ -31,24 +34,39 @@ def trace_transport(
     if not fp.exists():
         raise FileNotFoundError(f"NetLog file not found: {netlog_path}")
 
-    with open(fp, "r", encoding="utf-8") as f:
-        raw = json.load(f)
+    analysis_checkpoint()
+    record_analysis_progress("netlog.read_json")
+    from parser.netlog_reader import open_netlog
+    def report_events(operation, processed, total):
+        analysis_checkpoint()
+        record_analysis_progress("netlog." + operation, processed, total)
 
-    raw_constants = raw.get("constants") or {}
-    constants = NetLogConstants(raw_constants)
-    time_tick_offset = _time_tick_offset_seconds(raw_constants)
-    events = raw.get("events") or []
-    entries = process_events(events, constants)
+    with open_netlog(fp, analysis_checkpoint) as (raw_constants, events):
+        constants = NetLogConstants(raw_constants)
+        time_tick_offset = _time_tick_offset_seconds(raw_constants)
+        entries = process_events(events, constants, progress=report_events)
+    analysis_checkpoint()
+    record_analysis_progress("netlog.index_dependencies", 0, len(entries))
     children_index = _build_children_index(entries)
 
     observations: list[dict] = []
-    for sid, entry in entries.items():
+    # Only these keys can participate in either binding pass below. Keep the
+    # full source graph for dependencies, but avoid tracing unrelated requests.
+    requested_urls = {_normalize_url(request.url) for request in requests}
+    exact_requested_urls = {_exact_url(request.url) for request in requests}
+    for index, (sid, entry) in enumerate(entries.items()):
+        if index % 128 == 0:
+            analysis_checkpoint()
+            record_analysis_progress("netlog.trace_sources", index, len(entries))
         if entry.source_type != SRC_URL_REQUEST:
             continue
         url = _extract_url_from_entry(entry)
         if not url:
             continue
-        chain = build_connection_chain(sid, entries, children_index)
+        if _normalize_url(url) not in requested_urls and _exact_url(url) not in exact_requested_urls:
+            continue
+        with dependency_checkpoints(analysis_checkpoint):
+            chain = build_connection_chain(sid, entries, children_index)
         ft = chain.five_tuple
         sibling_source_id = None
         if not _complete_five_tuple(ft):
@@ -78,7 +96,10 @@ def trace_transport(
             "sort_key": _entry_sort_key(entry, sid),
         })
 
+    analysis_checkpoint()
+    record_analysis_progress("netlog.bind_requests", 0, len(requests))
     request_bindings = _bind_request_occurrences(requests, observations)
+    record_analysis_progress("netlog.bind_requests", len(requests), len(requests))
     requests_by_id = {request.request_id: request for request in requests}
     connections_by_source: dict[int, TransportConnection] = {}
     for observation in observations:

@@ -3,7 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
+
+_checkpoint = ContextVar("dependency_checkpoint", default=None)
+
+
+@contextmanager
+def dependency_checkpoints(callback):
+    # Entries are immutable during one chain traversal. Cache only properties
+    # independent of visited/depth; never cache a path score by source ID.
+    token = _checkpoint.set([callback, 0, {}, {}])
+    try:
+        yield
+    finally:
+        _checkpoint.reset(token)
+
+
+def _check_traversal():
+    tracker = _checkpoint.get()
+    if tracker is not None:
+        tracker[1] += 1
+        if tracker[1] % 256 == 1:
+            tracker[0]()
 
 from .source_entry import SourceEntry
 from .constants import (
@@ -155,10 +178,12 @@ def _build_children_index(
     """
     children: dict[int, list[int]] = {}
     for sid, entry in entries.items():
+        seen_parents: set[int] = set()
         for event in entry.entries:
             parent_id = extract_deps_from_event(event)
-            if parent_id is not None and parent_id != sid:
+            if parent_id is not None and parent_id != sid and parent_id not in seen_parents:
                 children.setdefault(parent_id, []).append(sid)
+                seen_parents.add(parent_id)
     return children
 
 
@@ -208,11 +233,18 @@ def trace_chain(
 
 
 def _dependency_ids(entry: SourceEntry) -> list[int]:
-    return list(dict.fromkeys(
+    tracker = _checkpoint.get()
+    cache = tracker[2] if tracker is not None else {}
+    key = id(entry)
+    if key in cache:
+        return cache[key]
+    result = list(dict.fromkeys(
         dep_id
         for event in entry.entries
         if (dep_id := extract_deps_from_event(event)) is not None
     ))
+    cache[key] = result
+    return result
 
 
 def _dependency_path_score(
@@ -222,6 +254,7 @@ def _dependency_path_score(
     max_depth: int,
 ) -> int:
     """Score a dependency branch by its strongest transport evidence."""
+    _check_traversal()
     if source_id in visited or max_depth <= 0:
         return -10_000
     entry = entries.get(source_id)
@@ -244,17 +277,32 @@ def _dependency_path_score(
     else:
         own_score = 0
 
-    descendants = [
-        _dependency_path_score(
-            dep_id, entries, visited=set(visited), max_depth=max_depth - 1,
-        ) - 10
-        for dep_id in _dependency_ids(entry)
-        if dep_id not in visited
-    ]
-    return max([own_score, *descendants])
+    # No node scores above 1,000 and every dependency edge costs 10.
+    # Once that bound is reached, visiting other branches cannot change the
+    # answer. Keep visited/depth semantics rather than caching by source ID.
+    if own_score == 1_000:
+        return own_score
+    best = own_score
+    for dep_id in _dependency_ids(entry):
+        if dep_id not in visited:
+            best = max(best, _dependency_path_score(
+                dep_id, entries, visited=set(visited), max_depth=max_depth - 1,
+            ) - 10)
+            if best >= 990:
+                break
+    return best
 
 
 def _entry_has_complete_endpoints(entry: SourceEntry) -> bool:
+    tracker = _checkpoint.get()
+    cache = tracker[3] if tracker is not None else {}
+    key = id(entry)
+    if key not in cache:
+        cache[key] = _scan_complete_endpoints(entry)
+    return cache[key]
+
+
+def _scan_complete_endpoints(entry: SourceEntry) -> bool:
     for event in entry.entries:
         params = event.get("params") or {}
         if (
@@ -275,6 +323,7 @@ def _find_downstream_leaves(
     max_depth: int = 10,
 ) -> list[SourceEntry]:
     """Recursively find leaf-type entries (TCP, TLS, etc.) downstream."""
+    _check_traversal()
     if visited is None:
         visited = set()
     if source_id in visited or max_depth <= 0:

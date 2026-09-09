@@ -108,7 +108,6 @@ def main(argv=None) -> int:
         },
     }
     validate_worker_message(ready)
-    writer.write(ready)
 
     previous_sigterm = signal.getsignal(signal.SIGTERM)
 
@@ -118,6 +117,9 @@ def main(argv=None) -> int:
 
     signal.signal(signal.SIGTERM, terminate)
     try:
+        # ready promises the supervisor can immediately request graceful stop.
+        # Install the handler before exposing that promise to another process.
+        writer.write(ready)
         for frame in read_jsonl(sys.stdin.buffer):
             response = dispatcher.dispatch(frame)
             _write_response(writer, response)

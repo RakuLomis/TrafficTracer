@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from parser.domain_analyzer import get_domain_connections
+from .process import analysis_checkpoint
 
 
 class FiveTupleData(NamedTuple):
@@ -23,7 +24,7 @@ class DomainConnections(NamedTuple):
 
 
 def extract_five_tuples(netlog_path: str, domain: str) -> list[DomainConnections]:
-    results = get_domain_connections(netlog_path, domain)
+    results = get_domain_connections(netlog_path, domain, checkpoint=analysis_checkpoint)
     output: list[DomainConnections] = []
 
     for item in results:
@@ -56,18 +57,15 @@ def extract_all_five_tuples(netlog_path: str) -> list[FiveTupleData]:
         _build_children_index,
     )
     from parser.constants import SRC_URL_REQUEST
-    import json
-
-    with open(netlog_path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    constants = NetLogConstants(raw.get("constants") or {})
-    events = raw.get("events") or []
-    entries = process_events(events, constants)
+    from parser.netlog_reader import open_netlog
+    with open_netlog(netlog_path, analysis_checkpoint) as (raw_constants, events):
+        constants = NetLogConstants(raw_constants)
+        entries = process_events(events, constants, progress=lambda *_: analysis_checkpoint())
     children_index = _build_children_index(entries)
 
     results: list[FiveTupleData] = []
     for sid, entry in entries.items():
+        analysis_checkpoint()
         if entry.source_type != SRC_URL_REQUEST:
             continue
         chain = build_connection_chain(sid, entries, children_index)

@@ -169,6 +169,8 @@ def _parse_group_id(gid: str) -> tuple[str, str, str] | None:
 def get_domain_connections(
     filepath: str,
     domain: str,
+    *,
+    checkpoint=lambda: None,
 ) -> list[dict[str, Any]]:
     """Convenience: load a NetLog file and return domain analysis as a plain list.
 
@@ -196,22 +198,24 @@ def get_domain_connections(
     if not fp.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
 
-    if fp.suffix.lower() == ".zip":
-        import zipfile
-        with zipfile.ZipFile(fp, "r") as zf:
+    from contextlib import ExitStack
+    from .netlog_reader import open_netlog
+    from .dependency_graph import dependency_checkpoints
+    with ExitStack() as stack:
+        source = fp
+        if fp.suffix.lower() == ".zip":
+            import zipfile
+            import io
+            zf = stack.enter_context(zipfile.ZipFile(fp, "r"))
             json_files = [n for n in zf.namelist() if n.lower().endswith(".json")]
             if not json_files:
                 raise ValueError("No .json file found in ZIP")
-            raw = json.loads(zf.read(json_files[0]).decode("utf-8"))
-    else:
-        with open(fp, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-
-    constants = NetLogConstants(raw.get("constants") or {})
-    events = raw.get("events") or []
-    entries = process_events(events, constants)
-
-    return _to_dict_list(analyze_domain(entries, domain))
+            source = stack.enter_context(io.TextIOWrapper(zf.open(json_files[0]), encoding="utf-8"))
+        with open_netlog(source, checkpoint) as (raw_constants, events):
+            constants = NetLogConstants(raw_constants)
+            entries = process_events(events, constants, progress=lambda *_: checkpoint())
+        with dependency_checkpoints(checkpoint):
+            return _to_dict_list(analyze_domain(entries, domain))
 
 
 def _to_dict_list(groups: list[DomainGroup]) -> list[dict[str, Any]]:

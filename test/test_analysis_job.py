@@ -75,6 +75,21 @@ def test_analysis_job_completes_manifest_and_returns_artifact(tmp_path):
     assert events[-1].state is JobState.COMPLETED
 
 
+def test_192_serial_analysis_jobs_release_health_threads_and_descriptors(tmp_path):
+    import threading
+    # Exercise actual job publication/cleanup, not a mock scheduler. Empty
+    # captures deliberately isolate lifecycle resource growth from data size.
+    before_fds = len(list(Path("/proc/self/fd").iterdir())) if Path("/proc/self/fd").exists() else None
+    for index in range(192):
+        root = tmp_path / str(index)
+        _, _, session = _capturing_session(root)
+        result = _job(root, session, []).run()
+        assert result.state is JobState.COMPLETED
+        assert not any(thread.name == "analysis-health" for thread in threading.enumerate())
+    if before_fds is not None:
+        assert len(list(Path("/proc/self/fd").iterdir())) <= before_fds + 2
+
+
 def test_completed_session_can_be_explicitly_reanalyzed_without_duplicate_artifacts(
     tmp_path,
 ):

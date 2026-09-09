@@ -152,6 +152,8 @@ def test_worker_sigterm_exits_without_hanging(tmp_path):
 
 
 def test_worker_dispatches_request_while_stdin_remains_open(tmp_path):
+    import os
+    import time
     process = subprocess.Popen(
         [sys.executable, str(WORKER), "--output-root", str(tmp_path / "sessions")],
         stdin=subprocess.PIPE,
@@ -164,17 +166,31 @@ def test_worker_dispatches_request_while_stdin_remains_open(tmp_path):
     assert process.stdin is not None
     assert process.stdout is not None
     selector.register(process.stdout, selectors.EVENT_READ)
+    buffered = bytearray()
+
+    def read_message():
+        deadline = time.monotonic() + 5
+        while b"\n" not in buffered:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0 and selector.select(timeout=remaining), "Worker message timed out"
+            chunk = os.read(process.stdout.fileno(), 65536)
+            assert chunk, "Worker stdout closed"
+            buffered.extend(chunk)
+        line, _, rest = buffered.partition(b"\n")
+        buffered[:] = rest
+        return json.loads(line)
+
     try:
         while True:
-            assert selector.select(timeout=5), "Worker ready notification timed out"
-            message = json.loads(process.stdout.readline())
+            # TextIO.readline may prefetch multiple notifications and leave the
+            # OS descriptor empty while another complete line is buffered.
+            message = read_message()
             if message.get("method") == "worker.ready":
                 break
 
         process.stdin.write(_request("live", "hello") + "\n")
         process.stdin.flush()
-        assert selector.select(timeout=5), "live Worker request was buffered"
-        response = json.loads(process.stdout.readline())
+        response = read_message()
         assert response["id"] == "live"
         assert response["result"]["api_version"] == 2
 
