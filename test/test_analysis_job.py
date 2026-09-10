@@ -75,6 +75,37 @@ def test_analysis_job_completes_manifest_and_returns_artifact(tmp_path):
     assert events[-1].state is JobState.COMPLETED
 
 
+def test_retention_off_commits_archive_artifacts_and_reanalysis_reuses_snapshot(tmp_path):
+    from traffictracer.capture.trace_snapshot import prepare_analysis_trace
+    from traffictracer.session.manifest import Artifact
+    store, manifest, session_dir = _capturing_session(tmp_path)
+    raw = session_dir / "raw"
+    raw.mkdir()
+    (raw / "capture-context.json").write_text(json.dumps({
+        "trace_policy": {"immutable_analysis_input": True, "retain_journal": False},
+        "trace_boundary": {"byte_size": 3, "journal_locking": True},
+    }))
+    source = raw / "mihomo-trace.jsonl"
+    source.write_bytes(b"{}\n")
+    prepare_analysis_trace(raw)
+    with source.open("ab") as stream:
+        stream.write(b'{"type":"tcp_close"}\n')
+    store.save(manifest.with_artifact(Artifact(
+        name=source.name, path="raw/mihomo-trace.jsonl", media_type="application/x-ndjson",
+        size_bytes=source.stat().st_size, kind="raw", size_semantics="as_of")))
+    _job(tmp_path, session_dir, []).run()
+    completed = store.get(manifest.session_id)
+    assert completed.state is JobState.COMPLETED
+    assert not source.exists()
+    assert "raw/mihomo-trace.jsonl" not in {a.path for a in completed.artifacts}
+    assert "raw/trace-archive/journal.jsonl.gz" in {a.path for a in completed.artifacts}
+    assert all((session_dir / a.path).is_file() for a in completed.artifacts)
+    before = (raw / "trace-input/trace.jsonl").read_bytes()
+    _job(tmp_path, session_dir, [], overwrite=True).run()
+    assert (raw / "trace-input/trace.jsonl").read_bytes() == before
+    assert {a.path for a in store.get(manifest.session_id).artifacts} == {a.path for a in completed.artifacts}
+
+
 def test_192_serial_analysis_jobs_release_health_threads_and_descriptors(tmp_path):
     import threading
     # Exercise actual job publication/cleanup, not a mock scheduler. Empty

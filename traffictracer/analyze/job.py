@@ -24,6 +24,7 @@ from traffictracer.jobs.progress import ProgressReporter
 from traffictracer.session.manifest import Artifact, SessionError, SessionManifest
 from traffictracer.session.store import MANIFEST_NAME, SessionStore
 from traffictracer.utils import logger
+from traffictracer.capture.trace_retention import retain_journal
 
 from .pipeline import run_analysis
 from .artifacts import persist_analysis_artifacts
@@ -115,12 +116,28 @@ class AnalysisJob:
                                 candidate,
                             )
                         )
-            updated_manifest = self._record_artifacts(artifact_paths)
-            self._finish_manifest(
-                JobState.COMPLETED,
-                manifest=updated_manifest,
-            )
-            self._commit_staged_results()
+            input_bundle = Path(self.spec.session_dir) / "raw" / "trace-input"
+            if input_bundle.is_dir():
+                artifact_paths.extend(input_bundle / name for name in (
+                    "trace.jsonl", "capture-context.json", "snapshot.json",
+                ))
+            with retain_journal(Path(self.spec.session_dir) / "raw",
+                                checkpoint=self.cancellation.checkpoint) as retention:
+                artifact_paths.extend(retention.paths)
+                updated_manifest = self._record_artifacts(
+                    artifact_paths, archived_journal=retention.state == "archived")
+                if updated_manifest is not None:
+                    warnings = tuple(w for w in updated_manifest.warnings
+                                     if not w.startswith("TRACE_JOURNAL_RETENTION_PENDING:"))
+                    if retention.state.startswith("pending_"):
+                        warnings += (f"TRACE_JOURNAL_RETENTION_PENDING: {retention.state}",)
+                    updated_manifest = replace(updated_manifest, warnings=warnings)
+                self._finish_manifest(JobState.COMPLETED, manifest=updated_manifest)
+                self._commit_staged_results()
+                # No removal before both the replacement archive and manifest
+                # are durable. Legacy read-only manifests never opt into this.
+                if updated_manifest is not None:
+                    retention.remove_original()
         except InterruptedError:
             self._discard_staged_results()
             self._finish_manifest(JobState.INTERRUPTED)
@@ -304,7 +321,7 @@ class AnalysisJob:
         self._store.save(updated)
         self._manifest = updated
 
-    def _record_artifacts(self, paths: list[Path]) -> SessionManifest | None:
+    def _record_artifacts(self, paths: list[Path], *, archived_journal: bool = False) -> SessionManifest | None:
         if self._store is None or self._manifest is None:
             return None
         updated = replace(
@@ -313,6 +330,7 @@ class AnalysisJob:
                 artifact
                 for artifact in self._manifest.artifacts
                 if artifact.phase != "analysis"
+                and not (archived_journal and artifact.path == "raw/mihomo-trace.jsonl")
             ),
         )
         existing = {artifact.path for artifact in updated.artifacts}
@@ -320,16 +338,21 @@ class AnalysisJob:
             relative = _relative_artifact(self.spec.session_dir, str(path))
             if relative in existing:
                 continue
+            is_journal_archive = relative.startswith("raw/trace-archive/")
             updated = updated.with_artifact(
                 Artifact(
                     name=path.name,
-                    kind="derived",
-                    phase="analysis",
-                    generation_id=self._analysis_generation_id,
+                    kind="raw" if is_journal_archive else "derived",
+                    phase="capture" if is_journal_archive else "analysis",
+                    generation_id=None if is_journal_archive else self._analysis_generation_id,
                     path=relative,
                     media_type=(
                         "application/vnd.tcpdump.pcap"
                         if path.suffix == ".pcap"
+                        else "application/x-ndjson"
+                        if path.suffix == ".jsonl"
+                        else "application/gzip"
+                        if path.suffix == ".gz"
                         else "application/json"
                     ),
                     size_bytes=path.stat().st_size,

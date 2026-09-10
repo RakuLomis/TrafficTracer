@@ -63,6 +63,7 @@
         "path": { "$ref": "#/$defs/relativeArtifactPath" },
         "media_type": { "type": "string", "minLength": 1 },
         "size_bytes": { "type": "integer", "minimum": 0 },
+        "size_semantics": { "enum": ["exact", "as_of"] },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "created_at": { "$ref": "#/$defs/timestamp" }
       },

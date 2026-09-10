@@ -94,6 +94,7 @@ class Artifact:
     generation_id: str | None = None
     sha256: str | None = None
     created_at: datetime | None = None
+    size_semantics: str = "exact"
 
     def to_dict(self, *, schema_version: int = SESSION_SCHEMA_VERSION) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -116,6 +117,8 @@ class Artifact:
             payload["sha256"] = self.sha256
         if self.created_at is not None:
             payload["created_at"] = _format_time(self.created_at)
+        if schema_version != 1 and self.size_semantics != "exact":
+            payload["size_semantics"] = self.size_semantics
         return payload
 
 
@@ -387,6 +390,7 @@ def _artifact_from_dict(data: Mapping[str, Any], schema_version: int) -> Artifac
         generation_id=data.get("generation_id"),
         sha256=data.get("sha256"),
         created_at=_parse_optional_time(data.get("created_at")),
+        size_semantics=data.get("size_semantics", "exact"),
     )
 
 

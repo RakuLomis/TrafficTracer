@@ -13,6 +13,7 @@ from typing import Callable
 from uuid import NAMESPACE_URL, uuid5
 
 from ..jobs.cancellation import CancellationToken, CancelledError
+from ..capture.trace_snapshot import analysis_trace_path, prepare_analysis_trace
 from ..jobs.models import JobState
 from ..jobs.progress import JobStage, ProgressReporter
 from ..session.atomic import write_json_atomic
@@ -111,6 +112,8 @@ def run_analysis(
     if not session.exists():
         raise FileNotFoundError(f"Session directory not found: {session_dir}")
 
+    if (session / "raw").is_dir():
+        prepare_analysis_trace(session / "raw", checkpoint=token.checkpoint)
     results_path = _safe_results_path(session, output_dir)
     published_results_path = _safe_results_path(
         session,
@@ -280,7 +283,7 @@ def _analysis_runs(session: Path):
                         raw,
                         raw / "netlog.json",
                         raw / "cdp.json",
-                        raw / "mihomo-trace.jsonl",
+                        analysis_trace_path(raw),
                     )
                 ],
             )

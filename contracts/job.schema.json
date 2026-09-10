@@ -48,6 +48,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "retain_trace_journal": { "type": "boolean", "default": true },
         "capture_packets": { "type": "boolean", "default": true },
         "collect_cdp": { "type": "boolean", "default": true },
         "collect_netlog": { "type": "boolean", "default": true },

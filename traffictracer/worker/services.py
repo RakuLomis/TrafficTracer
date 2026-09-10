@@ -872,6 +872,7 @@ class _PersistentCaptureRunner:
                 path=relative,
                 media_type=_media_type(path),
                 size_bytes=path.stat().st_size,
+                size_semantics="as_of" if relative == "raw/mihomo-trace.jsonl" else "exact",
             ))
             existing.add(relative)
         self.store.save(manifest)

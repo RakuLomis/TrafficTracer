@@ -190,7 +190,7 @@ class CarrierLifecycleRecord:
 def trace_snapshot_info(path: str) -> dict:
     """Return the persisted deterministic cutoff and observed late-event count."""
     trace_path = Path(path)
-    if trace_path.parent.name == "raw":
+    if trace_path.parent.name in {"raw", "trace-input"}:
         context_path = trace_path.parent / "capture-context.json"
     else:
         name = trace_path.name.replace("mihomo_trace_", "capture_context_", 1)

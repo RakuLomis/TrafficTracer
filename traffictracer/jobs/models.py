@@ -110,8 +110,11 @@ class CaptureJobOptions:
     proxy_protocol_mode: str = "observe"
     expected_proxy_protocol: str = ""
     proxy_selection_group: str = ""
+    retain_trace_journal: bool = True
 
     def __post_init__(self) -> None:
+        if type(self.retain_trace_journal) is not bool:
+            raise ValueError("retain_trace_journal must be boolean")
         if self.pcap_split_mode not in {"none", "unique_connections"}:
             raise ValueError(
                 "pcap_split_mode must be none or unique_connections"
@@ -142,6 +145,9 @@ class CaptureJobOptions:
             "proxy_protocol_mode": self.proxy_protocol_mode,
             "expected_proxy_protocol": self.expected_proxy_protocol,
         }
+        # Missing retains the safe default and preserves legacy wire fixtures.
+        if not self.retain_trace_journal:
+            payload["retain_trace_journal"] = False
         if self.proxy_selection_group:
             payload["proxy_selection_group"] = self.proxy_selection_group
         return payload
@@ -267,6 +273,7 @@ class CaptureJobSpec:
                 generated_config=controller.get("generated_config"),
             ),
             options=CaptureJobOptions(
+                retain_trace_journal=options.get("retain_trace_journal", True),
                 capture_packets=options.get("capture_packets", True),
                 collect_cdp=options.get("collect_cdp", True),
                 collect_netlog=options.get("collect_netlog", True),

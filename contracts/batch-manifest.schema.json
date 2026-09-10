@@ -47,6 +47,7 @@
           "required": ["capture_packets", "collect_cdp", "collect_netlog", "analyze_after_capture", "headless"],
           "properties": {
             "capture_packets": { "type": "boolean" },
+            "retain_trace_journal": { "type": "boolean", "default": true },
             "collect_cdp": { "type": "boolean" },
             "collect_netlog": { "type": "boolean" },
             "analyze_after_capture": { "type": "boolean" },

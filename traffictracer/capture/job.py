@@ -131,6 +131,11 @@ class CaptureJob:
         collector = None
 
         capture_context = {
+            "trace_policy": {
+                "schema_version": 1,
+                "immutable_analysis_input": True,
+                "retain_journal": self.spec.options.retain_trace_journal,
+            },
             "schema_version": 1,
             "job_id": self.spec.job_id,
             "session_id": self.session.session_id,
@@ -494,6 +499,8 @@ class CaptureJob:
                     "ts": boundary["ts"],
                     "output": boundary["output"],
                     "settle_seconds": self.runtime.trace_tail_grace_seconds,
+                    "byte_size": boundary.get("byte_size", 0),
+                    "journal_locking": boundary.get("journal_locking") is True,
                 }
                 write_json_atomic(capture_context_path, capture_context)
                 persist_protocol_observation(capture_context["trace_boundary"])
@@ -521,6 +528,8 @@ class CaptureJob:
                     "event_seq": settled["event_seq"],
                     "ts": settled["ts"],
                     "output": settled["output"],
+                    "byte_size": settled.get("byte_size", 0),
+                    "journal_locking": settled.get("journal_locking") is True,
                 })
                 write_json_atomic(capture_context_path, capture_context)
 

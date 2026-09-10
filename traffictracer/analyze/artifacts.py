@@ -650,7 +650,8 @@ def _storage_summary(session: Path, results: Path) -> dict:
 
 
 def _trace_paths(session: Path) -> list[Path]:
-    raw_trace = session / "raw" / "mihomo-trace.jsonl"
+    from traffictracer.capture.trace_snapshot import analysis_trace_path
+    raw_trace = analysis_trace_path(session / "raw")
     return (
         [raw_trace]
         if raw_trace.is_file()
