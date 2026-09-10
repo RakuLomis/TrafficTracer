@@ -100,9 +100,9 @@ def test_retention_off_commits_archive_artifacts_and_reanalysis_reuses_snapshot(
     assert "raw/mihomo-trace.jsonl" not in {a.path for a in completed.artifacts}
     assert "raw/trace-archive/journal.jsonl.gz" in {a.path for a in completed.artifacts}
     assert all((session_dir / a.path).is_file() for a in completed.artifacts)
-    before = (raw / "trace-input/trace.jsonl").read_bytes()
+    before = (raw / "trace-input/trace.jsonl.gz").read_bytes()
     _job(tmp_path, session_dir, [], overwrite=True).run()
-    assert (raw / "trace-input/trace.jsonl").read_bytes() == before
+    assert (raw / "trace-input/trace.jsonl.gz").read_bytes() == before
     assert {a.path for a in store.get(manifest.session_id).artifacts} == {a.path for a in completed.artifacts}
 
 

@@ -25,6 +25,7 @@ from traffictracer.session.manifest import Artifact, SessionError, SessionManife
 from traffictracer.session.store import MANIFEST_NAME, SessionStore
 from traffictracer.utils import logger
 from traffictracer.capture.trace_retention import retain_journal
+from traffictracer.capture.trace_snapshot import trace_validation_scope
 
 from .pipeline import run_analysis
 from .artifacts import persist_analysis_artifacts
@@ -62,7 +63,7 @@ class AnalysisJob:
         self._session_id = str(uuid5(NAMESPACE_URL, session_uri))
 
     def run(self) -> CaptureJobResult:
-        with analysis_health(self.spec.session_dir, self.spec.job_id, self.progress) as health, analysis_process_scope(self.cancellation):
+        with trace_validation_scope(), analysis_health(self.spec.session_dir, self.spec.job_id, self.progress) as health, analysis_process_scope(self.cancellation):
             result = self._run()
             health["state"] = result.state.value
             return result
@@ -119,8 +120,8 @@ class AnalysisJob:
             input_bundle = Path(self.spec.session_dir) / "raw" / "trace-input"
             if input_bundle.is_dir():
                 artifact_paths.extend(input_bundle / name for name in (
-                    "trace.jsonl", "capture-context.json", "snapshot.json",
-                ))
+                    "trace.jsonl", "trace.jsonl.gz", "capture-context.json", "snapshot.json",
+                ) if (input_bundle / name).is_file())
             with retain_journal(Path(self.spec.session_dir) / "raw",
                                 checkpoint=self.cancellation.checkpoint) as retention:
                 artifact_paths.extend(retention.paths)

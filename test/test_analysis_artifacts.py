@@ -791,10 +791,27 @@ def test_storage_summary_counts_only_capture_inputs(tmp_path):
         "raw_packet_capture_bytes": 7,
         "netlog_bytes": 11,
         "mihomo_trace_bytes": 13,
+        "trace_snapshot_bytes": 0,
+        "trace_snapshot_logical_bytes": None,
+        "trace_snapshot_compression_ratio": None,
+        "trace_archive_bytes": 0,
         "capture_metadata_bytes": 5,
         "analysis_result_bytes_before_summary": 17,
         "compression": "none",
     }
+
+
+def test_reanalysis_cannot_hide_failed_packet_coverage(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "capture-context.json").write_text(json.dumps({
+        "packet_coverage": {"session_id": SESSION_ID, "status": "failed", "drops": "unknown"},
+    }))
+    result = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    summary = json.loads(result.summary.read_text())
+    assert summary["quality_state"] == "failed"
+    assert summary["analysis_integrity"]["page_attributed"]["state"] == "failed"
+    assert any(w["code"] == "PACKET_CAPTURE_INCOMPLETE" for w in summary["warnings"])
 
 
 def test_summary_surfaces_bounded_playback_quality(tmp_path):

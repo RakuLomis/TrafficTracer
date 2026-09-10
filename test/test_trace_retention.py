@@ -29,13 +29,13 @@ def test_lossless_archive_keeps_late_events_and_removes_only_on_commit(tmp_path)
         assert result.state == "archived"
         assert source.exists()  # Publication alone cannot delete a journal.
         assert gzip.decompress(result.paths[0].read_bytes()) == original
-        assert (tmp_path / "trace-input/trace.jsonl").read_bytes() == b"{}\n"
+        assert gzip.decompress((tmp_path / "trace-input/trace.jsonl.gz").read_bytes()) == b"{}\n"
         assert result.remove_original()
     assert not source.exists()
     with retain_journal(tmp_path) as resumed:
         assert resumed.state == "archived"
         assert all(p.is_file() for p in resumed.paths)
-    assert prepare_analysis_trace(tmp_path).read_bytes() == b"{}\n"
+    assert gzip.decompress(prepare_analysis_trace(tmp_path).read_bytes()) == b"{}\n"
 
 
 def test_live_writer_is_not_waited_on_or_deleted(tmp_path):

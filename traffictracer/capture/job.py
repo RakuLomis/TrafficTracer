@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import sys
 import shutil
+import time
 from typing import Any
 from traffictracer.analyze.mihomo_log import (
     observed_proxy_protocols,
@@ -35,7 +36,7 @@ from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
 from .profile import remove_owned_cold_profile
 from .quiescence import verify_chrome_quiescence
-from .tshark import start_packet_capture, stop_packet_capture
+from .tshark import CaptureMonitor, PacketCaptureError, capture_output_complete, start_packet_capture, stop_packet_capture
 
 
 class ProxyProtocolInvariantError(RuntimeError):
@@ -61,6 +62,7 @@ class CaptureRuntime:
     run_label: str = ""
     chrome_quiescence_timeout: float = 2.0
     trace_tail_grace_seconds: float = 0.5
+    packet_tail_grace_seconds: float = 0.2
 
 
 class CaptureJob:
@@ -86,6 +88,7 @@ class CaptureJob:
         self.cancellation = cancellation
         self.finalize_progress = finalize_progress
         self._artifacts: list[str] = []
+        self._capture_monitor = None
 
     @property
     def artifacts(self) -> tuple[str, ...]:
@@ -223,7 +226,7 @@ class CaptureJob:
                     operation="capture.tshark_tun_start",
                 )
                 tun_capture = start_packet_capture(
-                    self.spec.interfaces.tun, paths["tun_pcap"]
+                    self.spec.interfaces.tun, paths["tun_pcap"], checkpoint=self.cancellation.checkpoint
                 )
                 self.registry.register(tun_capture.process, "tshark-tun")
                 self._persist_recovery(previous_tracing)
@@ -234,14 +237,27 @@ class CaptureJob:
                     operation="capture.tshark_physical_start",
                 )
                 phys_capture = start_packet_capture(
-                    self.spec.interfaces.physical, paths["phys_pcap"]
+                    self.spec.interfaces.physical, paths["phys_pcap"], checkpoint=self.cancellation.checkpoint
                 )
                 self.registry.register(phys_capture.process, "tshark-physical")
                 self._persist_recovery(previous_tracing)
                 self._record(paths["tun_pcap"])
                 self._record(paths["phys_pcap"])
+                self._capture_monitor = CaptureMonitor((tun_capture, phys_capture), self.cancellation)
+                self._capture_monitor.start()
+                self.cancellation = self._capture_monitor
+                capture_context["packet_coverage"] = {
+                    "session_id": self.session.session_id,
+                    "schema_version": 1, "clock": "monotonic_seconds",
+                    "status": "in_progress", "drops": "unknown",
+                    "ready": {"tun": getattr(tun_capture, "ready_monotonic", None),
+                              "physical": getattr(phys_capture, "ready_monotonic", None)},
+                }
 
             self.cancellation.checkpoint()
+            for capture in (tun_capture, phys_capture):
+                if capture is not None and capture.process.poll() is not None:
+                    raise PacketCaptureError("CAPTURE_EXITED_BEFORE_BROWSER", "packet capture exited before Chrome launch")
             self.progress.emit(
                 JobState.CAPTURING,
                 JobStage.CAPTURE_BROWSER,
@@ -249,6 +265,9 @@ class CaptureJob:
                 operation="capture.chrome_launch",
             )
             use_cdp = self.runtime.enable_cdp and self.spec.options.collect_cdp
+            if "packet_coverage" in capture_context:
+                capture_context["packet_coverage"]["browser_start_requested"] = time.monotonic()
+                write_json_atomic(paths["capture_context"], capture_context)
             chrome_proc = launch_chrome(
                 binary=self.spec.chrome_binary,
                 url=self.spec.url,
@@ -267,6 +286,8 @@ class CaptureJob:
             self._record(paths["netlog"])
 
             if use_cdp:
+                if "packet_coverage" in capture_context:
+                    capture_context["packet_coverage"]["cdp_setup_started"] = time.monotonic()
                 self.progress.emit(
                     JobState.CAPTURING,
                     JobStage.CAPTURE_BROWSER,
@@ -288,6 +309,9 @@ class CaptureJob:
                     operation="capture.navigation",
                 )
                 if self.spec.playback is None:
+                    if "packet_coverage" in capture_context:
+                        capture_context["packet_coverage"]["navigation_requested"] = time.monotonic()
+                        write_json_atomic(paths["capture_context"], capture_context)
                     collector.navigate(
                         self.spec.url,
                         load_timeout=self.runtime.wait_load_timeout,
@@ -300,6 +324,9 @@ class CaptureJob:
                     )
                     collector.collect(self.spec.duration_seconds)
                 else:
+                    if "packet_coverage" in capture_context:
+                        capture_context["packet_coverage"]["navigation_requested"] = time.monotonic()
+                        write_json_atomic(paths["capture_context"], capture_context)
                     collector.navigate(
                         self.spec.url,
                         load_timeout=self.runtime.wait_load_timeout,
@@ -413,15 +440,8 @@ class CaptureJob:
             attempt("CDP browser close", collector.close_browser)
             attempt("CDP collector close", collector.close)
         if chrome_proc is not None and chrome_proc.poll() is None:
-            attempt("Chrome stop", lambda: terminate_chrome(chrome_proc, cancellation=self.cancellation))
-        if phys_capture is not None:
-            attempt("physical packet capture stop", lambda: stop_packet_capture(phys_capture))
-        if tun_capture is not None:
-            attempt("TUN packet capture stop", lambda: stop_packet_capture(tun_capture))
-        cleanup = self.registry.cleanup()
-        if cleanup.errors:
-            logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
-            errors.append(RuntimeError("; ".join(cleanup.errors)))
+            # Cleanup must not be aborted by the failed sensor/cancel token.
+            attempt("Chrome stop", lambda: terminate_chrome(chrome_proc))
         if chrome_proc is not None:
             def quiesce_chrome() -> None:
                 verify_chrome_quiescence(
@@ -429,6 +449,8 @@ class CaptureJob:
                     chrome_profile,
                     timeout=self.runtime.chrome_quiescence_timeout,
                 )
+                if "packet_coverage" in capture_context:
+                    capture_context["packet_coverage"]["browser_quiescent"] = time.monotonic()
                 if self.spec.options.cache_mode == "cold":
                     raw_dir = self.session.directory / "raw"
                     if raw_dir.is_dir():
@@ -442,6 +464,41 @@ class CaptureJob:
                         shutil.rmtree(chrome_profile, ignore_errors=True)
 
             attempt("Chrome quiescence barrier", quiesce_chrome)
+        if self._capture_monitor is not None:
+            # Bounded tail, no network stimulation and no change to trace
+            # causal eligibility. Sensors remain monitored through this wait.
+            if chrome_proc is not None and not self.cancellation.parent.cancelled and self.runtime.packet_tail_grace_seconds > 0:
+                attempt("packet tail grace", lambda: self._capture_monitor.wait(
+                    max(0.0, min(self.runtime.packet_tail_grace_seconds, 2.0))))
+            attempt("packet capture health", self._capture_monitor.check_health)
+            self._capture_monitor.stop()
+            self.cancellation = self._capture_monitor.parent
+        def finish_capture(role, capture):
+            result = stop_packet_capture(capture)
+            coverage = capture_context.get("packet_coverage")
+            if coverage is not None:
+                coverage.setdefault("stopped", {})[role] = time.monotonic()
+                coverage.setdefault("exit", {})[role] = {
+                    "code": getattr(result, "exit_code", None),
+                    "killed": getattr(result, "killed", None),
+                }
+            if result is not None and (result.killed or result.exit_code not in (0, -15)):
+                raise PacketCaptureError("CAPTURE_STOP_FAILED", f"capture stopped abnormally: {result.exit_code}", interface=getattr(capture, "interface", ""))
+            if result is not None and not capture_output_complete(capture.output_path):
+                raise PacketCaptureError("CAPTURE_OUTPUT_INVALID", "capture output has an invalid header or truncated final block", interface=capture.interface)
+        if phys_capture is not None:
+            attempt("physical packet capture stop", lambda: finish_capture("physical", phys_capture))
+        if tun_capture is not None:
+            attempt("TUN packet capture stop", lambda: finish_capture("tun", tun_capture))
+        cleanup = self.registry.cleanup()
+        if cleanup.errors:
+            logger.warning("Process cleanup errors: %s", "; ".join(cleanup.errors))
+            errors.append(RuntimeError("; ".join(cleanup.errors)))
+        if "packet_coverage" in capture_context:
+            coverage = capture_context["packet_coverage"]
+            coverage["status"] = "failed" if errors or "browser_quiescent" not in coverage else "passed"
+            coverage["errors"] = [str(error)[:1000] for error in errors]
+            attempt("packet coverage publication", lambda: write_json_atomic(capture_context_path, capture_context))
         if tracing_configured:
             def persist_protocol_observation(boundary: dict[str, Any]) -> None:
                 observation = observed_proxy_protocols(

@@ -221,7 +221,8 @@ def trace_snapshot_info(path: str) -> dict:
     boundary_session = str(boundary.get("session_id", "")) if boundary else ""
     barrier_verified = boundary is None
     if trace_path.is_file():
-        with trace_path.open("r", encoding="utf-8") as stream:
+        from traffictracer.capture.trace_snapshot import open_trace
+        with open_trace(trace_path) as stream:
             for line in stream:
                 try:
                     event = json.loads(line)
@@ -306,7 +307,8 @@ def _events(
     include_event_seqs: set[int] | None = None,
 ):
     included = include_event_seqs or set()
-    with open(path, "r", encoding="utf-8") as stream:
+    from traffictracer.capture.trace_snapshot import open_trace
+    with open_trace(path) as stream:
         for line in stream:
             try:
                 event = json.loads(line)

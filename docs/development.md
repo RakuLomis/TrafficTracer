@@ -131,7 +131,7 @@ make package-linux
 The wrapper rebuilds the core and Worker, prepares the pinned UI resources, invokes Tauri for Deb and AppImage, and verifies both bundles before atomically publishing the directory:
 
 ```text
-dist/packages/traffictracer-complete-v1.0.23-linux-x86_64/
+dist/packages/traffictracer-complete-v1.0.24-linux-x86_64/
 ```
 
 The output directory is never overwritten. Choose a new absolute path for another candidate:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import os
 from pathlib import Path
@@ -9,7 +10,33 @@ import stat
 import shutil
 import tempfile
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Callable
+
+_validation_cache = ContextVar("trace_validation_cache", default=None)
+
+
+@contextmanager
+def trace_validation_scope():
+    """Reuse validation only within one analysis and unchanged file identities."""
+    token = _validation_cache.set({})
+    try:
+        yield
+    finally:
+        _validation_cache.reset(token)
+
+
+def _identity(path):
+    info = path.stat(follow_symlinks=False)
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def open_trace(path: str | Path, mode: str = "rt"):
+    """Stream logical JSONL bytes; never materialize an unpacked snapshot."""
+    path = Path(path)
+    options = {} if "b" in mode else {"encoding": "utf-8"}
+    return gzip.open(path, mode, **options) if path.suffix == ".gz" else path.open(mode, **options)
 
 
 def analysis_trace_path(raw: Path, *, checkpoint: Callable[[], None] = lambda: None) -> Path:
@@ -23,27 +50,57 @@ def analysis_trace_path(raw: Path, *, checkpoint: Callable[[], None] = lambda: N
     if metadata_path.is_symlink() or not metadata_path.is_file():
         raise ValueError("analysis trace metadata is unavailable")
     metadata = json.loads(metadata_path.read_text())
-    if (not isinstance(metadata, dict) or metadata.get("schema_version") != 1
+    if (not isinstance(metadata, dict) or metadata.get("schema_version") not in (1, 2)
             or type(metadata.get("size_bytes")) is not int
             or metadata["size_bytes"] <= 0
-            or metadata.get("path") != "trace.jsonl"
+            or metadata.get("path") != ("trace.jsonl.gz" if metadata.get("schema_version") == 2 else "trace.jsonl")
             or any(not isinstance(metadata.get(key), str) or len(metadata[key]) != 64
                    for key in ("sha256", "context_sha256"))):
         raise ValueError("invalid analysis trace metadata")
-    trace = bundle / "trace.jsonl"
+    trace = bundle / metadata["path"]
     if trace.is_symlink() or not trace.is_file():
         raise ValueError("analysis trace snapshot is unavailable")
-    digest = hashlib.sha256()
-    with trace.open("rb") as stream:
+    context = bundle / "capture-context.json"
+    if context.is_symlink() or not context.is_file():
+        raise ValueError("analysis trace context integrity mismatch")
+    checkpoint()
+    members = (metadata_path, trace, context)
+    identity = tuple(_identity(path) for path in members)
+    cache = _validation_cache.get()
+    cache_key = str(bundle.absolute())
+    if cache is not None and cache.get(cache_key) == identity:
+        return trace
+    if metadata["schema_version"] == 2:
+        if (metadata.get("encoding") != "gzip"
+                or type(metadata.get("stored_size_bytes")) is not int
+                or metadata["stored_size_bytes"] <= 0
+                or not isinstance(metadata.get("stored_sha256"), str)
+                or len(metadata["stored_sha256"]) != 64):
+            raise ValueError("invalid compressed analysis trace metadata")
+        stored_digest = hashlib.sha256()
+        with trace.open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                checkpoint()
+                stored_digest.update(block)
+        if trace.stat().st_size != metadata["stored_size_bytes"] or stored_digest.hexdigest() != metadata["stored_sha256"]:
+            raise ValueError("analysis trace snapshot integrity mismatch")
+    digest, size = hashlib.sha256(), 0
+    with open_trace(trace, "rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             checkpoint()
+            size += len(block)
+            if size > metadata["size_bytes"]:
+                raise ValueError("analysis trace snapshot exceeds recorded logical size")
             digest.update(block)
-    if trace.stat().st_size != metadata["size_bytes"] or digest.hexdigest() != metadata["sha256"]:
+    if size != metadata["size_bytes"] or digest.hexdigest() != metadata["sha256"]:
         raise ValueError("analysis trace snapshot integrity mismatch")
-    context = bundle / "capture-context.json"
     if (context.is_symlink() or not context.is_file()
             or hashlib.sha256(context.read_bytes()).hexdigest() != metadata["context_sha256"]):
         raise ValueError("analysis trace context integrity mismatch")
+    if identity != tuple(_identity(path) for path in members):
+        raise ValueError("analysis trace bundle changed during validation")
+    if cache is not None:
+        cache[cache_key] = identity
     return trace
 
 
@@ -90,9 +147,9 @@ def prepare_analysis_trace(raw: Path, *, checkpoint: Callable[[], None] = lambda
         raise ValueError("analysis prefix does not contain the capture barrier")
     staging = Path(tempfile.mkdtemp(prefix=".trace-input-", dir=raw))
     try:
-        metadata = publish_trace_snapshot(source, staging / "trace.jsonl", boundary,
-                                          checkpoint=checkpoint)
-        metadata.update({"schema_version": 1, "path": "trace.jsonl",
+        metadata = publish_trace_snapshot(source, staging / "trace.jsonl.gz", boundary,
+                                          checkpoint=checkpoint, compress=True)
+        metadata.update({"schema_version": 2, "path": "trace.jsonl.gz", "encoding": "gzip",
                          "source": "../mihomo-trace.jsonl", "boundary_kind": "analysis_start_complete_prefix",
                          "context_sha256": hashlib.sha256(context_bytes).hexdigest()})
         (staging / "capture-context.json").write_bytes(context_bytes)
@@ -124,6 +181,7 @@ def _sync_directory(path: Path) -> None:
 
 def publish_trace_snapshot(source: Path, destination: Path, byte_limit: int,
                            *, timeout: float = 30.0,
+                           compress: bool = False,
                            checkpoint: Callable[[], None] = lambda: None) -> dict:
     """Copy an explicitly confirmed byte boundary, never the changing EOF.
 
@@ -150,19 +208,24 @@ def publish_trace_snapshot(source: Path, destination: Path, byte_limit: int,
                 raise ValueError("trace journal is not a regular file containing the boundary")
             fd, temporary = tempfile.mkstemp(prefix=".trace-snapshot-", dir=destination.parent)
             with os.fdopen(fd, "wb") as writer:
+                zipped = gzip.GzipFile(filename="", fileobj=writer, mode="wb", compresslevel=6, mtime=0) if compress else None
                 remaining = byte_limit
                 last = b""
-                while remaining:
-                    checkpoint()
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError("trace snapshot copy deadline exceeded")
-                    block = reader.read(min(1024 * 1024, remaining))
-                    if not block:
-                        raise ValueError("trace journal shrank before its confirmed boundary")
-                    writer.write(block)
-                    digest.update(block)
-                    remaining -= len(block)
-                    last = block[-1:]
+                try:
+                    while remaining:
+                        checkpoint()
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("trace snapshot copy deadline exceeded")
+                        block = reader.read(min(1024 * 1024, remaining))
+                        if not block:
+                            raise ValueError("trace journal shrank before its confirmed boundary")
+                        (zipped or writer).write(block)
+                        digest.update(block)
+                        remaining -= len(block)
+                        last = block[-1:]
+                finally:
+                    if zipped is not None:
+                        zipped.close()
                 if last != b"\n":
                     raise ValueError("trace boundary must end at a complete JSONL record")
                 writer.flush()
@@ -173,9 +236,30 @@ def publish_trace_snapshot(source: Path, destination: Path, byte_limit: int,
             if current.st_size < byte_limit:
                 raise ValueError("trace journal shrank during snapshot copy")
         # Same-directory hard link gives exclusive, atomic publication on Linux.
+        stored_digest = hashlib.sha256()
+        with Path(temporary).open("rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                checkpoint()
+                stored_digest.update(block)
+        if compress:
+            verified, logical = hashlib.sha256(), 0
+            with gzip.open(temporary, "rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    checkpoint()
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("trace snapshot verification deadline exceeded")
+                    logical += len(block)
+                    if logical > byte_limit:
+                        raise ValueError("compressed snapshot exceeds logical boundary")
+                    verified.update(block)
+            if logical != byte_limit or verified.hexdigest() != digest.hexdigest():
+                raise ValueError("compressed snapshot verification failed")
+        result = {"size_bytes": byte_limit, "sha256": digest.hexdigest(),
+                  "source": str(source), "path": str(destination),
+                  "stored_size_bytes": Path(temporary).stat().st_size,
+                  "stored_sha256": stored_digest.hexdigest()}
         os.link(temporary, destination)
-        return {"size_bytes": byte_limit, "sha256": digest.hexdigest(),
-                "source": str(source), "path": str(destination)}
+        return result
     finally:
         if temporary is not None:
             Path(temporary).unlink(missing_ok=True)

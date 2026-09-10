@@ -1,15 +1,15 @@
 # TrafficTracer Complete UI Guide
 
-TrafficTracer Complete 1.0.23 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
+TrafficTracer Complete 1.0.24 packages the pinned UI, Worker, Mihomo core, and privileged service integration as one Linux x86-64 application. This guide covers the normal desktop workflow. It does not require sibling repositories or standalone capture commands.
 
 ## 1. Verify the release
 
 The release directory contains one Deb, one AppImage, checksums, component provenance, license notices, an SBOM, and an audit report:
 
 ```text
-traffictracer-complete-v1.0.23-linux-x86_64/
-├── TrafficTracer-Complete_1.0.23_linux_x86_64.deb
-├── TrafficTracer-Complete_1.0.23_linux_x86_64.AppImage
+traffictracer-complete-v1.0.24-linux-x86_64/
+├── TrafficTracer-Complete_1.0.24_linux_x86_64.deb
+├── TrafficTracer-Complete_1.0.24_linux_x86_64.AppImage
 ├── SHA256SUMS
 ├── VERSION
 ├── COMPONENTS
@@ -24,11 +24,11 @@ traffictracer-complete-v1.0.23-linux-x86_64/
 Verify the package checksums:
 
 ```bash
-cd /path/to/traffictracer-complete-v1.0.23-linux-x86_64
+cd /path/to/traffictracer-complete-v1.0.24-linux-x86_64
 sha256sum -c SHA256SUMS
 ```
 
-`VERSION` identifies TrafficTracer Complete 1.0.23. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
+`VERSION` identifies TrafficTracer Complete 1.0.24. `COMPONENTS` records the exact TrafficTracer, Mihomo, UI, and service revisions used by the package.
 
 ## 2. Install prerequisites
 
@@ -48,16 +48,16 @@ Some distributions grant capture access through the `wireshark` group instead of
 Install the Deb:
 
 ```bash
-sudo apt install ./TrafficTracer-Complete_1.0.23_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.24_linux_x86_64.deb
 ```
 
-The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.23`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
+The package name remains `clash-verge` and its bundle version is `2.5.2+traffictracer.1.0.24`. This allows an in-place upgrade of an existing Clash Verge installation and preserves user configuration. The already-running process does not change until it exits. Use a maintenance window, exit it normally, install the package, and start the new version.
 
 To avoid installing system files, use the AppImage:
 
 ```bash
-chmod +x TrafficTracer-Complete_1.0.23_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.23_linux_x86_64.AppImage
+chmod +x TrafficTracer-Complete_1.0.24_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.24_linux_x86_64.AppImage
 ```
 
 Do not install from `/tmp` if the path may disappear after a reboot. For `apt`, include `./` or an absolute path; otherwise the filename is interpreted as a package name.
@@ -98,11 +98,16 @@ Open **Traffic Tracer** and configure:
 - **Proxy protocol invariant**: keep Strict single protocol for comparable batches, or use Observe only for exploratory mixed routing;
 - **Expected proxy protocol**: optionally require a leaf protocol such as hysteria2; leave it empty to freeze the selected leaf protocol automatically.
 
-Version 1.0.23 additionally offers **Keep uncompressed trace journal**
+Since version 1.0.23, **Keep uncompressed trace journal** is available
 (default on). Turning it off keeps the mandatory analysis snapshot and archives
 the complete journal losslessly once all core writers close; pending archival
 does not block analysis. See [Trace input and retention](pipeline-quality-and-trace-sealing.md#lossless-archival-and-safety-boundaries).
 This option is not present in older packages (1.0.22 and earlier).
+
+Version 1.0.24 compresses new analysis snapshots using lossless gzip, without
+compressing NetLog, CDP or PCAP. Both packet interfaces must publish a valid
+capture header before Chrome starts; packet coverage and unavailable drop
+statistics are displayed separately. Existing raw snapshots remain readable.
 
 Find the physical interface with:
 

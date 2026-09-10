@@ -124,7 +124,7 @@ def _spec(tmp_path):
 def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=None):
     import traffictracer.capture.job as module
 
-    def start(interface, path):
+    def start(interface, path, **kwargs):
         role = "tun" if interface == "Meta" else "physical"
         events.append(f"start:{role}")
         return type("Capture", (), {"process": FakeProcess(role, events)})()
@@ -143,6 +143,7 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=Non
         process.returncode = 0
 
     monkeypatch.setattr(module, "start_packet_capture", start)
+    monkeypatch.setattr(module.CaptureMonitor, "wait", lambda monitor, seconds: monitor.parent.wait(seconds))
     monkeypatch.setattr(module, "stop_packet_capture", stop)
     monkeypatch.setattr(module, "launch_chrome", launch)
     monkeypatch.setattr(module, "terminate_chrome", terminate)
@@ -157,7 +158,7 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=Non
     progress_events = []
     job = CaptureJob(
         _spec(tmp_path),
-        runtime=CaptureRuntime("/tmp/profile", enable_cdp=False, run_label="visit"),
+        runtime=CaptureRuntime("/tmp/profile", enable_cdp=False, run_label="visit", packet_tail_grace_seconds=0),
         mihomo=FakeMihomo(events),
         session=CaptureSessionContext("session-1", tmp_path, recovery_store),
         registry=registry,
@@ -233,6 +234,35 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
     assert context["trace_boundary_initial"]["event_seq"] == 42
     assert context["trace_boundary"]["settle_seconds"] == 0.5
     assert str(context_path.relative_to(tmp_path)) in result.artifacts
+
+
+def test_browser_quiescence_precedes_sensor_stop(tmp_path, monkeypatch):
+    import traffictracer.capture.job as module
+    events = []
+    job, _, _ = _job(tmp_path, monkeypatch, events)
+    monkeypatch.setattr(module, "verify_chrome_quiescence", lambda *args, **kwargs: events.append("quiescent"))
+    job.run()
+    assert events.index("stop:chrome") < events.index("quiescent") < events.index("stop:physical")
+    context = json.loads(next((tmp_path / "logs").glob("capture_context_*.json")).read_text())
+    coverage = context["packet_coverage"]
+    assert coverage["status"] == "passed"
+    assert coverage["drops"] == "unknown"
+    assert coverage["browser_start_requested"] <= coverage["browser_quiescent"] <= coverage["stopped"]["physical"]
+
+
+def test_dead_sensor_before_browser_never_launches_chrome(tmp_path, monkeypatch):
+    import traffictracer.capture.job as module
+    events = []
+    job, _, progress = _job(tmp_path, monkeypatch, events)
+    def dead(interface, path, **kwargs):
+        process = FakeProcess("tun" if interface == "Meta" else "physical", events)
+        process.returncode = 1
+        return type("Capture", (), {"process": process})()
+    monkeypatch.setattr(module, "start_packet_capture", dead)
+    with pytest.raises(module.PacketCaptureError):
+        job.run()
+    assert "launch:chrome" not in events
+    assert progress[-1].state is JobState.FAILED
 
 
 def test_tracing_state_is_journaled_before_patch_and_cleared_after_restore(

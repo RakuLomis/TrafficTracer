@@ -90,6 +90,17 @@ def persist_analysis_artifacts(
     warnings.extend(_quality_warnings(
         request_records, connection_records, pcap_payload, _target_url(session),
     ))
+    coverage_failures = sum(
+        isinstance(context.get("packet_coverage"), dict)
+        and context["packet_coverage"].get("status") != "passed"
+        for context in _capture_contexts(session)
+    )
+    if coverage_failures:
+        warnings.extend({
+            "code": "PACKET_CAPTURE_INCOMPLETE", "count": coverage_failures,
+            "message": "Recorded packet lifecycle coverage did not pass; reanalysis cannot repair missing capture evidence.",
+            "scope": scope, "severity": "error", "affects_page_quality": True,
+        } for scope in ("page_attributed", "capture_global"))
     match_counts = Counter(item["match"]["status"] for item in items)
     protocol_counts = Counter(item["protocol"] for item in items)
     quality = analysis_quality(
@@ -157,6 +168,8 @@ def persist_analysis_artifacts(
         "storage": _storage_summary(session, results),
         "carrier_bindings": _carrier_binding_summary(items),
         "proxy_protocol": _capture_protocol_summary(session),
+        "packet_coverage": [context["packet_coverage"] for context in _capture_contexts(session)
+                            if isinstance(context.get("packet_coverage"), dict)],
         "inbound": _capture_inbound_summary(session, items),
         "navigation_outcome": navigation_outcome,
         "resource_health": resource_health,
@@ -636,16 +649,30 @@ def _storage_summary(session: Path, results: Path) -> dict:
         )
         for root in capture_roots
     )
+    snapshot_bytes = _tree_bytes(raw / "trace-input", lambda path: path.name in {"trace.jsonl", "trace.jsonl.gz"})
+    archive_bytes = _tree_bytes(raw / "trace-archive", lambda path: path.name == "journal.jsonl.gz")
+    snapshot_logical_bytes = None
+    snapshot_meta = raw / "trace-input" / "snapshot.json"
+    if snapshot_meta.is_file():
+        metadata = json.loads(snapshot_meta.read_text())
+        snapshot_logical_bytes = metadata.get("size_bytes")
     return {
         "capture_bytes": capture_bytes,
         "raw_packet_capture_bytes": packet_bytes,
         "netlog_bytes": netlog_bytes,
         "mihomo_trace_bytes": trace_bytes,
+        "trace_snapshot_bytes": snapshot_bytes,
+        "trace_snapshot_logical_bytes": snapshot_logical_bytes,
+        "trace_archive_bytes": archive_bytes,
+        "trace_snapshot_compression_ratio": (
+            snapshot_bytes / snapshot_logical_bytes
+            if isinstance(snapshot_logical_bytes, int) and snapshot_logical_bytes > 0 else None
+        ),
         "capture_metadata_bytes": max(
-            0, capture_bytes - packet_bytes - netlog_bytes - trace_bytes
+            0, capture_bytes - packet_bytes - netlog_bytes - trace_bytes - snapshot_bytes - archive_bytes
         ),
         "analysis_result_bytes_before_summary": _tree_bytes(results),
-        "compression": "none",
+        "compression": "trace_gzip" if (raw / "trace-input/trace.jsonl.gz").is_file() or archive_bytes else "none",
     }
 
 
@@ -1096,6 +1123,8 @@ def _analysis_integrity_state(
     consistency: dict, warnings: list[dict], *, scope: str,
 ) -> str:
     if consistency.get("status") != "passed":
+        return "failed"
+    if any(w.get("scope") == scope and w.get("code") == "PACKET_CAPTURE_INCOMPLETE" for w in warnings):
         return "failed"
     return (
         "degraded"
@@ -1552,6 +1581,8 @@ def _quality_state(
     scope: str,
 ) -> str:
     if consistency.get("status") != "passed":
+        return "failed"
+    if any(w.get("scope") == scope and w.get("code") == "PACKET_CAPTURE_INCOMPLETE" for w in warnings):
         return "failed"
     degradation_codes = {
         "POST_FLOW_UNAVAILABLE",

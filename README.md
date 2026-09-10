@@ -23,9 +23,9 @@ TrafficTracer preserves uncertainty. Shared proxy transports, browser-internal r
 
 ## Supported release
 
-TrafficTracer Complete 1.0.23 supports Linux x86-64 and is built on Ubuntu 24.04 LTS. This iteration is ready for real capture/Resume validation; see the release notes for validation limits.
+TrafficTracer Complete 1.0.24 supports Linux x86-64 and is built on Ubuntu 24.04 LTS. This iteration is ready for real capture/Resume validation; see the release notes for validation limits.
 
-Windows and other Linux architectures are not part of the 1.0.23 build scope.
+Windows and other Linux architectures are not part of the 1.0.24 build scope.
 
 ## QuickStart
 
@@ -47,9 +47,9 @@ If your distribution uses the `wireshark` group, follow its package prompt, add 
 Verify the release directory before installation:
 
 ```bash
-cd /path/to/traffictracer-complete-v1.0.23-linux-x86_64
+cd /path/to/traffictracer-complete-v1.0.24-linux-x86_64
 sha256sum -c SHA256SUMS
-sudo apt install ./TrafficTracer-Complete_1.0.23_linux_x86_64.deb
+sudo apt install ./TrafficTracer-Complete_1.0.24_linux_x86_64.deb
 ```
 
 The Deb uses the Clash Verge application identity so it can upgrade an existing installation and reuse its user configuration. Exit the old UI normally during a maintenance window before starting the installed version. Building or verifying TrafficTracer does not require stopping the currently running proxy.
@@ -57,8 +57,8 @@ The Deb uses the Clash Verge application identity so it can upgrade an existing 
 Alternatively, run the AppImage:
 
 ```bash
-chmod +x TrafficTracer-Complete_1.0.23_linux_x86_64.AppImage
-./TrafficTracer-Complete_1.0.23_linux_x86_64.AppImage
+chmod +x TrafficTracer-Complete_1.0.24_linux_x86_64.AppImage
+./TrafficTracer-Complete_1.0.24_linux_x86_64.AppImage
 ```
 
 ### 3. Configure the proxy
@@ -121,6 +121,6 @@ Run `make dev` only when another Clash Verge instance is not using the same cont
 - [Sessions and correlation data](docs/data-model.md)
 - [Operations and troubleshooting](docs/operations.md)
 - [Development and releases](docs/development.md)
-- [TrafficTracer Complete 1.0.23 release notes](docs/releases/v1.0.23.md)
+- [TrafficTracer Complete 1.0.24 release notes](docs/releases/v1.0.24.md)
 
 ## License

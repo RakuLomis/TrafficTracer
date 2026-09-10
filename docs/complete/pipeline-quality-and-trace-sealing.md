@@ -105,7 +105,7 @@ analysis, the Worker samples the journal EOF and freezes the complete JSONL
 prefix, including available causal-tail events. The copied capture context keeps
 the original capture cutoff; freezing does not widen flow eligibility.
 
-The committed bundle is `raw/trace-input/`, containing `trace.jsonl`,
+The committed bundle is `raw/trace-input/`, containing `trace.jsonl.gz`,
 `capture-context.json` and `snapshot.json`. Metadata records size, trace/context
 SHA-256 and the analysis-start boundary kind. All three files are registered as
 analysis artifacts. Files and the containing directory are synced before atomic
@@ -113,6 +113,11 @@ bundle publication. Resume and ordinary reanalysis reuse and verify the bundle;
 they never silently adopt later journal appends. Tampered or incomplete bundles
 fail explicitly. Historical captures without the policy retain their old layout.
 Copy/hash loops support cancellation; no historical journal is modified.
+New snapshots use schema version 2 and gzip level 6. `size_bytes` and `sha256`
+always describe the logical JSONL prefix; `stored_size_bytes` and `stored_sha256`
+describe the compressed file. Existing schema version 1 `trace.jsonl` bundles
+remain readable and are never automatically migrated. NetLog and PCAP are not
+compressed by this change. See [capture reliability and snapshot compression](capture-reliability-and-snapshot-compression.md).
 
 Validation: 688 Python tests, 94 frontend tests and 133 Rust TrafficTracer tests
 passed. Mihomo tracer and controller-route tests passed, including the shared
@@ -140,7 +145,7 @@ SHA-256, then atomically publishes `raw/trace-archive/`:
 ```text
 raw/
 ├── trace-input/
-│   ├── trace.jsonl
+│   ├── trace.jsonl.gz
 │   ├── capture-context.json
 │   └── snapshot.json
 └── trace-archive/
