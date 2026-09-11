@@ -109,6 +109,7 @@
       "required": ["core_logical_flows", "unmatched_reasons"],
       "properties": {
         "core_logical_flows": { "$ref": "#/$defs/coreCoverage" },
+        "browser_background_transport_connections": { "$ref": "#/$defs/partition" },
         "unmatched_reasons": { "$ref": "#/$defs/reasonCounts" },
         "attribution_scopes": { "$ref": "#/$defs/reasonCounts" }
       }

@@ -16,12 +16,15 @@ from parser.constants import (
     SRC_SSL_CONNECT_JOB, SRC_SOCKS_CONNECT_JOB, SRC_HTTP_PROXY_CONNECT_JOB,
     SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB, SRC_HTTP2_SESSION, SRC_QUIC_SESSION,
     SRC_PROXY_CLIENT_SOCKET, SRC_TCP_STREAM_ATTEMPT, SRC_TLS_STREAM_ATTEMPT,
+    SRC_UDP_SOCKET, SOURCE_TYPE_NAMES, EVT_UDP_CONNECT,
+    EVT_UDP_LOCAL_ADDRESS,
 )
 from parser.event_processor import process_events
 from parser.dependency_graph import (
     build_connection_chain,
     _build_children_index,
     _parse_ip_port,
+    extract_five_tuple,
     dependency_checkpoints,
 )
 
@@ -68,6 +71,9 @@ def trace_transport(
         with dependency_checkpoints(analysis_checkpoint):
             chain = build_connection_chain(sid, entries, children_index)
         ft = chain.five_tuple
+        _prefer_coherent_quic_udp_endpoints(
+            chain, entries, children_index, ft,
+        )
         sibling_source_id = None
         if not _complete_five_tuple(ft):
             sibling_source_id = _fill_from_siblings(sid, entries, children_index, ft)
@@ -176,6 +182,7 @@ def trace_transport(
             network=ft.network or "",
             attempted_protocols=list(ft.attempted_protocols),
             application_protocol=_application_protocol(observation["chain"], ft),
+            endpoint_provenance=dict(ft.endpoint_provenance),
         )
 
     connections = _merge_alias_connections(list(connections_by_source.values()))
@@ -222,29 +229,184 @@ def _fill_from_siblings(sid, entries, children_index, ft) -> int | None:
     parent_id = _find_parent_id(entry)
     if parent_id is None:
         return None
+    candidates: list[tuple[int, int, object, str]] = []
+    expected_network = (ft.network or "").lower()
     for child_id in children_index.get(parent_id, []):
         if child_id == sid:
             continue
         child = entries.get(child_id)
         if child is None or child.source_type not in _SIBLING_TRANSPORT_TYPES:
             continue
-        for event in child.entries:
-            params = event.get("params") or {}
-            local = params.get("local_address")
-            remote = params.get("remote_address")
-            if not (isinstance(local, str) and isinstance(remote, str)):
+        candidate = _endpoint_candidate(child)
+        if candidate is None:
+            continue
+        candidate_network = (candidate.network or "").lower()
+        if expected_network and candidate_network != expected_network:
+            continue
+        candidates.append((
+            int(child_id), int(child.source_type), candidate,
+            "protocol_compatible_sibling",
+        ))
+    return _apply_unique_endpoint_candidate(ft, candidates)
+
+
+def _prefer_coherent_quic_udp_endpoints(
+    chain, entries, children_index, ft,
+) -> int | None:
+    """Recover one QUIC attempt from its own UDP socket only.
+
+    Chromium may retain a failed QUIC session beside a later TCP fallback.
+    The generic dependency walk can see both branches. When the selected
+    transport is UDP, replace the whole endpoint pair from a uniquely related
+    UDP socket instead of combining the TCP local port with the QUIC peer.
+    """
+    if chain.quic_session is None or (ft.network or "").lower() != "udp":
+        return None
+    roots = {
+        int(chain.quic_session.source_id),
+        *(int(item) for item in _parent_ids(chain.quic_session)),
+    }
+    if chain.pool_group is not None:
+        roots.add(int(chain.pool_group.source_id))
+    candidates: list[tuple[int, int, object, str]] = []
+    for source_id in _descendants_of_types(
+        roots, entries, children_index, {SRC_UDP_SOCKET}, max_depth=4,
+    ):
+        entry = entries[source_id]
+        candidate = _udp_endpoint_candidate(entry)
+        if candidate is not None:
+            candidates.append((
+                source_id, int(entry.source_type), candidate,
+                "quic_dependency_udp_socket",
+            ))
+    return _apply_unique_endpoint_candidate(ft, candidates)
+
+
+def _parent_ids(entry) -> set[int]:
+    result: set[int] = set()
+    for event in entry.entries:
+        params = event.get("params") or {}
+        dependency = params.get("source_dependency")
+        if isinstance(dependency, dict) and dependency.get("id") is not None:
+            result.add(int(dependency["id"]))
+    return result
+
+
+def _descendants_of_types(
+    roots, entries, children_index, source_types, *, max_depth: int,
+) -> list[int]:
+    found: list[int] = []
+    seen = set(int(item) for item in roots)
+    frontier = [(int(item), 0) for item in roots]
+    while frontier:
+        parent_id, depth = frontier.pop(0)
+        if depth >= max_depth:
+            continue
+        for child_id in children_index.get(parent_id, []):
+            child_id = int(child_id)
+            if child_id in seen:
                 continue
-            if not ft.src_ip:
-                parsed = _parse_ip_port(local)
-                if parsed:
-                    ft.src_ip, ft.src_port = parsed
-            if not ft.dst_ip:
-                parsed = _parse_ip_port(remote)
-                if parsed:
-                    ft.dst_ip, ft.dst_port = parsed
-            if _complete_five_tuple(ft):
-                return int(child_id)
-    return None
+            seen.add(child_id)
+            child = entries.get(child_id)
+            if child is None:
+                continue
+            if child.source_type in source_types:
+                found.append(child_id)
+            frontier.append((child_id, depth + 1))
+    return found
+
+
+def _endpoint_candidate(entry):
+    if entry.source_type == SRC_UDP_SOCKET:
+        return _udp_endpoint_candidate(entry)
+    candidate = extract_five_tuple([entry])
+    if not _complete_five_tuple(candidate):
+        return None
+    if not candidate.network:
+        candidate.network = _source_network(entry.source_type)
+    return candidate if candidate.network else None
+
+
+def _udp_endpoint_candidate(entry):
+    candidate = extract_five_tuple([entry])
+    local = None
+    remote = None
+    evidence: list[str] = []
+    for event in entry.entries:
+        params = event.get("params") or {}
+        if event.get("type") == EVT_UDP_CONNECT:
+            value = params.get("address")
+            if isinstance(value, str) and _parse_ip_port(value):
+                remote = _parse_ip_port(value)
+                evidence.append("UDP_CONNECT.address")
+        elif event.get("type") == EVT_UDP_LOCAL_ADDRESS:
+            value = params.get("address")
+            if isinstance(value, str) and _parse_ip_port(value):
+                local = _parse_ip_port(value)
+                evidence.append("UDP_LOCAL_ADDRESS.address")
+        for field, side in (
+            ("local_address", "local"), ("self_address", "local"),
+            ("remote_address", "remote"), ("peer_address", "remote"),
+        ):
+            value = params.get(field)
+            parsed = _parse_ip_port(value) if isinstance(value, str) else None
+            if parsed and side == "local":
+                local = local or parsed
+                evidence.append(field)
+            elif parsed:
+                remote = remote or parsed
+                evidence.append(field)
+    if local:
+        candidate.src_ip, candidate.src_port = local
+    if remote:
+        candidate.dst_ip, candidate.dst_port = remote
+    candidate.network = "udp"
+    candidate.protocol = "QUIC" if candidate.protocol == "QUIC" else "UDP"
+    candidate.endpoint_provenance = {
+        "event_fields": sorted(set(evidence)),
+    }
+    return candidate if _complete_five_tuple(candidate) else None
+
+
+def _source_network(source_type: int) -> str:
+    if source_type in _TCP_SIBLING_TYPES:
+        return "tcp"
+    if source_type in _UDP_SIBLING_TYPES:
+        return "udp"
+    return ""
+
+
+def _apply_unique_endpoint_candidate(ft, candidates) -> int | None:
+    grouped: dict[tuple, list[tuple[int, int, object, str]]] = {}
+    for item in candidates:
+        source_id, source_type, candidate, selection = item
+        key = (
+            (candidate.network or "").lower(),
+            candidate.src_ip, candidate.src_port,
+            candidate.dst_ip, candidate.dst_port,
+        )
+        grouped.setdefault(key, []).append(
+            (source_id, source_type, candidate, selection)
+        )
+    if len(grouped) != 1:
+        return None
+    aliases = next(iter(grouped.values()))
+    source_id, source_type, candidate, selection = min(
+        aliases, key=lambda item: item[0],
+    )
+    ft.src_ip, ft.src_port = candidate.src_ip, candidate.src_port
+    ft.dst_ip, ft.dst_port = candidate.dst_ip, candidate.dst_port
+    ft.network = candidate.network
+    if not ft.protocol or ft.protocol in {"HTTP", "HTTPS"}:
+        ft.protocol = candidate.protocol
+    ft.endpoint_provenance = {
+        "source_id": source_id,
+        "source_type": SOURCE_TYPE_NAMES.get(source_type, str(source_type)),
+        "selection": selection,
+        "evidence": candidate.endpoint_provenance.get("event_fields", []),
+        "alias_source_ids": sorted(item[0] for item in aliases),
+    }
+    return source_id
 
 
 def _find_parent_id(entry) -> int | None:
@@ -360,7 +522,17 @@ _SIBLING_TRANSPORT_TYPES = {
     SRC_SOCKS_CONNECT_JOB, SRC_HTTP_PROXY_CONNECT_JOB,
     SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB, SRC_HTTP2_SESSION, SRC_QUIC_SESSION,
     SRC_PROXY_CLIENT_SOCKET, SRC_TCP_STREAM_ATTEMPT, SRC_TLS_STREAM_ATTEMPT,
+    SRC_UDP_SOCKET,
 }
+
+_TCP_SIBLING_TYPES = {
+    SRC_TRANSPORT_CONNECT_JOB, SRC_SOCKET, SRC_SSL_CONNECT_JOB,
+    SRC_SOCKS_CONNECT_JOB, SRC_HTTP_PROXY_CONNECT_JOB,
+    SRC_WEB_SOCKET_TRANSPORT_CONNECT_JOB, SRC_HTTP2_SESSION,
+    SRC_PROXY_CLIENT_SOCKET, SRC_TCP_STREAM_ATTEMPT, SRC_TLS_STREAM_ATTEMPT,
+}
+
+_UDP_SIBLING_TYPES = {SRC_QUIC_SESSION, SRC_UDP_SOCKET}
 
 
 def _merge_alias_connections(

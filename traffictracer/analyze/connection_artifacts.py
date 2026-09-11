@@ -293,6 +293,8 @@ def _connection_record(
         record["terminal"] = terminal
     if flow.netlog_source_id is not None:
         record["netlog_source_id"] = flow.netlog_source_id
+    if flow.endpoint_provenance:
+        record["endpoint_provenance"] = dict(flow.endpoint_provenance)
     if flow.conn_id:
         record["mihomo_connection_id"] = flow.conn_id
     if flow.outer_conn_id:

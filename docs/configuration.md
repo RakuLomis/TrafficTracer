@@ -65,7 +65,7 @@ YouTube video targets can request best-effort playback observation:
 - domain: youtube.com
   url: https://www.youtube.com/watch?v=VIDEO_ID
   page_type: youtube-video-play-1
-  wait: 35
+  wait: 50
   traffic_type: all
   playback:
     provider: youtube

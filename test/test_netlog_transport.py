@@ -24,6 +24,9 @@ def _make_netlog(events: list[dict]) -> str:
                 "HOST_RESOLVER_IMPL_JOB": 4, "DNS_TRANSACTION": 25,
                 "UDP_SOCKET": 19, "QUIC_SESSION": 13,
             },
+            "logEventTypes": {
+                "UDP_CONNECT": 94, "UDP_LOCAL_ADDRESS": 95,
+            },
             "logEventPhase": {"PHASE_BEGIN": 0, "PHASE_END": 1, "PHASE_NONE": 2},
         },
         "events": events,
@@ -393,6 +396,61 @@ def test_quic_chain_uses_downstream_udp_socket_endpoints():
     assert connections[0].network == "udp"
     assert connections[0].src_port == 44000
     assert connections[0].dst_ip == "198.18.0.99"
+
+
+def test_quic_udp_endpoint_pair_is_not_mixed_with_later_tcp_fallback():
+    """Regression for the 59557 UDP / 59078 TCP mixed-port capture."""
+    url = "https://rr2.example.googlevideo.com/videoplayback"
+    events = [
+        {"time": "1000", "type": 404, "phase": 0,
+         "source": {"id": 100, "type": 1},
+         "params": {"url": url,
+                    "source_dependency": {"id": 1931, "type": 13}}},
+        {"time": "990", "type": 322, "phase": 0,
+         "source": {"id": 1931, "type": 13},
+         "params": {"host": "rr2.example.googlevideo.com", "port": 443,
+                    "source_dependency": {"id": 1916, "type": 16}}},
+        {"time": "991", "type": 322, "phase": 0,
+         "source": {"id": 1929, "type": 32},
+         "params": {"source_dependency": {"id": 1916, "type": 16}}},
+        {"time": "992", "type": 94, "phase": 0,
+         "source": {"id": 1930, "type": 19},
+         "params": {"address": "198.18.0.28:443",
+                    "source_dependency": {"id": 1929, "type": 32}}},
+        {"time": "993", "type": 95, "phase": 2,
+         "source": {"id": 1930, "type": 19},
+         "params": {"address": "198.18.0.1:59557"}},
+        # The fallback starts after QUIC. It is evidence for another TCP
+        # attempt and must never donate only its local port to source 1931.
+        {"time": "5000", "type": 50, "phase": 2,
+         "source": {"id": 2093, "type": 10},
+         "params": {"local_address": "198.18.0.1:59078",
+                    "remote_address": "198.18.0.28:443",
+                    "source_dependency": {"id": 1916, "type": 16}}},
+    ]
+    path = _make_netlog(events)
+    request = AttributedRequest("quic.mixed", "T", "F", url, "Media", 100.0)
+    try:
+        connections = trace_transport([request], path)
+    finally:
+        os.unlink(path)
+
+    assert len(connections) == 1
+    connection = connections[0]
+    assert connection.netlog_source_id == 1931
+    assert connection.network == "udp"
+    assert connection.application_protocol == "h3"
+    assert connection.src_ip == "198.18.0.1"
+    assert connection.src_port == 59557
+    assert connection.dst_ip == "198.18.0.28"
+    assert connection.dst_port == 443
+    assert connection.endpoint_provenance == {
+        "source_id": 1930,
+        "source_type": "UDP_SOCKET",
+        "selection": "quic_dependency_udp_socket",
+        "evidence": ["UDP_CONNECT.address", "UDP_LOCAL_ADDRESS.address"],
+        "alias_source_ids": [1930],
+    }
 
 
 def test_h2_socket_is_not_overwritten_by_downstream_udp_dependency():

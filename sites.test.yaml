@@ -8,7 +8,8 @@ sites:
 
   - domain: youtube.com
     url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
-    wait: 35
+    # Allow cold-profile startup and buffering before the 25 s quality goal.
+    wait: 50
     traffic_type: all
     page_type: youtube-video-play-1
     playback:

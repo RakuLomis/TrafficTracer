@@ -65,6 +65,13 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
         terminal=FlowTerminal("dial_error", "dial", "timeout", 0, 0, 123),
         match_reason="multiple_candidates",
         match_evidence=["top_score_tie"],
+        endpoint_provenance={
+            "source_id": 19,
+            "source_type": "UDP_SOCKET",
+            "selection": "quic_dependency_udp_socket",
+            "evidence": ["UDP_CONNECT.address", "UDP_LOCAL_ADDRESS.address"],
+            "alias_source_ids": [19],
+        },
     )
     flow.match_candidates.extend(
         {
@@ -90,6 +97,7 @@ def test_requests_are_separate_from_one_ambiguous_shared_connection(tmp_path):
 
     assert len(connections) == 1
     assert connections[0]["netlog_source_id"] == 17
+    assert connections[0]["endpoint_provenance"]["source_id"] == 19
     assert connections[0]["terminal"]["status"] == "dial_error"
     assert connections[0]["terminal"]["stage"] == "dial"
     assert connections[0]["connection_id"] == CONNECTION_ID

@@ -112,6 +112,10 @@ class FiveTuple:
     # TCP fallback; the socket carrying the tuple remains authoritative.
     network: str | None = None  # "tcp" or "udp"
     attempted_protocols: list[str] = field(default_factory=list)
+    # Optional audit evidence for endpoint recovery performed after the
+    # dependency walk. Keeping the complete pair and its source together
+    # prevents a later TCP fallback from donating one endpoint to QUIC.
+    endpoint_provenance: dict[str, Any] = field(default_factory=dict)
 
     def __str__(self) -> str:
         src = f"{self.src_ip or '*'}:{self.src_port or '*'}"

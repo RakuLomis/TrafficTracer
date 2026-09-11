@@ -96,6 +96,7 @@ EVT_DOWNLOAD_FILE_OPENED = 47
 EVT_DOWNLOAD_ITEM_ACTIVE = 48
 EVT_FILE_STREAM_OPEN = 49
 EVT_SSL_CONNECT = 50
+EVT_UDP_LOCAL_ADDRESS = 51
 
 # ---------------------------------------------------------------------------
 # Name tables (for display / reverse lookup)
@@ -195,6 +196,7 @@ EVENT_TYPE_NAMES = {
     EVT_DOWNLOAD_ITEM_ACTIVE: "DOWNLOAD_ITEM_ACTIVE",
     EVT_FILE_STREAM_OPEN: "FILE_STREAM_OPEN",
     EVT_SSL_CONNECT: "SSL_CONNECT",
+    EVT_UDP_LOCAL_ADDRESS: "UDP_LOCAL_ADDRESS",
 }
 
 # Phase enum from net/log/net_log.h

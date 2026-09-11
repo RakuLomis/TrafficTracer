@@ -173,6 +173,7 @@ def correlate_v2(
             last_observed=tc.last_observed,
             first_observed_utc=tc.first_observed_utc,
             last_observed_utc=tc.last_observed_utc,
+            endpoint_provenance=dict(tc.endpoint_provenance),
             terminal=_terminal_from_close(mconn.close if mconn else None),
             outer_conn_id=(
                 mconn.proxy_dial.outer_conn_id

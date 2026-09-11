@@ -129,6 +129,7 @@ Cache hints do not override stronger socket evidence. If NetLog proves that a re
 - request IDs, a primary URL, and all associated URLs;
 - sharing and multiplexing flags;
 - attribution scope and evidence;
+- endpoint provenance when NetLog endpoint recovery selected a related socket;
 - match method, score, ambiguity, and unmatched reason;
 - packet-evidence status.
 
@@ -147,6 +148,14 @@ protocol, source IP, source port, destination IP, destination port
 For direct traffic, the post-proxy destination normally remains the original destination while the source reflects the physical socket. For proxied traffic, the post-proxy destination is typically the selected proxy server. For rejected, failed-before-socket, or local/not-applicable traffic, no outbound socket exists and `post_flow` is correctly `null`.
 
 The query API accepts a pre-proxy tuple and returns all matching logical flows. It does not promise one result because reused or ambiguous observations can produce multiple candidates.
+
+Endpoint recovery is pair-atomic and transport-compatible. In particular, a
+failed QUIC attempt can coexist with a later TCP fallback, but the QUIC record
+may only use the complete local/remote pair from its uniquely related UDP
+socket. It cannot borrow a local port from the TCP branch. When recovery is
+used, `endpoint_provenance` records the NetLog source ID and type, selection
+rule, event fields, and equivalent alias source IDs. If the evidence is not
+unique, the endpoint remains unresolved.
 
 ## Post-flow disposition
 
@@ -173,7 +182,7 @@ Only `unexpected_missing` is counted as an unexplained egress gap.
 | `capture_unattributed` | Seen in capture or Mihomo evidence without enough browser identity. |
 | `local_internal` | Local control, loopback, or internal traffic. |
 
-Coverage for the page should be evaluated on `page_attributed` traffic. Background and capture-unattributed records remain available for auditing but must not inflate page coverage.
+Coverage for the page should be evaluated on `page_attributed` traffic. Background and capture-unattributed records remain available for auditing but must not inflate page coverage. `quality.page_attributed` and the backward-compatible flattened quality fields therefore exclude browser-background connections and their PCAP extracts. Their correlation and extraction status is reported separately under `quality.capture_global.browser_background` and `coverage.capture_global.browser_background_transport_connections`.
 
 ## Shared transports
 

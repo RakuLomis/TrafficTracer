@@ -100,6 +100,7 @@ class TransportConnection:
     application_protocol: str = "unknown"
     first_observed_utc: float | None = None
     last_observed_utc: float | None = None
+    endpoint_provenance: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,7 @@ class CorrelatedFlowV2:
     last_observed: float | None = None
     first_observed_utc: float | None = None
     last_observed_utc: float | None = None
+    endpoint_provenance: dict = field(default_factory=dict)
 
 
 @dataclass

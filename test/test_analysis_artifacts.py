@@ -513,6 +513,70 @@ def test_applicable_missing_post_pcap_remains_a_quality_failure():
     ]
 
 
+def test_browser_background_attempt_is_diagnostic_not_page_quality_loss():
+    page_id = "conn-11111111111111111111111111111111"
+    background_id = "conn-22222222222222222222222222222222"
+    page = {
+        "connection_id": page_id,
+        "attribution_scope": "page_attributed",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": {"network": "tcp"},
+        "shared": False,
+    }
+    background = {
+        "connection_id": background_id,
+        "attribution_scope": "browser_background",
+        "match": {
+            "status": "ambiguous", "method": "host_time",
+            "unmatched_reason": "multiple_candidates",
+        },
+        "post_flow": None,
+        "shared": False,
+    }
+    pcap = {
+        "split_mode": "unique_connections",
+        "connections": [
+            {
+                "connection_id": page_id,
+                "pre_proxy": {"status": "success"},
+                "post_proxy": {"status": "success"},
+            },
+            {
+                "connection_id": background_id,
+                "pre_proxy": {"status": "empty"},
+                "post_proxy": {"status": "not_requested"},
+            },
+        ],
+    }
+
+    quality = analysis_quality([], [page, background], pcap)
+    assert quality["transport_correlation"] == {
+        "total": 1, "matched": 1, "ambiguous": 0, "unmatched": 0,
+    }
+    assert quality["pcap_extraction"]["total"] == 1
+    assert quality["pcap_extraction"]["complete_pairs"] == 1
+    assert quality["capture_global"]["browser_background"][
+        "transport_correlation"
+    ]["ambiguous"] == 1
+
+    warnings = _quality_warnings([], [page, background], pcap)
+    assert [(item["code"], item["scope"], item["severity"]) for item in warnings] == [
+        ("BROWSER_BACKGROUND_TRANSPORT_AMBIGUOUS", "capture_global", "info"),
+        ("BROWSER_BACKGROUND_PCAP_PRE_EMPTY", "capture_global", "info"),
+    ]
+    assert _analysis_integrity_state(
+        {"status": "passed"}, warnings, scope="page_attributed",
+    ) == "passed"
+
+    coverage = layered_coverage([], [page, background], [page, background])
+    assert coverage["transport_connections"] == {
+        "total": 1, "matched": 1, "ambiguous": 0, "unmatched": 0,
+    }
+    assert coverage["capture_global"]["browser_background_transport_connections"] == {
+        "total": 1, "matched": 0, "ambiguous": 1, "unmatched": 0,
+    }
+
+
 
 def test_rejected_egress_is_conserved_as_not_applicable_in_layered_coverage():
     connection = {

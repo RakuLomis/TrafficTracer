@@ -217,9 +217,16 @@ def layered_coverage(
 ) -> dict:
     """Recompute conservative layer-specific coverage from persisted indexes."""
     browser = _request_partition(request_records)
+    page_connections, background_connections = _scoped_connection_records(
+        connection_records,
+    )
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
-        for record in connection_records
+        for record in page_connections
+    )
+    background_transport = _partition(
+        record.get("match", {}).get("status", "unmatched")
+        for record in background_connections
     )
     reasons: Counter[str] = Counter()
     for record in request_records:
@@ -233,7 +240,7 @@ def layered_coverage(
                 attribution.get("unmatched_reason"),
                 "request_unmatched",
             )] += 1
-    for record in connection_records:
+    for record in page_connections:
         match = record.get("match", {})
         if match.get("status") != "matched":
             reasons[_normalized_reason(
@@ -243,7 +250,7 @@ def layered_coverage(
 
     page_reasons = reasons.copy()
     page_logical_records = [
-        record for record in connection_records
+        record for record in page_connections
         if record.get("post_flow") is not None
         or bool(record.get("mihomo_connection_id"))
         or record.get("terminal") is not None
@@ -288,6 +295,7 @@ def layered_coverage(
         },
         "capture_global": {
             "core_logical_flows": global_core,
+            "browser_background_transport_connections": background_transport,
             "attribution_scopes": dict(sorted(attribution_scopes.items())),
             "unmatched_reasons": dict(sorted(global_reasons.items())),
         },
@@ -1000,9 +1008,12 @@ def analysis_quality(
     """Return conservative, denominator-preserving scoped quality metrics."""
     browser = _request_partition(request_records)
     eligible_requests = browser["total"] - browser["non_network"]
+    page_connections, background_connections = _scoped_connection_records(
+        connection_records,
+    )
     local_connection_ids = _local_connection_ids(request_records, connection_records)
     applicable_connections = [
-        record for record in connection_records
+        record for record in page_connections
         if record.get("connection_id") not in local_connection_ids
     ]
     socket_applicable_connections = [
@@ -1014,7 +1025,7 @@ def analysis_quality(
     )
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
-        for record in connection_records
+        for record in page_connections
     )
 
     established = sum(
@@ -1031,7 +1042,9 @@ def analysis_quality(
     )
 
     split_mode = pcap_payload.get("split_mode", "none")
-    pcap_connections = list(pcap_payload.get("connections", []))
+    pcap_connections = _scoped_pcap_connections(
+        pcap_payload, page_connections, connection_records,
+    )
     post_applicable_pcaps = [
         item for item in pcap_connections
         if item.get("post_proxy", {}).get("status")
@@ -1067,7 +1080,7 @@ def analysis_quality(
         },
         "transport_correlation": transport,
         "egress_establishment": {
-            "total": len(connection_records),
+            "total": len(page_connections),
             "established": established,
             "failed_before_socket": failed_before_socket,
             "unavailable": unavailable,
@@ -1098,7 +1111,24 @@ def analysis_quality(
         id_field="conn_id",
     )
     global_logical_flows["errors"] = core_error_count
-    capture_global = {"logical_flows": global_logical_flows}
+    capture_global = {
+        "logical_flows": global_logical_flows,
+        "browser_background": {
+            "transport_correlation": _partition(
+                record.get("match", {}).get("status", "unmatched")
+                for record in background_connections
+            ),
+            "pcap_extraction": _pcap_quality(
+                (
+                    _scoped_pcap_connections(
+                        pcap_payload, background_connections, connection_records,
+                    )
+                    if background_connections else []
+                ),
+                split_mode,
+            ),
+        },
+    }
     # Preserve the original flattened page keys for older UI readers.
     return {
         **page_quality,
@@ -1224,8 +1254,11 @@ def _network_outcome_summary(
     local_core_ids: set[str],
 ) -> dict:
     local_connections = _local_connection_ids(requests, connections)
+    page_connections, _background_connections = _scoped_connection_records(
+        connections,
+    )
     page = _network_scope_summary(
-        connections, local_ids=local_connections, id_field="connection_id",
+        page_connections, local_ids=local_connections, id_field="connection_id",
     )
     page["failed_requests"] = sum(
         bool(record.get("failure", {}).get("failed")) for record in requests
@@ -1243,9 +1276,12 @@ def _quality_warnings(
     target_url: str = "",
 ) -> list[dict]:
     warnings: list[dict] = []
+    page_connections, background_connections = _scoped_connection_records(
+        connection_records,
+    )
     local_connection_ids = _local_connection_ids(request_records, connection_records)
     applicable_connections = [
-        record for record in connection_records
+        record for record in page_connections
         if record.get("connection_id") not in local_connection_ids
     ]
     socket_applicable_connections = [
@@ -1269,7 +1305,7 @@ def _quality_warnings(
         ))
     transport = _partition(
         record.get("match", {}).get("status", "unmatched")
-        for record in connection_records
+        for record in page_connections
     )
     if transport["unmatched"]:
         warnings.append(_warning(
@@ -1317,7 +1353,9 @@ def _quality_warnings(
             scope="page_attributed",
         ))
     if pcap_payload.get("split_mode") == "unique_connections":
-        pcap_connections = pcap_payload.get("connections", [])
+        pcap_connections = _scoped_pcap_connections(
+            pcap_payload, page_connections, connection_records,
+        )
         pre_missing = sum(
             item.get("pre_proxy", {}).get("status") != "success"
             for item in pcap_connections
@@ -1371,7 +1409,99 @@ def _quality_warnings(
             scope="page_attributed",
             severity="info",
         ))
+    background_transport = _partition(
+        record.get("match", {}).get("status", "unmatched")
+        for record in background_connections
+    )
+    for status, code in (
+        ("unmatched", "BROWSER_BACKGROUND_TRANSPORT_UNMATCHED"),
+        ("ambiguous", "BROWSER_BACKGROUND_TRANSPORT_AMBIGUOUS"),
+    ):
+        if background_transport[status]:
+            warnings.append(_warning(
+                code,
+                background_transport[status],
+                "Browser-background transport attempts are retained as capture diagnostics.",
+                scope="capture_global", severity="info",
+            ))
+    if (
+        background_connections
+        and pcap_payload.get("split_mode") == "unique_connections"
+    ):
+        background_pcaps = _scoped_pcap_connections(
+            pcap_payload, background_connections, connection_records,
+        )
+        background_pre_missing = sum(
+            item.get("pre_proxy", {}).get("status") != "success"
+            for item in background_pcaps
+        )
+        if background_pre_missing:
+            warnings.append(_warning(
+                "BROWSER_BACKGROUND_PCAP_PRE_EMPTY",
+                background_pre_missing,
+                "Browser-background attempts have empty or failed pre-proxy extracts.",
+                scope="capture_global", severity="info",
+            ))
     return warnings
+
+
+def _scoped_connection_records(
+    connection_records: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """Split page and background transports, retaining legacy behavior."""
+    if not any("attribution_scope" in record for record in connection_records):
+        return list(connection_records), []
+    return (
+        [
+            record for record in connection_records
+            if record.get("attribution_scope") == "page_attributed"
+        ],
+        [
+            record for record in connection_records
+            if record.get("attribution_scope") == "browser_background"
+        ],
+    )
+
+
+def _scoped_pcap_connections(
+    pcap_payload: dict,
+    selected_connections: list[dict],
+    all_connections: list[dict],
+) -> list[dict]:
+    pcaps = list(pcap_payload.get("connections", []))
+    if not any("attribution_scope" in record for record in all_connections):
+        return pcaps
+    selected_ids = {
+        record.get("connection_id") for record in selected_connections
+        if record.get("connection_id")
+    }
+    return [item for item in pcaps if item.get("connection_id") in selected_ids]
+
+
+def _pcap_quality(pcap_connections: list[dict], split_mode: str) -> dict:
+    applicable = [
+        item for item in pcap_connections
+        if item.get("post_proxy", {}).get("status")
+        not in {"not_applicable", "not_requested"}
+    ]
+    return {
+        "requested": split_mode == "unique_connections",
+        "total": len(pcap_connections),
+        "pre_success": sum(
+            item.get("pre_proxy", {}).get("status") == "success"
+            for item in pcap_connections
+        ),
+        "post_applicable": len(applicable),
+        "post_success": sum(
+            item.get("post_proxy", {}).get("status") == "success"
+            for item in applicable
+        ),
+        "complete_pairs": sum(
+            item.get("pre_proxy", {}).get("status") == "success"
+            and item.get("post_proxy", {}).get("status") == "success"
+            for item in applicable
+        ),
+    }
 
 
 def _local_connection_ids(

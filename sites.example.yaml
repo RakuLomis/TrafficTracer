@@ -28,7 +28,7 @@ sites:
     wait_load_timeout: 30
   - domain: youtube.com
     url: "https://www.youtube.com/watch?v=VIDEO_ID"
-    wait: 35
+    wait: 50
     traffic_type: all
     playback:
       provider: youtube
