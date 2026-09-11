@@ -3,6 +3,7 @@
 from traffictracer.analyze.request_observation import (
     request_can_have_transport,
     request_network_observation,
+    request_targets_loopback,
 )
 from traffictracer.models import AttributedRequest
 
@@ -69,3 +70,11 @@ def test_response_endpoint_remains_network_eligible():
 
     assert request_network_observation(request)[0] == "network"
     assert request_can_have_transport(request)
+
+
+def test_only_explicit_loopback_is_classified_as_local():
+    assert request_targets_loopback("http://localhost:16422/client")
+    assert request_targets_loopback("http://[::1]:16422/client")
+    assert request_targets_loopback("https://example.test/", "127.0.0.1")
+    assert not request_targets_loopback("http://192.168.5.10/client")
+    assert not request_targets_loopback("https://example.test/", "10.0.0.1")

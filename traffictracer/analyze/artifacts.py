@@ -46,6 +46,7 @@ def persist_analysis_artifacts(
     session = Path(session_dir)
     mappings = _load_mappings(session)
     trace_snapshot = _trace_snapshot_summary(session)
+    capture_contexts = _capture_contexts(session)
 
     pre_counts = Counter(mapping.pre_flow.key for mapping in mappings)
     outer_counts = Counter(
@@ -165,6 +166,9 @@ def persist_analysis_artifacts(
             request_records,
         ),
         "trace_snapshot": trace_snapshot,
+        "local_runtime": local_runtime_health(
+            capture_contexts, trace_snapshot,
+        ),
         "storage": _storage_summary(session, results),
         "carrier_bindings": _carrier_binding_summary(items),
         "proxy_protocol": _capture_protocol_summary(session),
@@ -712,6 +716,106 @@ def _trace_snapshot_summary(session: Path) -> dict:
             (item.get("max_late_delay_ms", 0.0) for item in traces), default=0.0,
         ),
         "traces": traces,
+    }
+
+
+def local_runtime_health(contexts: list[dict], trace_snapshot: dict) -> dict:
+    """Summarize only durable evidence about the local capture runtime."""
+    checks: dict[str, dict] = {}
+
+    browsers = [
+        context.get("browser_lifecycle")
+        for context in contexts
+        if isinstance(context.get("browser_lifecycle"), dict)
+    ]
+    if browsers:
+        statuses = Counter(str(item.get("status") or "unknown") for item in browsers)
+        if statuses.get("unexpected_exit"):
+            state, reason = "failed", "BROWSER_UNEXPECTED_EXIT"
+        elif statuses.get("running") or statuses.get("unknown"):
+            state, reason = "indeterminate", "BROWSER_EXIT_UNCONFIRMED"
+        elif sum(statuses.values()) == statuses.get("expected_exit", 0):
+            state, reason = "passed", None
+        else:
+            state, reason = "indeterminate", "BROWSER_LIFECYCLE_UNKNOWN"
+        checks["browser_lifecycle"] = {
+            "state": state,
+            "reason": reason,
+            "statuses": dict(sorted(statuses.items())),
+            "exit_codes": dict(sorted(Counter(
+                str(item.get("exit_code")) for item in browsers
+            ).items())),
+        }
+    else:
+        checks["browser_lifecycle"] = {
+            "state": "not_applicable", "reason": "BROWSER_EVIDENCE_UNAVAILABLE",
+        }
+
+    coverage = [
+        context.get("packet_coverage")
+        for context in contexts
+        if isinstance(context.get("packet_coverage"), dict)
+    ]
+    if coverage:
+        statuses = Counter(str(item.get("status") or "unknown") for item in coverage)
+        if statuses.get("failed"):
+            state, reason = "failed", "PACKET_CAPTURE_INCOMPLETE"
+        elif statuses.get("in_progress") or statuses.get("unknown"):
+            state, reason = "indeterminate", "PACKET_CAPTURE_UNCONFIRMED"
+        elif sum(statuses.values()) == statuses.get("passed", 0):
+            state, reason = "passed", None
+        else:
+            state, reason = "indeterminate", "PACKET_CAPTURE_STATUS_UNKNOWN"
+        checks["packet_capture"] = {
+            "state": state,
+            "reason": reason,
+            "statuses": dict(sorted(statuses.items())),
+        }
+    else:
+        checks["packet_capture"] = {
+            "state": "not_applicable", "reason": "PACKET_CAPTURE_NOT_REQUESTED",
+        }
+
+    traces = trace_snapshot.get("traces", [])
+    if traces:
+        bounded = all(item.get("source") == "mihomo_barrier" for item in traces)
+        verified = all(item.get("barrier_verified") is True for item in traces)
+        if bounded and verified:
+            state, reason = "passed", None
+        elif bounded:
+            state, reason = "failed", "TRACE_BARRIER_UNVERIFIED"
+        else:
+            state, reason = "not_applicable", "LEGACY_UNBOUNDED_TRACE"
+        checks["trace_boundary"] = {
+            "state": state, "reason": reason,
+            "trace_count": len(traces), "bounded": bounded,
+            "barrier_verified": verified,
+        }
+    else:
+        checks["trace_boundary"] = {
+            "state": "not_applicable", "reason": "TRACE_EVIDENCE_UNAVAILABLE",
+            "trace_count": 0,
+        }
+
+    states = [item["state"] for item in checks.values()]
+    if "failed" in states:
+        state = "failed"
+    elif "indeterminate" in states:
+        state = "indeterminate"
+    elif "passed" in states:
+        state = "passed"
+    else:
+        state = "not_applicable"
+    reason = next(
+        (item.get("reason") for item in checks.values() if item["state"] == state),
+        None,
+    ) if state in {"failed", "indeterminate"} else None
+    return {
+        "state": state,
+        "reason": reason,
+        "origin": "local_runtime",
+        "retryable": False,
+        "checks": checks,
     }
 
 

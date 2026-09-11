@@ -11,6 +11,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 ## Technical reference
 
 - [Profile and proxy pipelines](profile-proxy-pipelines.md): queue semantics, ownership, barriers, resume behavior, and provenance.
+- [Local quality and failure provenance](complete/local-quality-provenance.md): local-runtime evidence, recovered navigation, resource-health exclusions, retry policy, and ambiguity boundaries.
 - [Profile activation hang repair](complete/profile-activation-hang-repair.md): notification isolation, recovery regression, and outstanding desktop acceptance checks.
 
 - [Architecture](architecture.md): component ownership, process boundaries, lifecycle, and protocol pins.
@@ -44,4 +45,4 @@ The documentation follows these rules:
 5. Runtime behavior takes precedence over historical design notes. Obsolete implementation plans are not kept in the active documentation tree.
 6. Examples must not contain real proxy credentials, subscription URLs, controller secrets, captures, or user-specific paths.
 
-Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.21 on Linux x86-64. Historical release notes retain their original versions. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.
+Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.25 on Linux x86-64. Historical release notes retain their original versions. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.

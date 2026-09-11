@@ -14,6 +14,7 @@ from traffictracer.capture.quiescence import (
 from traffictracer.jobs.batch import SerialBatchJob
 from traffictracer.jobs.batch_models import (
     ApplicationRetryPolicy,
+    BatchApplicationOutcome,
     BatchChildState,
     BatchJobSpec,
     BatchManifest,
@@ -277,6 +278,54 @@ def test_generic_navigation_failure_gets_one_bounded_retry(
     assert len(calls) == 2
     assert child.attempts[0].application_outcome.reason == reason
     assert child.attempts[1].automatic_retry is True
+
+
+def test_explicit_non_retryable_outcome_overrides_legacy_reason(tmp_path):
+    base = _spec(tmp_path, count=1)
+    spec = replace(
+        base,
+        application_retry=ApplicationRetryPolicy(enabled=True, max_retries=1),
+    )
+    session_id = "5027aee9-c6e4-41de-8625-7ea0869a3307"
+    calls = []
+
+    def factory(child, progress, token):
+        calls.append(child.job_id)
+        return _Runnable(lambda: CaptureJobResult(
+            child.job_id, JobState.COMPLETED, session_id=session_id,
+        ))
+
+    job, result, _ = _execute(
+        spec,
+        factory,
+        outcome_resolver=lambda value: {
+            "state": "degraded",
+            "reason": "CRITICAL_RESOURCE_FAILURE_BURST",
+            "origin": "browser_policy",
+            "retryable": False,
+        },
+    )
+
+    child = BatchManifest.load(job.manifest_path).children[0]
+    assert result.state is JobState.COMPLETED
+    assert len(calls) == 1
+    assert child.attempts[0].application_outcome.origin == "browser_policy"
+    assert child.attempts[0].application_outcome.retryable is False
+
+
+def test_explicit_retryable_outcome_is_preserved_and_retried(tmp_path):
+    job = SerialBatchJob.__new__(SerialBatchJob)
+    job.spec = replace(
+        _spec(tmp_path, count=1),
+        application_retry=ApplicationRetryPolicy(enabled=True, max_retries=1),
+    )
+    outcome = BatchApplicationOutcome(
+        "degraded", "CRITICAL_RESOURCE_FAILURE_BURST",
+        "remote_network", True,
+    )
+    assert job._should_retry_application(
+        job.spec.targets[0], outcome, automatic_retries=0,
+    )
 
 
 

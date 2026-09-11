@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3, 4, 5, 6, 7] },
+    "schema_version": { "enum": [1, 2, 3, 4, 5, 6, 7, 8] },
     "pipeline_id": { "$ref": "#/$defs/uuid" },
     "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_degraded", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
     "stage": { "enum": ["queued", "materializing", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "capture_wave", "analysis_wave", "checkpoint", "restoring", "finished"] },
@@ -35,7 +35,7 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "schema_version": { "const": 7 } }, "required": ["schema_version"] },
+      "if": { "properties": { "schema_version": { "enum": [7, 8] } }, "required": ["schema_version"] },
       "then": {
         "required": ["repetitions_per_candidate", "schedule"],
         "properties": {
@@ -97,6 +97,8 @@
         "final_url": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
         "state": { "enum": ["degraded", "failed", "indeterminate"] },
         "reason": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "origin": { "oneOf": [{ "type": "string" }, { "type": "null" }] },
+        "retryable": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
         "primary_content_millis": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
         "desired_primary_seconds": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] }
       }
@@ -106,6 +108,7 @@
       "required": ["sessions_total", "capture_integrity", "correlation", "application", "application_issues"],
       "properties": {
         "sessions_total": { "type": "integer", "minimum": 0 },
+        "local_runtime": { "$ref": "#/$defs/qualityPlane" },
         "capture_integrity": { "$ref": "#/$defs/qualityPlane" },
         "correlation": { "$ref": "#/$defs/qualityPlane" },
         "application": { "$ref": "#/$defs/qualityPlane" },

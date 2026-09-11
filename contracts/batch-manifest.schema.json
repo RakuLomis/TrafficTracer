@@ -206,6 +206,12 @@
                 "state": { "enum": ["passed", "degraded", "failed", "indeterminate"] },
                 "reason": {
                   "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+                },
+                "origin": {
+                  "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+                },
+                "retryable": {
+                  "oneOf": [{ "type": "boolean" }, { "type": "null" }]
                 }
               }
             }

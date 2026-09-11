@@ -499,6 +499,8 @@ def _request_records(
                         "evidence": list(resolution.evidence),
                         **({"unmatched_reason": resolution.unmatched_reason}
                            if resolution.unmatched_reason else {}),
+                        **({"origin": "evidence_limit"}
+                           if resolution.status == "ambiguous" else {}),
                     }
                     if connection_id or resolution.status == "ambiguous"
                     else {
@@ -506,6 +508,7 @@ def _request_records(
                         "method": resolution.method,
                         "confidence": 0.0,
                         "evidence": observation_evidence,
+                        "origin": _unmatched_request_origin(network_observation),
                         "unmatched_reason": _request_unmatched_reason(
                             request, network_observation, resolution.unmatched_reason,
                         ),
@@ -546,6 +549,17 @@ def _request_unmatched_reason(
     if request.response_status > 0:
         return "response_transport_unbound"
     return "no_response"
+
+
+def _unmatched_request_origin(network_observation: str) -> str:
+    if network_observation == "local_endpoint":
+        return "local_expected"
+    if network_observation in {
+        "disk_cache", "service_worker", "prefetch_cache",
+        "browser_internal", "not_dispatched",
+    }:
+        return "browser_activity"
+    return "evidence_limit"
 
 
 def _flow_payload(flow: FlowTuple | None, scope: str) -> dict:

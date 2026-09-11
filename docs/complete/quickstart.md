@@ -286,7 +286,7 @@ See [Sessions and correlation data](../data-model.md) for the full semantics.
 
 ## 11. Protocol versions
 
-`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.21 uses:
+`complete/components.lock.yaml` is authoritative. TrafficTracer Complete 1.0.25 uses:
 
 | Contract | Version |
 | --- | ---: |
@@ -298,6 +298,7 @@ See [Sessions and correlation data](../data-model.md) for the full semantics.
 | Request index | 2 |
 | PCAP index | 1 |
 | Batch manifest | 2 |
+| Pipeline manifest | 8 |
 | Mihomo tracing API | 1 |
 | Mihomo event schema | 1 |
 

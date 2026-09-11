@@ -17,6 +17,7 @@ from traffictracer.analyze.artifacts import (
     analysis_quality,
     _target_document_non_network,
     layered_coverage,
+    local_runtime_health,
     persist_analysis_artifacts,
 )
 from traffictracer.contracts import validate_flow
@@ -876,6 +877,75 @@ def test_reanalysis_cannot_hide_failed_packet_coverage(tmp_path):
     assert summary["quality_state"] == "failed"
     assert summary["analysis_integrity"]["page_attributed"]["state"] == "failed"
     assert any(w["code"] == "PACKET_CAPTURE_INCOMPLETE" for w in summary["warnings"])
+
+
+def test_local_runtime_health_passes_confirmed_capture_evidence():
+    health = local_runtime_health([{
+        "browser_lifecycle": {
+            "status": "expected_exit", "exit_code": 0,
+        },
+        "packet_coverage": {"status": "passed"},
+    }], {
+        "traces": [{
+            "source": "mihomo_barrier", "barrier_verified": True,
+        }],
+    })
+
+    assert health["state"] == "passed"
+    assert health["reason"] is None
+    assert health["checks"]["browser_lifecycle"]["state"] == "passed"
+    assert health["checks"]["packet_capture"]["state"] == "passed"
+    assert health["checks"]["trace_boundary"]["state"] == "passed"
+
+
+def test_local_runtime_health_reports_browser_failure_separately():
+    health = local_runtime_health([{
+        "browser_lifecycle": {
+            "status": "unexpected_exit", "exit_code": -11,
+        },
+        "packet_coverage": {"status": "passed"},
+    }], {
+        "traces": [{
+            "source": "mihomo_barrier", "barrier_verified": True,
+        }],
+    })
+
+    assert health["state"] == "failed"
+    assert health["reason"] == "BROWSER_UNEXPECTED_EXIT"
+    assert health["origin"] == "local_runtime"
+    assert health["retryable"] is False
+
+
+def test_local_runtime_health_does_not_claim_legacy_barrier_evidence():
+    health = local_runtime_health([], {
+        "traces": [{
+            "source": "legacy_unbounded", "barrier_verified": True,
+        }],
+    })
+
+    assert health["state"] == "not_applicable"
+    assert health["checks"]["trace_boundary"] == {
+        "state": "not_applicable",
+        "reason": "LEGACY_UNBOUNDED_TRACE",
+        "trace_count": 1,
+        "bounded": False,
+        "barrier_verified": True,
+    }
+
+
+def test_summary_publishes_local_runtime_plane(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "capture-context.json").write_text(json.dumps({
+        "browser_lifecycle": {"status": "expected_exit", "exit_code": 0},
+        "packet_coverage": {"status": "passed"},
+    }))
+
+    artifacts = persist_analysis_artifacts(tmp_path, SESSION_ID)
+    summary = json.loads(artifacts.summary.read_text())
+
+    assert summary["local_runtime"]["state"] == "passed"
+    assert summary["local_runtime"]["checks"]["trace_boundary"]["state"] == "not_applicable"
 
 
 def test_summary_surfaces_bounded_playback_quality(tmp_path):

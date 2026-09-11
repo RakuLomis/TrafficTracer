@@ -285,6 +285,7 @@ def test_cached_request_is_not_counted_as_missing_transport(tmp_path):
     assert request["network_observation"] == "disk_cache"
     assert request["connection_id"] is None
     assert request["attribution"]["unmatched_reason"] == "non_network_response"
+    assert request["attribution"]["origin"] == "browser_activity"
     coverage = layered_coverage([request], [])
     assert coverage["browser_requests"] == {
         "total": 1,

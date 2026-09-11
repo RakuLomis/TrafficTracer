@@ -192,6 +192,7 @@ def test_ambiguous_response_endpoint_is_not_guessed():
     assert resolution.flow is None
     assert resolution.status == "ambiguous"
     assert resolution.unmatched_reason == "ambiguous_response_endpoint"
+    assert "multiple_transport_connections" in resolution.evidence
     assert len(resolution.candidates) == 2
 
 

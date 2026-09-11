@@ -61,6 +61,7 @@ def test_component_lock_matches_python_versions():
         "request_index": version.FLOW_SCHEMA_V2_VERSION,
         "pcap_index": version.PCAP_INDEX_SCHEMA_VERSION,
         "batch_manifest": version.BATCH_MANIFEST_SCHEMA_VERSION,
+        "pipeline_manifest": version.PIPELINE_MANIFEST_SCHEMA_VERSION,
         "mihomo_tracing_api": version.MIHOMO_TRACING_API_VERSION,
         "mihomo_event_schema": version.MIHOMO_EVENT_SCHEMA_VERSION,
     }

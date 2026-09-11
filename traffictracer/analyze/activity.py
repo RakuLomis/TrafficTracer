@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections import Counter
 import json
 from pathlib import Path
-from urllib.parse import urldefrag
+from urllib.parse import urldefrag, urlsplit
 
+from traffictracer.analyze.request_observation import request_targets_loopback
 
 _CRITICAL_RESOURCE_TYPES = frozenset({"script", "stylesheet", "font"})
+_BROWSER_POLICY_MARKERS = ("ERR_ABORTED", "ERR_BLOCKED_BY_", "BLOCKED_REASON")
 _RECOVERED_NAVIGATION_STATES = frozenset({
     "loaded_after_command_timeout",
 })
@@ -64,15 +66,19 @@ def navigation_outcome(cdp: dict) -> dict:
         "recovered": False,
         "completion_evidence": None,
         "failure_class": None,
+        "origin": None,
+        "retryable": False,
     }
     if not cdp:
-        return _outcome(base, "not_applicable", "CDP_EVIDENCE_UNAVAILABLE")
+        return _outcome(base, "not_applicable", "CDP_EVIDENCE_UNAVAILABLE", origin="evidence_limit")
     error_text = str(navigation.get("error_text") or "")
     if error_text:
         base["error_text"] = error_text
         base["failure_class"] = _network_failure_class(error_text)
         return _outcome(
             base, "failed", _main_document_network_reason(base["failure_class"]),
+            origin="remote_network",
+            retryable=base["failure_class"] != "tls_certificate",
         )
 
     documents = [
@@ -112,7 +118,10 @@ def navigation_outcome(cdp: dict) -> dict:
     primary.sort(key=_request_order)
     base["main_document_requests"] = len(primary)
     if not primary:
-        return _outcome(base, "indeterminate", "MAIN_DOCUMENT_NOT_OBSERVED")
+        return _outcome(
+            base, "indeterminate", "MAIN_DOCUMENT_NOT_OBSERVED",
+            origin="evidence_limit", retryable=True,
+        )
 
     status_chain = [
         status for item in primary
@@ -138,31 +147,40 @@ def navigation_outcome(cdp: dict) -> dict:
     base["load_event_observed"] = nav_status in {"loaded", "loaded_after_command_timeout"}
     prior_http_error = any(status >= 400 for status in status_chain[:-1])
     if final_status in {408, 429}:
-        return _outcome(base, "failed", "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR")
+        return _outcome(base, "failed", "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR", origin="remote_site", retryable=True)
     if final_status is not None and final_status >= 500:
-        return _outcome(base, "failed", "MAIN_DOCUMENT_SERVER_ERROR")
+        return _outcome(base, "failed", "MAIN_DOCUMENT_SERVER_ERROR", origin="remote_site", retryable=True)
     if final_status is not None and final_status >= 400:
-        return _outcome(base, "failed", "MAIN_DOCUMENT_HTTP_ERROR")
+        return _outcome(base, "failed", "MAIN_DOCUMENT_HTTP_ERROR", origin="remote_site")
     if bool(final.get("failed")) and not final_status:
         base["failure_class"] = _network_failure_class(base["failure_reason"])
         return _outcome(
             base, "failed", _main_document_network_reason(base["failure_class"]),
+            origin="remote_network",
+            retryable=base["failure_class"] != "tls_certificate",
         )
     if final_status is None or final_status <= 0:
-        return _outcome(base, "indeterminate", "MAIN_DOCUMENT_RESPONSE_UNKNOWN")
+        return _outcome(base, "indeterminate", "MAIN_DOCUMENT_RESPONSE_UNKNOWN", origin="evidence_limit", retryable=True)
     if 300 <= final_status < 400:
-        return _outcome(base, "indeterminate", "MAIN_DOCUMENT_REDIRECT_INCOMPLETE")
+        return _outcome(base, "indeterminate", "MAIN_DOCUMENT_REDIRECT_INCOMPLETE", origin="remote_site")
     if 200 <= final_status < 300:
         base["completion_evidence"] = "main_document_2xx"
         if prior_http_error:
             base["recovered"] = True
-            return _outcome(
-                base, "degraded", "MAIN_DOCUMENT_HTTP_ERROR_RECOVERED",
-            )
+            base["recovery"] = {
+                "observed": True,
+                "kind": "http_status_recovered",
+                "intermediate_statuses": [
+                    status for status in status_chain[:-1] if status >= 400
+                ],
+                "final_status": final_status,
+            }
+            return _outcome(base, "passed", None)
         if nav_status in _RECOVERED_NAVIGATION_STATES:
             base["recovered"] = True
             return _outcome(
                 base, "degraded", "NAVIGATION_TIMEOUT_RECOVERED",
+                origin="local_runtime",
             )
         if nav_status in _UNRESOLVED_NAVIGATION_STATES:
             # Modern SPAs and long-lived pages may intentionally never publish
@@ -187,6 +205,16 @@ def resource_health(cdp: dict, navigation: dict) -> dict:
             "failure_ratio": 0.0,
             "failure_reasons": {},
             "failure_types": {},
+            "failure_origins": {},
+            "failed_hosts": {},
+            "local_observations": {
+                "critical_requests": 0,
+                "unrecovered_failures": 0,
+                "failure_reasons": {},
+                "endpoints": {},
+            },
+            "origin": "evidence_limit",
+            "retryable": False,
             "threshold": {"minimum_failures": 3, "minimum_ratio": 0.20},
         }
 
@@ -200,14 +228,34 @@ def resource_health(cdp: dict, navigation: dict) -> dict:
             or str(item.get("target_id") or "") == target_id
         )
     ]
+    local_requests = [
+        item for item in requests
+        if request_targets_loopback(item.get("url"), item.get("remote_ip"))
+    ]
+    remote_requests = [
+        item for item in requests
+        if not request_targets_loopback(item.get("url"), item.get("remote_ip"))
+    ]
+    local_failures = [item for item in local_requests if _request_failed(item)]
+    local_reasons = Counter(_request_failure_reason(item) for item in local_failures)
+    local_endpoints = Counter(_request_endpoint(item) for item in local_requests)
+
+    policy_failures = [
+        item for item in remote_requests
+        if _request_failed(item) and _failure_origin(item) == "browser_policy"
+    ]
+    eligible_requests = [
+        item for item in remote_requests
+        if item not in policy_failures
+    ]
     latest_success: dict[str, int] = {}
-    for index, item in enumerate(requests):
+    for index, item in enumerate(eligible_requests):
         url = _normalized_url(item.get("url"))
         if url and not _request_failed(item):
             latest_success[url] = index
     failures = []
     recovered = 0
-    for index, item in enumerate(requests):
+    for index, item in enumerate(eligible_requests):
         if not _request_failed(item):
             continue
         url = _normalized_url(item.get("url"))
@@ -215,7 +263,7 @@ def resource_health(cdp: dict, navigation: dict) -> dict:
             recovered += 1
             continue
         failures.append(item)
-    total = len(requests)
+    total = len(eligible_requests)
     failure_count = len(failures)
     ratio = failure_count / total if total else 0.0
     reasons = Counter(
@@ -226,16 +274,39 @@ def resource_health(cdp: dict, navigation: dict) -> dict:
         str(item.get("resource_type") or "Other")
         for item in failures
     )
+    origins = Counter(_failure_origin(item) for item in failures)
+    hosts = Counter(_request_host(item) for item in failures)
     systemic = failure_count >= 3 and ratio >= 0.20
+    retryable = systemic and any(
+        _failure_retryable(item) for item in failures
+    )
+    origin = _dominant_origin(origins) if systemic else None
     return {
         "state": "degraded" if systemic else "passed",
         "reason": "CRITICAL_RESOURCE_FAILURE_BURST" if systemic else None,
         "critical_requests": total,
+        "observed_critical_requests": len(requests),
         "unrecovered_failures": failure_count,
         "recovered_failures": recovered,
         "failure_ratio": round(ratio, 6),
         "failure_reasons": dict(sorted(reasons.items())),
         "failure_types": dict(sorted(types.items())),
+        "failure_origins": dict(sorted(origins.items())),
+        "failed_hosts": dict(sorted(hosts.items())),
+        "browser_policy_observations": {
+            "unrecovered_failures": len(policy_failures),
+            "failure_reasons": dict(sorted(Counter(
+                _request_failure_reason(item) for item in policy_failures
+            ).items())),
+        },
+        "local_observations": {
+            "critical_requests": len(local_requests),
+            "unrecovered_failures": len(local_failures),
+            "failure_reasons": dict(sorted(local_reasons.items())),
+            "endpoints": dict(sorted(local_endpoints.items())),
+        },
+        "origin": origin,
+        "retryable": retryable,
         "threshold": {
             "minimum_failures": 3,
             "minimum_ratio": 0.20,
@@ -278,12 +349,29 @@ def combine_activity_outcome(
         "requested_url": navigation.get("requested_url"),
         "final_url": navigation.get("final_url"),
         "final_status": navigation.get("final_status"),
+        "origin": effective.get("origin") or _reason_origin(effective.get("reason")),
+        "retryable": bool(effective.get("retryable", _reason_retryable(effective.get("reason")))),
+        "navigation_recovered": bool(navigation.get("recovered")),
+        "local_critical_observations": resources.get("local_observations", {}),
     })
     return result
 
 
-def _outcome(base: dict, state: str, reason: str | None) -> dict:
-    return {**base, "state": state, "reason": reason}
+def _outcome(
+    base: dict,
+    state: str,
+    reason: str | None,
+    *,
+    origin: str | None = None,
+    retryable: bool = False,
+) -> dict:
+    return {
+        **base,
+        "state": state,
+        "reason": reason,
+        "origin": origin,
+        "retryable": retryable,
+    }
 
 
 def _normalized_url(value: object) -> str:
@@ -322,6 +410,72 @@ def _request_failure_reason(item: dict) -> str:
         return reason
     status = _status(item.get("response_status"))
     return f"HTTP_{status}" if status is not None else "loading_failed"
+
+def _request_host(item: dict) -> str:
+    return (urlsplit(str(item.get("url") or "")).hostname or "unknown").lower()
+
+
+def _request_endpoint(item: dict) -> str:
+    host = _request_host(item)
+    port = urlsplit(str(item.get("url") or "")).port
+    return f"{host}:{port}" if port is not None else host
+
+
+def _failure_origin(item: dict) -> str:
+    if request_targets_loopback(item.get("url"), item.get("remote_ip")):
+        return "local_expected"
+    reason = _request_failure_reason(item).upper()
+    if any(marker in reason for marker in _BROWSER_POLICY_MARKERS):
+        return "browser_policy"
+    status = _status(item.get("response_status"))
+    if status is not None and status >= 400:
+        return "remote_site"
+    if _network_failure_class(reason) in {"dns", "timeout", "connectivity"}:
+        return "remote_network"
+    return "evidence_limit"
+
+
+def _failure_retryable(item: dict) -> bool:
+    origin = _failure_origin(item)
+    if origin in {"local_expected", "browser_policy"}:
+        return False
+    status = _status(item.get("response_status"))
+    if status in {408, 429} or (status is not None and status >= 500):
+        return True
+    failure_class = _network_failure_class(_request_failure_reason(item))
+    return failure_class in {"dns", "timeout", "connectivity"}
+
+
+def _dominant_origin(origins: Counter) -> str | None:
+    if not origins:
+        return None
+    ranked = sorted(origins.items(), key=lambda item: (-item[1], item[0]))
+    return ranked[0][0]
+
+
+def _reason_origin(reason: object) -> str | None:
+    value = str(reason or "")
+    if value.startswith("MAIN_DOCUMENT_"):
+        if value.endswith("HTTP_ERROR") or value.endswith("SERVER_ERROR"):
+            return "remote_site"
+        if value.endswith(("CONNECTION_ERROR", "DNS_ERROR", "NETWORK_ERROR", "TIMEOUT")):
+            return "remote_network"
+        if value in {"MAIN_DOCUMENT_NOT_OBSERVED", "MAIN_DOCUMENT_RESPONSE_UNKNOWN"}:
+            return "evidence_limit"
+    if value.startswith(("PLAYER_", "VIDEO_", "MEDIA_", "PRIMARY_CONTENT_", "PLAYBACK_")):
+        return "browser_activity"
+    return None
+
+
+def _reason_retryable(reason: object) -> bool:
+    return str(reason or "") in {
+        "MAIN_DOCUMENT_CONNECTION_ERROR", "MAIN_DOCUMENT_DNS_ERROR",
+        "MAIN_DOCUMENT_NETWORK_ERROR", "MAIN_DOCUMENT_NOT_OBSERVED",
+        "MAIN_DOCUMENT_RESPONSE_UNKNOWN", "MAIN_DOCUMENT_SERVER_ERROR",
+        "MAIN_DOCUMENT_TIMEOUT", "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR",
+        "PLAYBACK_STATE_UNKNOWN", "PLAYER_NOT_CREATED", "VIDEO_ELEMENT_NOT_CREATED",
+        "MEDIA_NOT_READY", "MEDIA_NOT_ADVANCING", "PRIMARY_CONTENT_NOT_OBSERVED",
+    }
 
 
 def _network_failure_class(reason: object) -> str:

@@ -74,6 +74,44 @@ def test_pipeline_manifest_v7_requires_the_frozen_matrix_schedule():
     assert caught.value.rule == "required"
 
 
+def test_pipeline_manifest_v8_accepts_local_runtime_and_issue_provenance():
+    payload = _fixture("pipeline-manifest-v7-valid.json")
+    payload["schema_version"] = 8
+    plane = {
+        "state": "passed",
+        "passed": 1,
+        "degraded": 0,
+        "failed": 0,
+        "indeterminate": 0,
+        "not_applicable": 0,
+    }
+    payload["runs"][0]["quality"] = {
+        "sessions_total": 1,
+        "local_runtime": plane,
+        "capture_integrity": plane,
+        "correlation": plane,
+        "application": {
+            **plane,
+            "state": "degraded",
+            "passed": 0,
+            "degraded": 1,
+        },
+        "application_issues": [{
+            "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+            "target_url": "https://example.com/",
+            "final_url": "https://example.com/",
+            "state": "degraded",
+            "reason": "CRITICAL_RESOURCE_FAILURE_BURST",
+            "origin": "remote_network",
+            "retryable": True,
+            "primary_content_millis": None,
+            "desired_primary_seconds": None,
+        }],
+    }
+
+    assert validate_contract("pipeline_manifest", payload) is payload
+
+
 @pytest.mark.parametrize(
     "fixture",
     [

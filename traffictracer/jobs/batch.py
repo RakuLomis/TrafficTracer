@@ -356,11 +356,15 @@ class SerialBatchJob:
             return None
         state = payload.get("state")
         reason = payload.get("reason")
+        origin = payload.get("origin")
+        retryable = payload.get("retryable")
         if state not in {"passed", "degraded", "failed", "indeterminate"}:
             return None
         return BatchApplicationOutcome(
             state=str(state),
             reason=str(reason) if isinstance(reason, str) and reason else None,
+            origin=str(origin) if isinstance(origin, str) and origin else None,
+            retryable=retryable if isinstance(retryable, bool) else None,
         )
 
     def _should_retry_capture(
@@ -384,18 +388,23 @@ class SerialBatchJob:
         automatic_retries: int,
     ) -> bool:
         policy = self.spec.application_retry
+        if outcome is None:
+            return False
+        eligible_state = (
+            outcome.state in {"failed", "indeterminate"}
+            or (
+                outcome.state == "degraded"
+                and outcome.reason == "CRITICAL_RESOURCE_FAILURE_BURST"
+            )
+        )
+        retryable = outcome.retryable
+        if retryable is None:
+            retryable = outcome.reason in _RETRYABLE_APPLICATION_REASONS
         return (
             policy.enabled
             and automatic_retries < policy.max_retries
-            and outcome is not None
-            and (
-                outcome.state in {"failed", "indeterminate"}
-                or (
-                    outcome.state == "degraded"
-                    and outcome.reason == "CRITICAL_RESOURCE_FAILURE_BURST"
-                )
-            )
-            and outcome.reason in _RETRYABLE_APPLICATION_REASONS
+            and eligible_state
+            and retryable
         )
 
     def _result(self, manifest: BatchManifest) -> BatchJobResult:

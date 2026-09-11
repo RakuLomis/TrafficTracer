@@ -56,11 +56,16 @@ def request_network_observation(request) -> tuple[str, list[str]]:
     return "unknown", ["request_not_in_transport_index"]
 
 
-def _is_local_endpoint(request) -> bool:
-    host = urlsplit(request.url).hostname or ""
+def request_targets_loopback(url: object, remote_ip: object = None) -> bool:
+    """Return whether explicit request evidence targets local loopback.
+
+    RFC1918/private addresses are intentionally not treated as loopback: they
+    can be real LAN services and must remain part of remote resource health.
+    """
+    host = urlsplit(str(url or "")).hostname or ""
     if host.lower() == "localhost":
         return True
-    for candidate in (host, request.remote_ip):
+    for candidate in (host, str(remote_ip or "")):
         if not candidate:
             continue
         try:
@@ -69,6 +74,10 @@ def _is_local_endpoint(request) -> bool:
         except ValueError:
             continue
     return False
+
+
+def _is_local_endpoint(request) -> bool:
+    return request_targets_loopback(request.url, request.remote_ip)
 
 
 def request_can_have_transport(request) -> bool:

@@ -259,9 +259,16 @@ class BatchError:
 class BatchApplicationOutcome:
     state: str
     reason: str | None = None
+    origin: str | None = None
+    retryable: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"state": self.state, "reason": self.reason}
+        return {
+            "state": self.state,
+            "reason": self.reason,
+            "origin": self.origin,
+            "retryable": self.retryable,
+        }
 
 
 @dataclass(frozen=True)

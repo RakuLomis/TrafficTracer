@@ -74,17 +74,21 @@ def test_auxiliary_iframe_401_does_not_override_main_document_success():
     assert result["final_status"] == 200
 
 
-def test_http_error_followed_by_same_frame_success_is_recovered_degradation():
+def test_http_error_followed_by_same_frame_success_is_passed_recovery():
     url = "https://www.zhihu.com/question/fixture"
     result = navigation_outcome(_cdp(url, [
         _document(url, 403),
         _document(url, 200, timestamp=2),
     ]))
 
-    assert result["state"] == "degraded"
-    assert result["reason"] == "MAIN_DOCUMENT_HTTP_ERROR_RECOVERED"
+    assert result["state"] == "passed"
+    assert result["reason"] is None
     assert result["status_chain"] == [403, 200]
     assert result["recovered"] is True
+    assert result["recovery"] == {
+        "observed": True, "kind": "http_status_recovered",
+        "intermediate_statuses": [403], "final_status": 200,
+    }
 
 
 def test_fragment_url_matches_network_document_without_fragment():
@@ -190,6 +194,99 @@ def test_systemic_unrecovered_critical_resource_failures_are_degraded():
     assert health["critical_requests"] == 10
     assert health["unrecovered_failures"] == 5
     assert health["failure_ratio"] == 0.5
+
+
+def test_loopback_probe_failures_are_retained_but_not_remote_degradation():
+    url = "https://www.iqiyi.com/"
+    requests = [_document(url, 200)]
+    for port in (16422, 16423, 16424):
+        requests.append({
+            "url": f"http://127.0.0.1:{port}/client.js",
+            "resource_type": "Script",
+            "target_id": "PAGE",
+            "failed": True,
+            "failure_reason": "net::ERR_CONNECTION_REFUSED",
+        })
+    health = resource_health(_cdp(url, requests), navigation_outcome(_cdp(url, requests)))
+
+    assert health["state"] == "passed"
+    assert health["critical_requests"] == 0
+    assert health["observed_critical_requests"] == 3
+    assert health["unrecovered_failures"] == 0
+    assert health["local_observations"]["unrecovered_failures"] == 3
+    assert health["local_observations"]["failure_reasons"] == {
+        "net::ERR_CONNECTION_REFUSED": 3,
+    }
+
+
+def test_private_lan_resource_is_not_excluded_as_loopback():
+    url = "https://example.com/"
+    requests = [_document(url, 200)] + [{
+        "url": f"http://192.168.5.10/chunk-{index}.js",
+        "resource_type": "Script",
+        "target_id": "PAGE",
+        "failed": True,
+        "failure_reason": "net::ERR_CONNECTION_REFUSED",
+    } for index in range(3)]
+    cdp = _cdp(url, requests)
+    health = resource_health(cdp, navigation_outcome(cdp))
+
+    assert health["state"] == "degraded"
+    assert health["critical_requests"] == 3
+    assert health["failure_origins"] == {"remote_network": 3}
+    assert health["retryable"] is True
+
+
+def test_browser_policy_failures_are_observations_not_remote_failures():
+    url = "https://example.com/"
+    requests = [_document(url, 200)] + [{
+        "url": f"https://cdn.example/chunk-{index}.js",
+        "resource_type": "Script",
+        "target_id": "PAGE",
+        "failed": True,
+        "failure_reason": "net::ERR_BLOCKED_BY_ORB",
+    } for index in range(3)]
+    cdp = _cdp(url, requests)
+    health = resource_health(cdp, navigation_outcome(cdp))
+
+    assert health["state"] == "passed"
+    assert health["critical_requests"] == 0
+    assert health["browser_policy_observations"]["unrecovered_failures"] == 3
+
+
+def test_remote_transient_resource_burst_is_typed_and_retryable():
+    url = "https://news.qq.com/"
+    requests = [_document(url, 200)] + [{
+        "url": f"https://mat1.gtimg.com/chunk-{index}.js",
+        "resource_type": "Script",
+        "target_id": "PAGE",
+        "failed": True,
+        "failure_reason": "net::ERR_CONNECTION_CLOSED",
+    } for index in range(3)]
+    cdp = _cdp(url, requests)
+    health = resource_health(cdp, navigation_outcome(cdp))
+
+    assert health["state"] == "degraded"
+    assert health["origin"] == "remote_network"
+    assert health["retryable"] is True
+    assert health["failed_hosts"] == {"mat1.gtimg.com": 3}
+
+
+def test_tls_resource_burst_is_not_automatically_retried():
+    url = "https://example.com/"
+    requests = [_document(url, 200)] + [{
+        "url": f"https://cdn.example/chunk-{index}.js",
+        "resource_type": "Script",
+        "target_id": "PAGE",
+        "failed": True,
+        "failure_reason": "net::ERR_CERT_COMMON_NAME_INVALID",
+    } for index in range(3)]
+    cdp = _cdp(url, requests)
+    health = resource_health(cdp, navigation_outcome(cdp))
+
+    assert health["state"] == "degraded"
+    assert health["origin"] == "evidence_limit"
+    assert health["retryable"] is False
 
 
 def test_critical_http_errors_count_as_resource_failures():
