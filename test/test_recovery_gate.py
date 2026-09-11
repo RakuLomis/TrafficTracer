@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_capture_duration_uses_cancellable_wait():
     source = (ROOT / "traffictracer" / "capture" / "job.py").read_text()
-    assert "self.cancellation.wait(self.spec.duration_seconds)" in source
+    # BrowserHealthToken delegates cancellation and additionally detects exit.
+    assert "browser_health.wait(self.spec.duration_seconds)" in source
     assert "time.sleep(self.spec.duration_seconds)" not in source
 
 

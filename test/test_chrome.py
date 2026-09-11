@@ -5,16 +5,23 @@ import signal
 import sys
 import subprocess
 from unittest.mock import patch, MagicMock
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from traffictracer.capture.chrome import (
+    BrowserHealthToken,
+    BrowserProcessError,
     ChromeOwnership,
     LinuxProcessIdentity,
     OwnedChromeProcess,
+    compact_chrome_stderr,
     launch_chrome,
     terminate_chrome,
     wait_chrome_exit,
 )
+from traffictracer.jobs.cancellation import CancellationToken
 
 
 def test_terminate_chrome():
@@ -221,3 +228,66 @@ def test_owned_chrome_escalates_term_timeout_to_kill_without_global_scan():
         ("group", 100, signal.SIGTERM),
         ("group", 100, signal.SIGKILL),
     ]
+
+
+class _HealthProcess:
+    pid = 9001
+
+    def __init__(self, returncode=None):
+        self.returncode = returncode
+
+    def poll(self):
+        return self.returncode
+
+
+def test_browser_health_raises_typed_signal_exit():
+    process = _HealthProcess(-11)
+    health = BrowserHealthToken(process, CancellationToken())
+
+    with pytest.raises(BrowserProcessError) as caught:
+        health.checkpoint()
+
+    assert caught.value.code == "BROWSER_PROCESS_EXITED"
+    assert caught.value.exit_code == -11
+    assert caught.value.as_dict()["signal"] == 11
+    assert health.snapshot()["status"] == "unexpected_exit"
+
+
+def test_browser_health_accepts_expected_shutdown():
+    process = _HealthProcess()
+    health = BrowserHealthToken(process, CancellationToken())
+    health.expect_shutdown("cdp_browser_close")
+    process.returncode = 0
+
+    health.checkpoint()
+
+    assert health.snapshot() == {
+        "schema_version": 1,
+        "pid": 9001,
+        "status": "expected_exit",
+        "expected_shutdown_reason": "cdp_browser_close",
+        "exit_code": 0,
+    }
+
+
+def test_browser_health_delegates_parent_cancellation():
+    token = CancellationToken()
+    health = BrowserHealthToken(_HealthProcess(), token)
+    token.cancel("stop")
+
+    with pytest.raises(Exception, match="stop"):
+        health.checkpoint()
+
+
+def test_chrome_stderr_is_compacted_to_a_bounded_tail(tmp_path):
+    path = tmp_path / "chrome-stderr.log"
+    path.write_bytes(b"prefix" + b"x" * 100 + b"tail")
+
+    result = compact_chrome_stderr(path, limit=16)
+
+    assert result == {
+        "path": str(path),
+        "bytes": 16,
+        "truncated": True,
+    }
+    assert path.read_bytes() == b"x" * 12 + b"tail"

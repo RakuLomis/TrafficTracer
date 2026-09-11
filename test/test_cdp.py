@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from unittest.mock import patch, MagicMock
 
-from traffictracer.capture.cdp import CDPCollector
+from traffictracer.capture.cdp import CDPCollector, CDPConnectionLostError
 from traffictracer.playback import PlaybackPolicy
 
 
@@ -55,6 +55,8 @@ def _make_collector_with_ws(ws: FakeWS) -> CDPCollector:
     collector._pending = {}
     collector._reader_task = None
     collector._lock = asyncio.Lock()
+    collector._closing = False
+    collector._connection_error = None
     collector._targets: dict[str, dict] = {}
     collector._session_to_target: dict[str, str] = {}
     collector._requests: list[dict] = []
@@ -603,3 +605,36 @@ def test_playback_interaction_rejects_non_finite_coordinates():
                 )
 
     asyncio.run(scenario())
+
+
+def test_disconnect_fails_pending_commands_and_future_checkpoints():
+    async def run():
+        collector = _make_collector_with_ws(FakeWS())
+        future = asyncio.get_running_loop().create_future()
+        collector._pending[7] = future
+
+        collector._record_disconnect("browser disappeared")
+
+        with pytest.raises(CDPConnectionLostError, match="browser disappeared"):
+            await future
+        with pytest.raises(CDPConnectionLostError, match="browser disappeared"):
+            collector._checkpoint()
+        assert collector._pending == {}
+
+    asyncio.run(run())
+
+
+def test_intentional_collector_close_does_not_publish_disconnect():
+    async def run():
+        collector = _make_collector_with_ws(FakeWS())
+        collector._closing = True
+        future = asyncio.get_running_loop().create_future()
+        collector._pending[7] = future
+
+        collector._record_disconnect("intentional close")
+
+        assert collector._connection_error is None
+        assert collector._pending[7] is future
+        future.cancel()
+
+    asyncio.run(run())

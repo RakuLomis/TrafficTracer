@@ -144,6 +144,10 @@ def _job(tmp_path, monkeypatch, events, *, cancellation=None, recovery_store=Non
 
     monkeypatch.setattr(module, "start_packet_capture", start)
     monkeypatch.setattr(module.CaptureMonitor, "wait", lambda monitor, seconds: monitor.parent.wait(seconds))
+    monkeypatch.setattr(
+        module.BrowserHealthToken, "wait",
+        lambda monitor, seconds: monitor.parent.wait(seconds),
+    )
     monkeypatch.setattr(module, "stop_packet_capture", stop)
     monkeypatch.setattr(module, "launch_chrome", launch)
     monkeypatch.setattr(module, "terminate_chrome", terminate)
@@ -229,6 +233,11 @@ def test_capture_job_owns_lifecycle_and_cleans_up_in_order(tmp_path, monkeypatch
         "protocols": [], "proxy_dial_events": 0, "unknown_protocol_events": 0,
         "validation_source": "bounded_mihomo_trace",
         "consistency": "not_observed"}
+    assert context["browser_lifecycle"]["status"] == "expected_exit"
+    assert context["browser_lifecycle"]["expected_shutdown_reason"] == (
+        "capture_complete"
+    )
+    assert context["browser_lifecycle"]["stderr"]["bytes"] == 0
     assert context["trace_boundary"]["source"] == "mihomo_barrier"
     assert context["trace_boundary"]["event_seq"] == 42
     assert context["trace_boundary_initial"]["event_seq"] == 42

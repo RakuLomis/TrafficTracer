@@ -11,6 +11,7 @@ import time
 from threading import Thread
 
 from traffictracer.jobs.cancellation import CancellationToken
+from traffictracer.process_env import external_process_env
 
 _token: ContextVar[CancellationToken | None] = ContextVar("analysis_token", default=None)
 
@@ -36,6 +37,7 @@ def analysis_process_scope(token):
 
 def run_analysis_command(command, **kwargs):
     consumer = kwargs.pop("stdout_consumer", None)
+    kwargs["env"] = external_process_env(kwargs.get("env"))
     token = _token.get()
     if token is None:
         result = subprocess.run(command, **kwargs)

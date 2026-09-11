@@ -19,6 +19,14 @@ from .playback import (
 )
 
 
+class CDPConnectionLostError(RuntimeError):
+    code = "CDP_CONNECTION_LOST"
+
+    def __init__(self, message: str = "Chrome DevTools connection closed during capture") -> None:
+        self.message = message
+        super().__init__(f"{self.code}: {message}")
+
+
 class CDPCollector:
     def __init__(
         self,
@@ -34,6 +42,8 @@ class CDPCollector:
         self._pending: dict[int, asyncio.Future] = {}
         self._reader_task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._closing = False
+        self._connection_error: CDPConnectionLostError | None = None
 
         self._targets: dict[str, dict] = {}
         self._session_to_target: dict[str, str] = {}
@@ -104,12 +114,27 @@ class CDPCollector:
                         future.set_result(msg.get("result", {}))
                 else:
                     self._dispatch_event(msg)
-        except ConnectionClosed:
-            logger.debug("CDP WebSocket connection closed")
+            self._record_disconnect("Chrome DevTools WebSocket ended during capture")
+        except ConnectionClosed as error:
+            self._record_disconnect(
+                f"Chrome DevTools WebSocket closed during capture: {error}"
+            )
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug("CDP reader loop error: %s", e)
+            self._record_disconnect(f"Chrome DevTools reader failed: {e}")
+
+    def _record_disconnect(self, message: str) -> None:
+        if getattr(self, "_closing", False):
+            return
+        error = CDPConnectionLostError(message)
+        self._connection_error = error
+        logger.warning("%s", error)
+        pending = list(self._pending.values())
+        self._pending.clear()
+        for future in pending:
+            if not future.done():
+                future.set_exception(error)
 
     def _dispatch_event(self, msg: dict) -> None:
         method = msg.get("method", "")
@@ -306,6 +331,9 @@ class CDPCollector:
 
     async def send(self, method: str, params: dict | None = None,
                    timeout: float = 10.0, session_id: str = "") -> dict:
+        connection_error = getattr(self, "_connection_error", None)
+        if connection_error is not None:
+            raise connection_error
         async with self._lock:
             self._cmd_id += 1
             cmd_id = self._cmd_id
@@ -316,7 +344,13 @@ class CDPCollector:
                 msg["sessionId"] = session_id
             future: asyncio.Future = asyncio.get_running_loop().create_future()
             self._pending[cmd_id] = future
-            await self._ws.send(json.dumps(msg))
+            try:
+                await self._ws.send(json.dumps(msg))
+            except ConnectionClosed as error:
+                self._record_disconnect(
+                    f"Chrome DevTools command transport closed: {error}"
+                )
+                raise self._connection_error from error
         try:
             return await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
@@ -575,6 +609,9 @@ class CDPCollector:
         return dict(self._playback)
 
     def _checkpoint(self) -> None:
+        connection_error = getattr(self, "_connection_error", None)
+        if connection_error is not None:
+            raise connection_error
         cancellation = getattr(self, "_cancellation", None)
         if cancellation is not None:
             cancellation.checkpoint()
@@ -654,6 +691,7 @@ class CDPCollector:
             logger.warning("Browser.close via CDP failed")
 
     async def close(self) -> None:
+        self._closing = True
         for task in list(self._enable_tasks):
             task.cancel()
         if self._enable_tasks:

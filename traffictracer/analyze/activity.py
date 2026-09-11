@@ -62,13 +62,18 @@ def navigation_outcome(cdp: dict) -> dict:
         "main_loader_id": navigation.get("loader_id"),
         "main_document_requests": 0,
         "recovered": False,
+        "completion_evidence": None,
+        "failure_class": None,
     }
     if not cdp:
         return _outcome(base, "not_applicable", "CDP_EVIDENCE_UNAVAILABLE")
     error_text = str(navigation.get("error_text") or "")
     if error_text:
         base["error_text"] = error_text
-        return _outcome(base, "failed", "NAVIGATION_COMMAND_ERROR")
+        base["failure_class"] = _network_failure_class(error_text)
+        return _outcome(
+            base, "failed", _main_document_network_reason(base["failure_class"]),
+        )
 
     documents = [
         item for item in cdp.get("requests", [])
@@ -130,6 +135,7 @@ def navigation_outcome(cdp: dict) -> dict:
     base["failure_reason"] = str(final.get("failure_reason") or "") or None
 
     nav_status = str(navigation.get("status") or "")
+    base["load_event_observed"] = nav_status in {"loaded", "loaded_after_command_timeout"}
     prior_http_error = any(status >= 400 for status in status_chain[:-1])
     if final_status in {408, 429}:
         return _outcome(base, "failed", "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR")
@@ -138,12 +144,16 @@ def navigation_outcome(cdp: dict) -> dict:
     if final_status is not None and final_status >= 400:
         return _outcome(base, "failed", "MAIN_DOCUMENT_HTTP_ERROR")
     if bool(final.get("failed")) and not final_status:
-        return _outcome(base, "failed", "MAIN_DOCUMENT_NETWORK_ERROR")
+        base["failure_class"] = _network_failure_class(base["failure_reason"])
+        return _outcome(
+            base, "failed", _main_document_network_reason(base["failure_class"]),
+        )
     if final_status is None or final_status <= 0:
         return _outcome(base, "indeterminate", "MAIN_DOCUMENT_RESPONSE_UNKNOWN")
     if 300 <= final_status < 400:
         return _outcome(base, "indeterminate", "MAIN_DOCUMENT_REDIRECT_INCOMPLETE")
     if 200 <= final_status < 300:
+        base["completion_evidence"] = "main_document_2xx"
         if prior_http_error:
             base["recovered"] = True
             return _outcome(
@@ -155,7 +165,11 @@ def navigation_outcome(cdp: dict) -> dict:
                 base, "degraded", "NAVIGATION_TIMEOUT_RECOVERED",
             )
         if nav_status in _UNRESOLVED_NAVIGATION_STATES:
-            return _outcome(base, "degraded", "NAVIGATION_COMPLETION_UNCERTAIN")
+            # Modern SPAs and long-lived pages may intentionally never publish
+            # loadEventFired. A completed top-level 2xx response is stronger
+            # page-load evidence than that optional lifecycle signal.
+            base["completion_evidence"] = "main_document_2xx_without_load_event"
+            return _outcome(base, "passed", None)
         return _outcome(base, "passed", None)
     return _outcome(base, "indeterminate", "MAIN_DOCUMENT_STATUS_UNSUPPORTED")
 
@@ -308,6 +322,31 @@ def _request_failure_reason(item: dict) -> str:
         return reason
     status = _status(item.get("response_status"))
     return f"HTTP_{status}" if status is not None else "loading_failed"
+
+
+def _network_failure_class(reason: object) -> str:
+    value = str(reason or "").upper()
+    if "ERR_CERT_" in value or "SSL_" in value or "TLS_" in value:
+        return "tls_certificate"
+    if "ERR_NAME_NOT_RESOLVED" in value or "ERR_DNS_" in value:
+        return "dns"
+    if "ERR_TIMED_OUT" in value or "TIMEOUT" in value:
+        return "timeout"
+    if any(marker in value for marker in (
+        "ERR_CONNECTION_", "ERR_NETWORK_", "ERR_INTERNET_DISCONNECTED",
+        "ERR_ADDRESS_UNREACHABLE",
+    )):
+        return "connectivity"
+    return "network"
+
+
+def _main_document_network_reason(failure_class: object) -> str:
+    return {
+        "tls_certificate": "MAIN_DOCUMENT_TLS_ERROR",
+        "dns": "MAIN_DOCUMENT_DNS_ERROR",
+        "timeout": "MAIN_DOCUMENT_TIMEOUT",
+        "connectivity": "MAIN_DOCUMENT_CONNECTION_ERROR",
+    }.get(str(failure_class or ""), "MAIN_DOCUMENT_NETWORK_ERROR")
 
 
 def _read_json(path: Path) -> dict:

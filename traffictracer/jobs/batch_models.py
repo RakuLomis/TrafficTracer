@@ -573,6 +573,54 @@ class BatchManifest:
             updated_at=_utc(now),
         )
 
+    def retry_failed_child(
+        self,
+        *,
+        session_id: str | None,
+        error: BatchError,
+        job_id: str,
+        now: datetime | None = None,
+    ) -> "BatchManifest":
+        """Checkpoint one classified capture failure and begin one fresh attempt."""
+        if self.state is not BatchState.RUNNING or self.current_index is None:
+            raise ValueError("batch has no running child")
+        position = self.current_index
+        child = self.children[position]
+        if child.state is not BatchChildState.RUNNING or not child.attempts:
+            raise ValueError("batch child has no running attempt")
+        if (
+            not self.application_retry.enabled
+            or sum(attempt.automatic_retry for attempt in child.attempts)
+            >= self.application_retry.max_retries
+        ):
+            raise ValueError("automatic application retry budget is exhausted")
+        attempts = list(child.attempts)
+        attempts[-1] = replace(
+            attempts[-1],
+            state=BatchChildState.FAILED,
+            session_id=session_id,
+            error=error,
+        )
+        attempts.append(BatchAttempt(
+            ordinal=len(attempts) + 1,
+            job_id=job_id,
+            state=BatchChildState.RUNNING,
+            automatic_retry=True,
+        ))
+        children = list(self.children)
+        children[position] = replace(
+            child,
+            session_id=session_id,
+            error=None,
+            attempts=tuple(attempts),
+        )
+        return replace(
+            self,
+            stage=BatchStage.CAPTURE,
+            children=tuple(children),
+            updated_at=_utc(now),
+        )
+
     def finish_child(
         self,
         state: BatchChildState,

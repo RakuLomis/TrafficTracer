@@ -11,6 +11,7 @@ import subprocess
 import time
 from urllib.parse import urlparse
 
+from ..process_env import external_process_env
 from ..utils import logger
 
 
@@ -70,6 +71,7 @@ class MihomoManager:
             [self.binary, "-d", config_dir],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=external_process_env(),
         )
         self._wait_ready(proc, ready_timeout)
         return proc

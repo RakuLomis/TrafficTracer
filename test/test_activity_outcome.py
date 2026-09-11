@@ -130,6 +130,45 @@ def test_loaded_after_command_timeout_is_explicit_recovered_degradation():
     assert result["recovered"] is True
 
 
+def test_main_document_2xx_is_sufficient_for_spa_without_load_event():
+    url = "https://example.test/app"
+    result = navigation_outcome(_cdp(
+        url,
+        [_document(url, 200)],
+        status="load_event_timeout",
+    ))
+
+    assert result["state"] == "passed"
+    assert result["reason"] is None
+    assert result["load_event_observed"] is False
+    assert result["completion_evidence"] == "main_document_2xx_without_load_event"
+
+
+def test_navigation_certificate_error_is_typed():
+    url = "https://www.rottentomatoes.com/m/interstellar_2014"
+    result = navigation_outcome(_cdp(
+        url, [], error_text="net::ERR_CERT_COMMON_NAME_INVALID",
+    ))
+
+    assert result["state"] == "failed"
+    assert result["reason"] == "MAIN_DOCUMENT_TLS_ERROR"
+    assert result["failure_class"] == "tls_certificate"
+
+
+def test_failed_main_document_dns_error_is_typed():
+    url = "https://unreachable.example.test/"
+    result = navigation_outcome(_cdp(url, [
+        _document(
+            url, 0, failed=True,
+            failure_reason="net::ERR_NAME_NOT_RESOLVED",
+        ),
+    ]))
+
+    assert result["state"] == "failed"
+    assert result["reason"] == "MAIN_DOCUMENT_DNS_ERROR"
+    assert result["failure_class"] == "dns"
+
+
 def test_systemic_unrecovered_critical_resource_failures_are_degraded():
     url = "https://vimeo.com/fixture"
     requests = [_document(url, 200)]

@@ -10,6 +10,7 @@ import socket
 import subprocess
 
 from traffictracer.capture.mihomo import MihomoManager
+from traffictracer.process_env import external_process_env
 
 from .models import DiagnosticCheck, DiagnosticReport, DiagnosticSeverity
 
@@ -141,6 +142,7 @@ def check_capture_tool() -> DiagnosticCheck:
             text=True,
             timeout=3,
             check=False,
+            env=external_process_env(),
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return _failure(

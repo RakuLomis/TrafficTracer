@@ -12,6 +12,7 @@ import time
 from typing import Callable, Iterable
 
 from ..jobs.cancellation import CancellationToken
+from ..process_env import external_process_env
 from ..utils import logger
 
 
@@ -31,6 +32,97 @@ class ChromeOwnership:
     start_token: str
     executable: str
     profile: str
+
+
+class BrowserProcessError(RuntimeError):
+    """Chrome or its CDP transport disappeared during the capture window."""
+
+    def __init__(self, code: str, message: str, *, exit_code: int | None = None) -> None:
+        self.code = code
+        self.message = message
+        self.exit_code = exit_code
+        super().__init__(f"{code}: {message}")
+
+    def as_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"code": self.code, "message": self.message}
+        if self.exit_code is not None:
+            payload["exit_code"] = self.exit_code
+            if self.exit_code < 0:
+                payload["signal"] = -self.exit_code
+        return payload
+
+
+class BrowserHealthToken:
+    """Cancellation-compatible token that also detects an unexpected Chrome exit."""
+
+    def __init__(self, process, parent: CancellationToken) -> None:
+        self.process = process
+        self.parent = parent
+        self._expected_reason = ""
+        self._observed_exit: int | None = None
+
+    def __getattr__(self, name):
+        return getattr(self.parent, name)
+
+    @property
+    def expected_shutdown(self) -> bool:
+        return bool(self._expected_reason)
+
+    def expect_shutdown(self, reason: str = "requested") -> None:
+        self._expected_reason = reason.strip() or "requested"
+
+    def observe(self) -> int | None:
+        code = self.process.poll()
+        if code is not None:
+            self._observed_exit = int(code)
+        return code
+
+    def checkpoint(self) -> None:
+        self.parent.checkpoint()
+        code = self.observe()
+        if code is not None and not self._expected_reason:
+            detail = (
+                f"Chrome exited unexpectedly with signal {-code}"
+                if code < 0
+                else f"Chrome exited unexpectedly with code {code}"
+            )
+            raise BrowserProcessError(
+                "BROWSER_PROCESS_EXITED",
+                detail,
+                exit_code=code,
+            )
+
+    def wait(self, timeout: float | None = None) -> bool:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            self.checkpoint()
+            interval = 0.05
+            if deadline is not None:
+                interval = min(interval, max(0.0, deadline - time.monotonic()))
+            if self.parent.wait(interval):
+                self.parent.checkpoint()
+            if deadline is not None and time.monotonic() >= deadline:
+                self.checkpoint()
+                return False
+
+    def snapshot(self) -> dict[str, object]:
+        code = self.observe()
+        if code is None:
+            status = "running"
+        elif self._expected_reason:
+            status = "expected_exit"
+        else:
+            status = "unexpected_exit"
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "pid": getattr(self.process, "pid", None),
+            "status": status,
+            "expected_shutdown_reason": self._expected_reason or None,
+            "exit_code": code,
+        }
+        if code is not None and code < 0:
+            payload["signal"] = -code
+        return payload
 
 
 def linux_process_identity(pid: int) -> LinuxProcessIdentity | None:
@@ -197,6 +289,7 @@ def launch_chrome(
     open_url: bool = True,
     extra_args: list[str] | None = None,
     disable_background_networking: bool = False,
+    stderr_path: str | None = None,
 ) -> subprocess.Popen | OwnedChromeProcess:
     Path(netlog_path).parent.mkdir(parents=True, exist_ok=True)
     profile = str(Path(user_data_dir).resolve())
@@ -241,17 +334,49 @@ def launch_chrome(
         url if open_url else "about:blank",
     )
     isolated = sys.platform.startswith("linux")
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=isolated,
-    )
+    stderr_file = None
+    try:
+        stderr_target = subprocess.DEVNULL
+        if stderr_path:
+            destination = Path(stderr_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            stderr_file = destination.open("wb")
+            stderr_target = stderr_file
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_target,
+            start_new_session=isolated,
+            env=external_process_env(),
+        )
+    finally:
+        if stderr_file is not None:
+            stderr_file.close()
     # Mock Popen objects in command-construction tests are intentionally not
     # treated as managed operating-system processes.
     if isolated and isinstance(process.pid, int):
         return OwnedChromeProcess.create(process, profile)
     return process
+
+
+def compact_chrome_stderr(
+    path: str | Path, limit: int = 64 * 1024,
+) -> dict[str, object]:
+    """Retain only a bounded diagnostic tail after the managed browser exits."""
+    destination = Path(path)
+    try:
+        size = destination.stat().st_size
+    except OSError:
+        return {"path": str(destination), "bytes": 0, "truncated": False}
+    truncated = size > limit
+    if truncated:
+        with destination.open("rb") as source:
+            source.seek(-limit, 2)
+            tail = source.read(limit)
+        with destination.open("wb") as output:
+            output.write(tail)
+        size = len(tail)
+    return {"path": str(destination), "bytes": size, "truncated": truncated}
 
 
 def wait_chrome_exit(

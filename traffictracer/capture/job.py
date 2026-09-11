@@ -31,7 +31,14 @@ from traffictracer.session.store import SessionStore
 from traffictracer.utils import logger
 
 from .cdp import SyncCDPCollector
-from .chrome import launch_chrome, terminate_chrome, wait_chrome_exit
+from .chrome import (
+    BrowserHealthToken,
+    BrowserProcessError,
+    compact_chrome_stderr,
+    launch_chrome,
+    terminate_chrome,
+    wait_chrome_exit,
+)
 from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
 from .profile import remove_owned_cold_profile
@@ -131,6 +138,7 @@ class CaptureJob:
         tun_capture = None
         phys_capture = None
         chrome_proc = None
+        browser_health = None
         collector = None
 
         capture_context = {
@@ -280,8 +288,17 @@ class CaptureJob:
                 netlog_capture_mode=self.runtime.netlog_capture_mode,
                 open_url=not use_cdp,
                 disable_background_networking=self.runtime.disable_background_networking,
+                stderr_path=str(paths["chrome_stderr"]),
             )
             self.registry.register(chrome_proc, "chrome")
+            browser_health = BrowserHealthToken(chrome_proc, self.cancellation)
+            capture_context["browser_lifecycle"] = {
+                "schema_version": 1,
+                "pid": getattr(chrome_proc, "pid", None),
+                "status": "running",
+                "started_monotonic": time.monotonic(),
+            }
+            write_json_atomic(paths["capture_context"], capture_context)
             self._persist_recovery(previous_tracing)
             self._record(paths["netlog"])
 
@@ -296,7 +313,7 @@ class CaptureJob:
                 )
                 collector = SyncCDPCollector(
                     debugging_port=self.runtime.remote_debugging_port,
-                    cancellation=self.cancellation,
+                    cancellation=browser_health,
                     cache_mode=self.spec.options.cache_mode,
                 )
                 collector.connect()
@@ -363,10 +380,12 @@ class CaptureJob:
                     )
                     capture_context["playback"] = playback_result
                     write_json_atomic(paths["capture_context"], capture_context)
-                self.cancellation.checkpoint()
+                browser_health.checkpoint()
                 collector.stop_collecting()
                 write_json_atomic(paths["cdp"], collector.get_structured_data())
                 self._record(paths["cdp"])
+                browser_health.checkpoint()
+                browser_health.expect_shutdown("cdp_browser_close")
                 collector.close_browser()
                 collector.close()
                 collector = None
@@ -383,8 +402,9 @@ class CaptureJob:
                     0.5,
                     operation="capture.observation",
                 )
-                self.cancellation.wait(self.spec.duration_seconds)
-                self.cancellation.checkpoint()
+                browser_health.wait(self.spec.duration_seconds)
+                browser_health.checkpoint()
+                browser_health.expect_shutdown("capture_complete")
                 terminate_chrome(chrome_proc, cancellation=self.cancellation)
 
             if self.spec.options.collect_netlog:
@@ -393,6 +413,8 @@ class CaptureJob:
             self._cleanup_resources(
                 collector=collector,
                 chrome_proc=chrome_proc,
+                browser_health=browser_health,
+                chrome_stderr=paths["chrome_stderr"],
                 chrome_profile=paths["profile"],
                 tun_capture=tun_capture,
                 phys_capture=phys_capture,
@@ -408,6 +430,8 @@ class CaptureJob:
         *,
         collector: Any,
         chrome_proc: Any,
+        browser_health: BrowserHealthToken | None,
+        chrome_stderr: Path,
         chrome_profile: Path,
         tun_capture: Any,
         phys_capture: Any,
@@ -436,6 +460,16 @@ class CaptureJob:
                 operation="capture.cleanup",
             ),
         )
+        if browser_health is not None:
+            code = browser_health.observe()
+            if code is None:
+                browser_health.expect_shutdown("cleanup")
+            elif not browser_health.expected_shutdown and not suppress_errors:
+                errors.append(BrowserProcessError(
+                    "BROWSER_PROCESS_EXITED",
+                    f"Chrome exited unexpectedly with code {code}",
+                    exit_code=code,
+                ))
         if collector is not None:
             attempt("CDP browser close", collector.close_browser)
             attempt("CDP collector close", collector.close)
@@ -464,6 +498,21 @@ class CaptureJob:
                         shutil.rmtree(chrome_profile, ignore_errors=True)
 
             attempt("Chrome quiescence barrier", quiesce_chrome)
+        if browser_health is not None:
+            capture_context["browser_lifecycle"] = browser_health.snapshot()
+            stderr = compact_chrome_stderr(chrome_stderr)
+            try:
+                stderr_path = str(chrome_stderr.relative_to(self.session.directory))
+            except ValueError:
+                stderr_path = chrome_stderr.name
+            capture_context["browser_lifecycle"]["stderr"] = {
+                "path": stderr_path, "bytes": stderr["bytes"],
+                "truncated": stderr["truncated"],
+            }
+            if stderr["bytes"]:
+                self._record(chrome_stderr)
+            attempt("browser lifecycle publication", lambda: write_json_atomic(
+                capture_context_path, capture_context))
         if self._capture_monitor is not None:
             # Bounded tail, no network stimulation and no change to trace
             # causal eligibility. Sensors remain monitored through this wait.
@@ -610,6 +659,7 @@ class CaptureJob:
                 "mihomo_trace": raw_dir / "mihomo-trace.jsonl",
                 "proxy_info": raw_dir / "proxy-info.json",
                 "capture_context": raw_dir / "capture-context.json",
+                "chrome_stderr": raw_dir / "chrome-stderr.log",
                 "netlog": raw_dir / "netlog.json",
                 "cdp": raw_dir / "cdp.json",
                 "tun_pcap": raw_dir / "tun.pcap",
@@ -643,6 +693,7 @@ class CaptureJob:
             / f"proxy_info_{self.spec.domain}_{run_tag}.json",
             "capture_context": logs_dir
             / f"capture_context_{self.spec.domain}_{run_tag}.json",
+            "chrome_stderr": logs_dir / f"chrome_stderr_{self.spec.domain}_{run_tag}.log",
             "netlog": logs_dir / f"netlog_{self.spec.domain}_{run_tag}.json",
             "cdp": logs_dir / f"cdp_{self.spec.domain}_{run_tag}.json",
             "tun_pcap": run_dir / "tun.pcap",

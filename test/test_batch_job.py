@@ -190,6 +190,42 @@ def test_retryable_application_failure_gets_one_fresh_preserved_attempt(tmp_path
     assert child.attempts[1].application_outcome.state == "passed"
 
 
+@pytest.mark.parametrize("code", ["BROWSER_PROCESS_EXITED", "CDP_CONNECTION_LOST"])
+def test_classified_browser_failure_gets_one_fresh_attempt(tmp_path, code):
+    base = _spec(tmp_path, count=1)
+    spec = replace(
+        base,
+        application_retry=ApplicationRetryPolicy(enabled=True, max_retries=1),
+    )
+    calls = []
+
+    class BrowserFailure(RuntimeError):
+        pass
+
+    def factory(child, progress, token):
+        position = len(calls)
+        calls.append(child.job_id)
+
+        def run():
+            if position == 0:
+                error = BrowserFailure("browser vanished")
+                error.code = code
+                raise error
+            return CaptureJobResult(child.job_id, JobState.COMPLETED)
+
+        return _Runnable(run)
+
+    job, result, _ = _execute(spec, factory)
+
+    child = BatchManifest.load(job.manifest_path).children[0]
+    assert result.state is JobState.COMPLETED
+    assert len(calls) == 2
+    assert child.attempts[0].state is BatchChildState.FAILED
+    assert child.attempts[0].error.code == code
+    assert child.attempts[1].state is BatchChildState.COMPLETED
+    assert child.attempts[1].automatic_retry is True
+
+
 @pytest.mark.parametrize(
     ("state", "reason"),
     [

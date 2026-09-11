@@ -146,15 +146,17 @@ sites:
 
 Targets execute serially in YAML order. TrafficTracer waits for the previous managed Chrome process to exit before starting the next target. Use **Interrupt current capture** to stop a running serial group safely. Completed targets are retained, later targets are not started, and **Resume from interrupted target** retries the interrupted URL as a new Session in the same timestamped group. Failed groups remain resumable from their stored cursor.
 
-**Retry classified activity failure once** is enabled by default for YAML
-batches and can be disabled before capture. After analysis explicitly reports
-a supported transient page or playback outcome, the Worker completes cleanup
-and starts one fresh managed Chrome process, Job, and Session. Examples include
-a main-document network/5xx failure, a critical-resource failure burst,
-PLAYER_NOT_CREATED, MEDIA_NOT_ADVANCING, or PRIMARY_CONTENT_NOT_OBSERVED. The
-first attempt remains in batch-manifest.json and the UI exposes both analyses.
-Deterministic 4xx responses such as 404, positive but short playback, capture or
-analysis exceptions, protocol failures, and unknown reasons are not retried.
+**Retry classified transient failure once** is enabled by default for YAML
+batches and can be disabled before capture. After a classified Chrome/CDP loss,
+or after analysis reports a supported transient page/playback outcome, the
+Worker completes cleanup and starts one fresh managed Chrome process, Job, and
+Session. Examples include an unexpected browser exit, CDP loss, a
+main-document DNS/connection/timeout/5xx failure, a critical-resource failure
+burst, PLAYER_NOT_CREATED, MEDIA_NOT_ADVANCING, or
+PRIMARY_CONTENT_NOT_OBSERVED. The first attempt remains in batch-manifest.json,
+including its structured error, and the UI exposes both attempts.
+Deterministic 4xx or TLS certificate errors, positive but short playback,
+packet-capture/analysis/protocol failures, and unknown reasons are not retried.
 
 See [Target configuration](../configuration.md) for normalization and limits.
 The frozen protocol invariant is stored with the Capture Group. Resume reuses it

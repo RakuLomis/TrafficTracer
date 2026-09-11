@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 from threading import Event, Thread
 
+from ..process_env import external_process_env
 from ..utils import logger
 
 
@@ -183,6 +184,7 @@ def start_packet_capture(
             command,
             stdout=subprocess.DEVNULL,
             stderr=stderr_file,
+            env=external_process_env(),
         )
     except FileNotFoundError as exc:
         stderr_file.close()
@@ -273,7 +275,10 @@ def start_tshark(
     if capture_filter:
         command.extend(["-f", capture_filter])
     return subprocess.Popen(
-        command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        command,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        env=external_process_env(),
     )
 
 

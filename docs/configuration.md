@@ -152,24 +152,28 @@ A resumable interruption stops the current child only after managed Chrome, pack
 
 ### Bounded application retry
 
-The UI option **Retry classified activity failure once** is outside
+The UI option **Retry classified transient failure once** is outside
 `sites.yaml`, defaults to enabled, can be explicitly disabled, and is frozen
-into the Batch snapshot. It is evaluated only after a target has completed
-capture, Chrome cleanup, and analysis. A retry requires an explicit failed or
-indeterminate `activity_outcome.reason` from the Worker's fixed transient
-allowlist. A systemic render-critical resource failure burst is the only
-degraded state eligible for retry. The policy does not parse exception text or
-infer failure from a slow page.
+into the Batch snapshot. It covers two evidence-based paths. An unexpected
+managed Chrome exit or CDP transport loss is retried immediately after complete
+sensor/core cleanup. Otherwise, a retry is evaluated only after capture,
+cleanup, and analysis and requires an explicit failed or indeterminate
+`activity_outcome.reason` from the Worker's fixed transient allowlist. A
+systemic render-critical resource failure burst is the only degraded state
+eligible for retry. The policy does not parse exception text or infer failure
+from a slow page.
 
-Eligible reasons cover transient main-document network, timeout, unknown
-response, HTTP 408/429, HTTP 5xx, critical-resource bursts, and classified
-playback startup or progress failures. Deterministic HTTP 4xx responses such as
-404, recovered navigation, and positive playback below its duration goal are
-recorded but are not retried.
+Eligible reasons cover classified Chrome/CDP loss, transient main-document DNS,
+connection, timeout or unknown-response failures, HTTP 408/429, HTTP 5xx,
+critical-resource bursts, and classified playback startup or progress failures.
+Deterministic HTTP 4xx and certificate errors, recovered navigation, packet
+sensor/analysis/protocol failures, and positive playback below its duration
+goal are recorded but are not retried.
 
 At most one automatic retry is created for a target. It uses a new Job UUID,
 managed Chrome profile/process, and Session directory. Batch manifest v2 keeps
-both entries in the child's attempts list and keeps the child's top-level
+both entries in the child's attempts list, including a structured error for a
+failed browser attempt, and keeps the child's top-level
 session_id pointed at the effective final attempt. Resume never resets the
 automatic retry budget.
 

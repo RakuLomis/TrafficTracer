@@ -40,10 +40,13 @@ ApplicationOutcomeResolver = Callable[[str], Mapping[str, Any] | None]
 
 _RETRYABLE_APPLICATION_REASONS = frozenset({
     "CRITICAL_RESOURCE_FAILURE_BURST",
+    "MAIN_DOCUMENT_CONNECTION_ERROR",
+    "MAIN_DOCUMENT_DNS_ERROR",
     "MAIN_DOCUMENT_NETWORK_ERROR",
     "MAIN_DOCUMENT_NOT_OBSERVED",
     "MAIN_DOCUMENT_RESPONSE_UNKNOWN",
     "MAIN_DOCUMENT_SERVER_ERROR",
+    "MAIN_DOCUMENT_TIMEOUT",
     "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR",
     "NAVIGATION_COMPLETION_UNCERTAIN",
     "PLAYBACK_STATE_UNKNOWN",
@@ -52,6 +55,11 @@ _RETRYABLE_APPLICATION_REASONS = frozenset({
     "MEDIA_NOT_READY",
     "MEDIA_NOT_ADVANCING",
     "PRIMARY_CONTENT_NOT_OBSERVED",
+})
+
+_RETRYABLE_CAPTURE_CODES = frozenset({
+    "BROWSER_PROCESS_EXITED",
+    "CDP_CONNECTION_LOST",
 })
 
 
@@ -173,13 +181,32 @@ class SerialBatchJob:
                     except Exception as exc:
                         manifest = self.manifest or manifest
                         code = getattr(exc, "code", "BATCH_CHILD_FAILED")
+                        error = BatchError(
+                            str(code),
+                            exception_message(exc, "batch child failed"),
+                        )
+                        automatic_retries = sum(
+                            attempt.automatic_retry
+                            for attempt in manifest.children[position].attempts
+                        )
+                        if self._should_retry_capture(
+                            str(code), automatic_retries=automatic_retries,
+                        ):
+                            attempt_index += 1
+                            retry_id = self._child_id(position, attempt_index)
+                            manifest = manifest.set_stage(BatchStage.CHECKPOINT)
+                            self._save(manifest)
+                            manifest = manifest.retry_failed_child(
+                                session_id=self.session_for_job(child_spec.job_id),
+                                error=error,
+                                job_id=retry_id,
+                            )
+                            self._save(manifest)
+                            continue
                         manifest = manifest.finish_child(
                             BatchChildState.FAILED,
                             session_id=self.session_for_job(child_spec.job_id),
-                            error=BatchError(
-                                str(code),
-                                exception_message(exc, "batch child failed"),
-                            ),
+                            error=error,
                         )
                         self._save(manifest)
                         if (
@@ -334,6 +361,19 @@ class SerialBatchJob:
         return BatchApplicationOutcome(
             state=str(state),
             reason=str(reason) if isinstance(reason, str) and reason else None,
+        )
+
+    def _should_retry_capture(
+        self,
+        code: str,
+        *,
+        automatic_retries: int,
+    ) -> bool:
+        policy = self.spec.application_retry
+        return (
+            policy.enabled
+            and automatic_retries < policy.max_retries
+            and code in _RETRYABLE_CAPTURE_CODES
         )
 
     def _should_retry_application(
