@@ -43,6 +43,12 @@ hidden from the Session catalog.
 
 The currently published generation appears at `analysis/`. Re-analysis builds in a generation-specific staging directory and atomically replaces the published view only after validation succeeds; artifacts record their generation UUID.
 
+An outer profile/node Pipeline additionally records one attempt history per
+logical matrix cell. Pipeline manifest schema v9 keeps each attempt's Session
+set and analysis-generation IDs. Exactly one terminal attempt is selected; the
+top-level run and aggregate are projections of that attempt. Non-selected
+attempts stay available for auditing and do not inflate logical cell counts.
+
 The layout intentionally avoids directories keyed only by opaque connection IDs. Domain, page type, and readable URL identify page Sessions; stable connection IDs live inside canonical indexes.
 
 ## Session manifest

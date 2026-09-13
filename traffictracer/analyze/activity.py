@@ -74,12 +74,6 @@ def navigation_outcome(cdp: dict) -> dict:
     error_text = str(navigation.get("error_text") or "")
     if error_text:
         base["error_text"] = error_text
-        base["failure_class"] = _network_failure_class(error_text)
-        return _outcome(
-            base, "failed", _main_document_network_reason(base["failure_class"]),
-            origin="remote_network",
-            retryable=base["failure_class"] != "tls_certificate",
-        )
 
     documents = [
         item for item in cdp.get("requests", [])
@@ -118,6 +112,13 @@ def navigation_outcome(cdp: dict) -> dict:
     primary.sort(key=_request_order)
     base["main_document_requests"] = len(primary)
     if not primary:
+        if error_text:
+            base["failure_class"] = _network_failure_class(error_text)
+            return _outcome(
+                base, "failed", _main_document_network_reason(base["failure_class"]),
+                origin=_navigation_error_origin(error_text),
+                retryable=_navigation_error_retryable(error_text),
+            )
         return _outcome(
             base, "indeterminate", "MAIN_DOCUMENT_NOT_OBSERVED",
             origin="evidence_limit", retryable=True,
@@ -145,6 +146,24 @@ def navigation_outcome(cdp: dict) -> dict:
 
     nav_status = str(navigation.get("status") or "")
     base["load_event_observed"] = nav_status in {"loaded", "loaded_after_command_timeout"}
+    navigation_loader_id = str(navigation.get("loader_id") or "")
+    final_loader_id = str(final.get("loader_id") or "")
+    navigation_error_recovered = bool(
+        error_text
+        and nav_status == "loaded"
+        and final_status is not None
+        and 200 <= final_status < 300
+        and seed is not None
+        and navigation_loader_id
+        and final_loader_id == navigation_loader_id
+    )
+    if error_text and not navigation_error_recovered:
+        base["failure_class"] = _network_failure_class(error_text)
+        return _outcome(
+            base, "failed", _main_document_network_reason(base["failure_class"]),
+            origin=_navigation_error_origin(error_text),
+            retryable=_navigation_error_retryable(error_text),
+        )
     prior_http_error = any(status >= 400 for status in status_chain[:-1])
     if final_status in {408, 429}:
         return _outcome(base, "failed", "MAIN_DOCUMENT_TRANSIENT_HTTP_ERROR", origin="remote_site", retryable=True)
@@ -165,6 +184,18 @@ def navigation_outcome(cdp: dict) -> dict:
         return _outcome(base, "indeterminate", "MAIN_DOCUMENT_REDIRECT_INCOMPLETE", origin="remote_site")
     if 200 <= final_status < 300:
         base["completion_evidence"] = "main_document_2xx"
+        if navigation_error_recovered:
+            base["recovered"] = True
+            base["recovery"] = {
+                "observed": True,
+                "kind": "navigation_error_recovered",
+                "intermediate_error": error_text,
+                "final_status": final_status,
+                "loader_id": navigation_loader_id,
+            }
+            # Keep the transient command error as evidence, while treating the
+            # same committed loader's completed response as the final outcome.
+            return _outcome(base, "passed", None)
         if prior_http_error:
             base["recovered"] = True
             base["recovery"] = {
@@ -492,6 +523,20 @@ def _network_failure_class(reason: object) -> str:
     )):
         return "connectivity"
     return "network"
+
+
+def _navigation_error_origin(reason: object) -> str:
+    if "ERR_CERT_VERIFIER_CHANGED" in str(reason or "").upper():
+        return "local_runtime"
+    return "remote_network"
+
+
+def _navigation_error_retryable(reason: object) -> bool:
+    value = str(reason or "").upper()
+    return (
+        "ERR_CERT_VERIFIER_CHANGED" in value
+        or _network_failure_class(value) != "tls_certificate"
+    )
 
 
 def _main_document_network_reason(failure_class: object) -> str:

@@ -159,6 +159,83 @@ def test_navigation_certificate_error_is_typed():
     assert result["failure_class"] == "tls_certificate"
 
 
+def test_transient_navigation_error_with_same_loaded_document_is_recovered():
+    url = "https://v.qq.com/"
+    loader = "main-loader"
+    result = navigation_outcome(_cdp(
+        url,
+        [_document(url, 200, loader_id=loader)],
+        target_id="PAGE",
+        frame_id="MAIN",
+        loader_id=loader,
+        error_text="net::ERR_CERT_VERIFIER_CHANGED",
+    ))
+
+    assert result["state"] == "passed"
+    assert result["reason"] is None
+    assert result["recovered"] is True
+    assert result["origin"] is None
+    assert result["recovery"] == {
+        "observed": True,
+        "kind": "navigation_error_recovered",
+        "intermediate_error": "net::ERR_CERT_VERIFIER_CHANGED",
+        "final_status": 200,
+        "loader_id": loader,
+    }
+
+
+def test_iframe_success_does_not_recover_main_navigation_error():
+    url = "https://v.qq.com/"
+    result = navigation_outcome(_cdp(
+        url,
+        [_document(
+            "https://accounts.example.test/",
+            200,
+            frame="IFRAME",
+            target="PAGE",
+            loader_id="iframe-loader",
+        )],
+        target_id="PAGE",
+        frame_id="MAIN",
+        loader_id="main-loader",
+        error_text="net::ERR_CERT_VERIFIER_CHANGED",
+    ))
+
+    assert result["state"] == "failed"
+    assert result["reason"] == "MAIN_DOCUMENT_TLS_ERROR"
+    assert result["origin"] == "local_runtime"
+    assert result["retryable"] is True
+
+
+def test_different_loader_does_not_recover_navigation_error():
+    url = "https://v.qq.com/"
+    result = navigation_outcome(_cdp(
+        url,
+        [_document(url, 200, loader_id="replacement-loader")],
+        target_id="PAGE",
+        frame_id="MAIN",
+        loader_id="failed-loader",
+        error_text="net::ERR_CERT_VERIFIER_CHANGED",
+    ))
+
+    assert result["state"] == "failed"
+    assert result["reason"] == "MAIN_DOCUMENT_TLS_ERROR"
+    assert result["final_status"] == 200
+    assert result["origin"] == "local_runtime"
+    assert result["retryable"] is True
+
+
+def test_deterministic_certificate_error_remains_non_retryable():
+    url = "https://invalid.example.test/"
+    result = navigation_outcome(_cdp(
+        url, [], error_text="net::ERR_CERT_COMMON_NAME_INVALID",
+    ))
+
+    assert result["state"] == "failed"
+    assert result["origin"] == "remote_network"
+    assert result["retryable"] is False
+
+
 def test_failed_main_document_dns_error_is_typed():
     url = "https://unreachable.example.test/"
     result = navigation_outcome(_cdp(url, [

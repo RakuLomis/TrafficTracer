@@ -6,7 +6,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "pipeline_id", "state", "stage", "created_at", "updated_at", "output_root", "config", "targets", "execution", "policy", "current_run_index", "runs", "restore"],
   "properties": {
-    "schema_version": { "enum": [1, 2, 3, 4, 5, 6, 7, 8] },
+    "schema_version": { "enum": [1, 2, 3, 4, 5, 6, 7, 8, 9] },
     "pipeline_id": { "$ref": "#/$defs/uuid" },
     "state": { "enum": ["created", "validating", "running", "interrupted", "completed", "completed_with_degraded", "completed_with_errors", "failed", "cancelled", "restoring", "restore_failed"] },
     "stage": { "enum": ["queued", "materializing", "activating_profile", "waiting_controller", "selecting_proxy", "draining_connections", "preflight", "starting_batch", "running_batch", "reconciling_batch", "finalizing_batch", "verifying_protocol", "capture_wave", "analysis_wave", "checkpoint", "restoring", "finished"] },
@@ -35,13 +35,25 @@
   },
   "allOf": [
     {
-      "if": { "properties": { "schema_version": { "enum": [7, 8] } }, "required": ["schema_version"] },
+      "if": { "properties": { "schema_version": { "enum": [7, 8, 9] } }, "required": ["schema_version"] },
       "then": {
         "required": ["repetitions_per_candidate", "schedule"],
         "properties": {
           "runs": {
             "items": {
               "required": ["candidate_ordinal", "repetition_index", "repetition_total", "target_index", "session_ids", "application_retry_attempt", "prior_session_ids"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "schema_version": { "const": 9 } }, "required": ["schema_version"] },
+      "then": {
+        "properties": {
+          "runs": {
+            "items": {
+              "required": ["attempts", "selected_attempt"]
             }
           }
         }
@@ -108,6 +120,17 @@
       "required": ["sessions_total", "capture_integrity", "correlation", "application", "application_issues"],
       "properties": {
         "sessions_total": { "type": "integer", "minimum": 0 },
+        "analysis_generations": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["session_id", "generation_id"],
+            "properties": {
+              "session_id": { "$ref": "#/$defs/uuid" },
+              "generation_id": { "$ref": "#/$defs/uuid" }
+            }
+          }
+        },
         "local_runtime": { "$ref": "#/$defs/qualityPlane" },
         "capture_integrity": { "$ref": "#/$defs/qualityPlane" },
         "correlation": { "$ref": "#/$defs/qualityPlane" },
@@ -172,6 +195,25 @@
         "verification": { "$ref": "#/$defs/runVerification" }
       }
     },
+    "runAttempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "state", "observed_protocol", "session_ids", "batch_id", "error", "selected", "started_at", "completed_at"],
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "state": { "enum": ["completed", "degraded", "failed", "interrupted", "skipped", "cancelled"] },
+        "observed_protocol": { "type": "string", "pattern": "^[A-Za-z0-9_-]*$" },
+        "session_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/uuid" } },
+        "batch_id": { "oneOf": [{ "$ref": "#/$defs/uuid" }, { "type": "null" }] },
+        "analysis_job_id": { "$ref": "#/$defs/uuid" },
+        "quality": { "$ref": "#/$defs/runQuality" },
+        "evidence": { "$ref": "#/$defs/runEvidence" },
+        "error": { "$ref": "#/$defs/error" },
+        "selected": { "type": "boolean" },
+        "selection_reason": { "type": "string", "enum": ["only_attempt", "latest_attempt_improved_quality", "prior_attempt_retained_quality_tie", "prior_attempt_retained_retry_regressed", "legacy_manifest_projection"] },
+        "started_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] },
+        "completed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+      }
+    },
     "restoreCheck": {
       "type": "object", "additionalProperties": false,
       "required": ["component", "target", "requested", "observed", "state", "code", "message", "checked_at"],
@@ -201,6 +243,8 @@
         "analysis_job_id": { "$ref": "#/$defs/uuid" },
         "application_retry_attempt": { "type": "integer", "minimum": 0, "maximum": 1 },
         "prior_session_ids": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/uuid" } },
+        "attempts": { "type": "array", "maxItems": 2, "items": { "$ref": "#/$defs/runAttempt" } },
+        "selected_attempt": { "oneOf": [{ "type": "integer", "minimum": 1, "maximum": 2 }, { "type": "null" }] },
         "quality": { "$ref": "#/$defs/runQuality" },
         "evidence": { "$ref": "#/$defs/runEvidence" },
         "resume_attempt": { "type": "integer", "minimum": 0 }, "started_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }, "completed_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }

@@ -60,9 +60,18 @@ begin.
 When the application retry policy classifies a Session as transient and
 retryable, the cell is not retried immediately. The supervisor first completes
 the initial analysis wave, then runs a bounded retry capture wave followed by a
-retry analysis wave. The replacement Session becomes current and earlier raw
-Session IDs remain in `prior_session_ids`, so retry does not discard evidence.
-At most one automatic retry is permitted.
+retry analysis wave. At most one automatic retry is permitted.
+
+Pipeline manifest schema v9 records every terminal attempt with its Session
+IDs, Batch and analysis Job IDs, independent quality/evidence snapshot,
+analysis-generation IDs, error, timestamps, and selection decision. A retry is
+not an unconditional replacement. The supervisor compares local runtime,
+capture integrity, application outcome, main-document completion, and
+correlation evidence in that order. Better evidence wins; an exact tie keeps
+the earlier attempt. The top-level run is a compatibility projection of the
+selected attempt, while `prior_session_ids` contains the non-selected
+Sessions. Thus a retry that reaches a Chrome error page cannot replace an
+earlier completed document, and no raw attempt is deleted.
 
 Pipeline manifest schema v7 makes these barriers evidence-based and records
 `repetitions_per_candidate`, `candidate_ordinal`, `repetition_index`,
@@ -131,6 +140,10 @@ Every matrix cell owns a separate run directory and capture-only Batch checkpoin
 
 Each inner Batch request carries an optional `orchestration` object. The Worker preserves it in `batch-manifest.json`, propagates it to every child capture, and writes it into the Session's `capture-context.json`. Therefore a copied Session remains attributable to its pipeline run even when it is separated from the outer directory.
 
+`pipeline-aggregate.json` counts only the selected attempt in cell and quality
+statistics. It exposes `attempts_total` separately so automatic recovery
+activity remains measurable without double-counting one logical matrix cell.
+
 ## Interruption and application restart
 
 Interrupt is resumable; cancel is terminal. A clean interrupt stops the active capture or analysis Job and restores the original Profile/selector state. Resume reactivates the frozen tuple and invokes the existing Batch resume operation when capture was interrupted. If analysis was interrupted, resume keeps the raw Session and restarts only deferred analysis. Completed cells and completed repetition waves are skipped.
@@ -188,9 +201,23 @@ The desktop progress card is rebuilt from the durable Pipeline and inner Batch
 manifests. After navigating away and back, it shows the active or most recently
 terminal run, current target URL, separate capture/analysis cell counts, frozen
 candidate order, elapsed time, last durable checkpoint, quality planes and
-application issues. Schema v1-v6 Pipeline manifests remain readable. Legacy
+application issues. It also shows the selected attempt, selection reason, and
+the complete attempt history when a retry occurred.
+
+For a terminal historical pipeline, **Reconcile existing analyses** is an
+explicit, non-capturing operation. It reads the currently published immutable
+analysis generation for every attempt, verifies that every referenced Session
+has a summary, refreshes attempt quality, reruns the deterministic selector,
+and persists schema v9. It never starts Chrome, packet capture, or analysis.
+When analyzer logic changed, reanalyze the affected Session explicitly first;
+then reconcile the pipeline. Both the old and new analysis-generation IDs
+remain attributable through Session history and the selected attempt snapshot.
+
+Schema v1-v8 Pipeline manifests remain readable. Legacy
 manifests default to candidate-major execution. Legacy byte fingerprints are
 marked as v1 snapshots and rebound to semantic v2 at the next safe
 materialization checkpoint. Schema v1-v3 manifests migrate to one repetition
-per historical run in memory, and active manifests are persisted as schema v7
-at the next checkpoint.
+per historical run in memory. A legacy retry history without per-attempt
+quality is preserved as limited evidence until explicit reconciliation reads
+its Session summaries. Active or reconciled manifests are persisted as schema
+v9 at the next checkpoint.

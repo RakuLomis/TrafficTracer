@@ -87,6 +87,10 @@ def test_pipeline_manifest_v8_accepts_local_runtime_and_issue_provenance():
     }
     payload["runs"][0]["quality"] = {
         "sessions_total": 1,
+        "analysis_generations": [{
+            "session_id": "5027aee9-c6e4-41de-8625-7ea0869a3307",
+            "generation_id": "78fdab68-4e5d-4b67-9910-33da00a2632a",
+        }],
         "local_runtime": plane,
         "capture_integrity": plane,
         "correlation": plane,
@@ -110,6 +114,36 @@ def test_pipeline_manifest_v8_accepts_local_runtime_and_issue_provenance():
     }
 
     assert validate_contract("pipeline_manifest", payload) is payload
+
+
+def test_pipeline_manifest_v9_records_selected_retry_attempt_history():
+    payload = _fixture("pipeline-manifest-v7-valid.json")
+    payload["schema_version"] = 9
+    run = payload["runs"][0]
+    run["attempts"] = [{
+        "ordinal": 1,
+        "state": run["state"],
+        "observed_protocol": run["observed_protocol"],
+        "session_ids": run["session_ids"],
+        "batch_id": run["batch_id"],
+        "analysis_job_id": run["analysis_job_id"],
+        "evidence": run["evidence"],
+        "error": None,
+        "selected": True,
+        "selection_reason": "only_attempt",
+        "started_at": run["started_at"],
+        "completed_at": run["completed_at"],
+    }]
+    run["selected_attempt"] = 1
+
+    assert validate_contract("pipeline_manifest", payload) is payload
+
+    run["attempts"][0]["selected"] = False
+    del run["selected_attempt"]
+    with pytest.raises(ValidationError) as caught:
+        validate_contract("pipeline_manifest", payload)
+    assert caught.value.path == ("runs", 0, "selected_attempt")
+    assert caught.value.rule == "required"
 
 
 @pytest.mark.parametrize(
