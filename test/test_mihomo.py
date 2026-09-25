@@ -218,3 +218,57 @@ def test_restore_tracing_clears_session_ownership_when_previously_absent():
     mgr.patch_tracing = lambda state: calls.append(state) or state
     mgr.restore_tracing({"enabled": False, "output": ""})
     assert calls == [{"enabled": False, "output": "", "session_id": ""}]
+
+def _runtime_semantics_snapshot():
+    return {
+        "schema_version": 1,
+        "redaction_policy_version": 1,
+        "snapshot_id": "sha256:snapshot",
+        "config_generation": 7,
+        "adapter_instance_id": "adapter-runtime-1",
+        "protocol": "vless",
+        "evidence": {
+            "configured": {},
+            "effective": {},
+            "negotiated": {},
+            "observed": {},
+        },
+        "coverage": {"schema_version": 1, "status": "partial"},
+        "behavior_fingerprint": "sha256:behavior",
+        "build": {"executable_hash_status": "verified_self"},
+    }
+
+
+def test_runtime_semantics_uses_encoded_concrete_leaf_and_validates_contract():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    calls = []
+    expected = _runtime_semantics_snapshot()
+    mgr._api_request = (
+        lambda method, path, body=None: calls.append((method, path, body)) or expected
+    )
+    assert mgr.get_proxy_runtime_semantics("node / reality") == expected
+    assert calls == [(
+        "POST",
+        "/experimental/tracing/proxy-semantics",
+        {"name": "node / reality"},
+    )]
+
+
+def test_runtime_semantics_rejects_missing_name_and_malformed_snapshot():
+    mgr = MihomoManager("mihomo", "cfg.yaml", "http://127.0.0.1:9090")
+    try:
+        mgr.get_proxy_runtime_semantics("")
+    except ValueError as exc:
+        assert "proxy_name" in str(exc)
+    else:
+        raise AssertionError("empty proxy name was accepted")
+
+    mgr._api_request = (
+        lambda method, path, body=None: {"snapshot_id": "partial"}
+    )
+    try:
+        mgr.get_proxy_runtime_semantics("node")
+    except RuntimeError as exc:
+        assert "invalid runtime semantics snapshot" in str(exc)
+    else:
+        raise AssertionError("malformed runtime semantics snapshot was accepted")

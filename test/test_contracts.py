@@ -175,6 +175,26 @@ def test_flow_v2_allows_transport_network_reconciliation_method():
     assert validate_flow_v2(payload) is payload
 
 
+@pytest.mark.parametrize(
+    ("fixture", "validator"),
+    [
+        ("flow-valid.json", validate_flow),
+        ("flow-v2-connection-shared-http2.json", validate_flow_v2),
+    ],
+)
+def test_flow_contracts_accept_explicit_adapter_entropy_fallback(fixture, validator):
+    payload = _fixture(fixture)
+    payload["proxy_semantics"] = {
+        "snapshot_id": "sha256:" + "a" * 64,
+        "config_generation": 1,
+        "adapter_instance_id": "adapter-unavailable-000001",
+        "protocol": "vless",
+        "behavior_fingerprint": "sha256:" + "b" * 64,
+    }
+
+    assert validator(payload) is payload
+
+
 def test_validation_error_is_stable_structured_and_value_safe():
     payload = _fixture("job-valid-analysis.json")
     payload["output_root"] = "sensitive-relative-output"

@@ -105,6 +105,17 @@
         "physical_paths": { "type": "array", "items": { "$ref": "#/$defs/flowTuple" } }
       }
     },
+    "proxySemanticsReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshot_id", "config_generation", "adapter_instance_id", "protocol", "behavior_fingerprint"],
+      "properties": {
+        "snapshot_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "config_generation": { "type": "integer", "minimum": 1 },
+        "adapter_instance_id": { "type": "string", "pattern": "^adapter-([0-9a-f]{16}|unavailable)-[0-9]{6}$" },
+        "protocol": { "type": "string", "pattern": "^[a-z0-9_-]+$", "maxLength": 64 },
+        "behavior_fingerprint": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
     "egress": {
       "type": "object", "additionalProperties": false,
       "required": ["mode", "policy", "selection_chain", "selected_node", "selected_type", "evidence"],
@@ -210,6 +221,7 @@
         "post_flow": { "oneOf": [{ "$ref": "#/$defs/flowTuple" }, { "type": "null" }] },
         "outer_connection_id": { "type": "string", "minLength": 1, "maxLength": 256 },
         "carrier_binding": { "$ref": "#/$defs/carrierBinding" },
+        "proxy_semantics": { "$ref": "#/$defs/proxySemanticsReference" },
         "netlog_source_id": { "type": "integer", "minimum": 1 },
         "endpoint_provenance": {
           "type": "object", "additionalProperties": false,

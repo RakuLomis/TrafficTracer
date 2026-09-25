@@ -47,6 +47,25 @@ class CarrierBinding:
         return bool(self.carrier_id)
 
 
+@dataclass(frozen=True)
+class ProxySemanticsReference:
+    snapshot_id: str
+    config_generation: int
+    adapter_instance_id: str
+    protocol: str
+    behavior_fingerprint: str
+
+    @property
+    def complete(self) -> bool:
+        return bool(
+            self.snapshot_id
+            and self.config_generation > 0
+            and self.adapter_instance_id
+            and self.protocol
+            and self.behavior_fingerprint
+        )
+
+
 def _format_endpoint(ip: str, port: int) -> str:
     if not ip:
         return ""
@@ -146,6 +165,7 @@ class CorrelatedFlowV2:
     proxy_type: str = ""
     leaf_proxy: str = ""
     leaf_proxy_type: str = ""
+    proxy_semantics: ProxySemanticsReference | None = None
     egress_outcome: str = ""
     application_protocol: str = "unknown"
     attempted_protocols: list[str] = field(default_factory=list)

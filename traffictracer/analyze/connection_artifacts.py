@@ -308,6 +308,8 @@ def _connection_record(
         record["outer_connection_id"] = flow.outer_conn_id
     if flow.carrier_binding is not None:
         record["carrier_binding"] = _carrier_binding_payload(flow.carrier_binding)
+    if flow.proxy_semantics is not None:
+        record["proxy_semantics"] = asdict(flow.proxy_semantics)
     return record
 
 

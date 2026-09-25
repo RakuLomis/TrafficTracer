@@ -42,6 +42,11 @@ from .chrome import (
 from .mihomo import MihomoManager
 from .netlog_fix import repair_truncated_netlog
 from .profile import remove_owned_cold_profile
+from .proxy_semantics import (
+    create_runtime_semantics_artifact,
+    finish_runtime_semantics_artifact,
+    runtime_semantics_summary,
+)
 from .quiescence import verify_chrome_quiescence
 from .tshark import CaptureMonitor, PacketCaptureError, capture_output_complete, start_packet_capture, stop_packet_capture
 
@@ -140,6 +145,8 @@ class CaptureJob:
         chrome_proc = None
         browser_health = None
         collector = None
+        runtime_semantics_leaf = ""
+        runtime_semantics_artifact: dict[str, Any] | None = None
 
         capture_context = {
             "trace_policy": {
@@ -226,6 +233,44 @@ class CaptureJob:
             write_json_atomic(paths["capture_context"], capture_context)
             write_json_atomic(paths["proxy_info"], proxy_info)
             self._record(paths["proxy_info"])
+
+            selected_scope = protocol_snapshot.get("selected_scope", {})
+            if selected and isinstance(selected_scope, dict):
+                runtime_semantics_leaf = str(
+                    selected_scope.get("leaf_node", "") or ""
+                ).strip()
+            if runtime_semantics_leaf:
+                self.progress.emit(
+                    JobState.PREPARING,
+                    JobStage.CORE_CONFIGURE,
+                    0.13,
+                    operation="core.runtime_proxy_semantics",
+                )
+                start_semantics = self.mihomo.get_proxy_runtime_semantics(
+                    runtime_semantics_leaf,
+                )
+                runtime_semantics_artifact = (
+                    create_runtime_semantics_artifact(start_semantics)
+                )
+                write_json_atomic(
+                    paths["proxy_semantics"], runtime_semantics_artifact,
+                )
+                self._record(paths["proxy_semantics"])
+                capture_context["proxy_semantics"] = {
+                    **runtime_semantics_summary(runtime_semantics_artifact),
+                    "artifact": str(
+                        paths["proxy_semantics"].relative_to(
+                            self.session.directory,
+                        )
+                    ),
+                }
+            else:
+                capture_context["proxy_semantics"] = {
+                    "schema_version": 1,
+                    "state": "not_scoped",
+                    "reason": "no concrete proxy leaf selected for this capture",
+                }
+            write_json_atomic(paths["capture_context"], capture_context)
 
             if self.spec.options.capture_packets:
                 self.cancellation.checkpoint()
@@ -422,6 +467,9 @@ class CaptureJob:
                 tracing_configured=tracing_configured,
                 capture_context=capture_context,
                 capture_context_path=paths["capture_context"],
+                runtime_semantics_leaf=runtime_semantics_leaf,
+                runtime_semantics_artifact=runtime_semantics_artifact,
+                runtime_semantics_path=paths["proxy_semantics"],
                 suppress_errors=sys.exc_info()[0] is not None,
             )
 
@@ -439,6 +487,9 @@ class CaptureJob:
         tracing_configured: bool,
         capture_context: dict[str, Any],
         capture_context_path: Path,
+        runtime_semantics_leaf: str,
+        runtime_semantics_artifact: dict[str, Any] | None,
+        runtime_semantics_path: Path,
         suppress_errors: bool,
     ) -> None:
         errors: list[Exception] = []
@@ -548,6 +599,28 @@ class CaptureJob:
             coverage["status"] = "failed" if errors or "browser_quiescent" not in coverage else "passed"
             coverage["errors"] = [str(error)[:1000] for error in errors]
             attempt("packet coverage publication", lambda: write_json_atomic(capture_context_path, capture_context))
+        if runtime_semantics_artifact is not None:
+            try:
+                end_semantics = self.mihomo.get_proxy_runtime_semantics(
+                    runtime_semantics_leaf,
+                )
+                runtime_semantics_artifact = finish_runtime_semantics_artifact(
+                    runtime_semantics_artifact, end_semantics,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Runtime proxy semantics end snapshot failed: %s", exc,
+                )
+                runtime_semantics_artifact = finish_runtime_semantics_artifact(
+                    runtime_semantics_artifact, None, error=str(exc)[:1000],
+                )
+            write_json_atomic(runtime_semantics_path, runtime_semantics_artifact)
+            summary = runtime_semantics_summary(runtime_semantics_artifact)
+            summary["artifact"] = str(
+                runtime_semantics_path.relative_to(self.session.directory)
+            )
+            capture_context["proxy_semantics"] = summary
+            write_json_atomic(capture_context_path, capture_context)
         if tracing_configured:
             def persist_protocol_observation(boundary: dict[str, Any]) -> None:
                 observation = observed_proxy_protocols(
@@ -659,6 +732,7 @@ class CaptureJob:
                 "mihomo_trace": raw_dir / "mihomo-trace.jsonl",
                 "proxy_info": raw_dir / "proxy-info.json",
                 "capture_context": raw_dir / "capture-context.json",
+                "proxy_semantics": raw_dir / "proxy-semantics.json",
                 "chrome_stderr": raw_dir / "chrome-stderr.log",
                 "netlog": raw_dir / "netlog.json",
                 "cdp": raw_dir / "cdp.json",
@@ -693,6 +767,8 @@ class CaptureJob:
             / f"proxy_info_{self.spec.domain}_{run_tag}.json",
             "capture_context": logs_dir
             / f"capture_context_{self.spec.domain}_{run_tag}.json",
+            "proxy_semantics": logs_dir
+            / f"proxy_semantics_{self.spec.domain}_{run_tag}.json",
             "chrome_stderr": logs_dir / f"chrome_stderr_{self.spec.domain}_{run_tag}.log",
             "netlog": logs_dir / f"netlog_{self.spec.domain}_{run_tag}.json",
             "cdp": logs_dir / f"cdp_{self.spec.domain}_{run_tag}.json",

@@ -173,6 +173,7 @@ def persist_analysis_artifacts(
         "storage": _storage_summary(session, results),
         "carrier_bindings": _carrier_binding_summary(items),
         "proxy_protocol": _capture_protocol_summary(session),
+        "proxy_semantics": _capture_proxy_semantics_summary(session),
         "packet_coverage": [context["packet_coverage"] for context in _capture_contexts(session)
                             if isinstance(context.get("packet_coverage"), dict)],
         "inbound": _capture_inbound_summary(session, items),
@@ -584,6 +585,31 @@ def _capture_protocol_summary(session: Path) -> dict:
     }
 
 
+def _capture_proxy_semantics_summary(session: Path) -> dict:
+    snapshots = [
+        context.get("proxy_semantics", {})
+        for context in _capture_contexts(session)
+        if isinstance(context.get("proxy_semantics"), dict)
+    ]
+    if not snapshots:
+        return {"state": "unavailable"}
+    latest = snapshots[-1]
+    verification = latest.get("verification", {})
+    return {
+        "state": (
+            verification.get("state", latest.get("state", "unavailable"))
+            if isinstance(verification, dict)
+            else latest.get("state", "unavailable")
+        ),
+        "protocol": latest.get("protocol", ""),
+        "config_generation": latest.get("config_generation"),
+        "adapter_instance_id": latest.get("adapter_instance_id", ""),
+        "behavior_fingerprint": latest.get("behavior_fingerprint", ""),
+        "coverage": latest.get("coverage", {}),
+        "artifact": latest.get("artifact", ""),
+    }
+
+
 def _capture_inbound_summary(session: Path, items: list[dict]) -> dict:
     contexts = _capture_contexts(session)
     inbound = contexts[-1].get("inbound", {}) if contexts else {}
@@ -935,6 +961,14 @@ def _flow_item(
         item["outer_conn_id"] = mapping.outer_conn_id
     if mapping.carrier_binding is not None:
         item["carrier_binding"] = _carrier_binding_payload(mapping.carrier_binding)
+    if mapping.proxy_semantics is not None:
+        item["proxy_semantics"] = {
+            "snapshot_id": mapping.proxy_semantics.snapshot_id,
+            "config_generation": mapping.proxy_semantics.config_generation,
+            "adapter_instance_id": mapping.proxy_semantics.adapter_instance_id,
+            "protocol": mapping.proxy_semantics.protocol,
+            "behavior_fingerprint": mapping.proxy_semantics.behavior_fingerprint,
+        }
     if mapping.egress_outcome:
         item["egress_outcome"] = mapping.egress_outcome
     if mapping.inbound_name:

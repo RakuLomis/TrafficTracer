@@ -133,6 +133,7 @@ def test_manifest_updates_cannot_move_time_backward():
     ("path", "role"),
     [
         ("raw/capture-context.json", "capture_context"),
+        ("raw/proxy-semantics.json", "proxy_semantics"),
         ("raw/mihomo-trace.jsonl", "mihomo_trace"),
         ("raw/netlog.json", "netlog"),
         ("raw/cdp.json", "cdp_events"),

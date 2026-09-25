@@ -9,7 +9,7 @@ import json
 import re
 from pathlib import Path
 
-from ..models import CarrierBinding, FlowTuple
+from ..models import CarrierBinding, FlowTuple, ProxySemanticsReference
 from .outcomes import terminal_error_class
 
 _ADDR_ANNOTATION_RE = re.compile(r"\([^)]*\)$")
@@ -20,6 +20,29 @@ _NON_PROXY_TYPES = frozenset({"direct", "reject", "rejectdrop", "dns", "pass", "
 
 def _normalize_proxy_type(value: object) -> str:
     return str(value or "").lower().replace("-", "").replace("_", "")
+
+
+def _event_proxy_semantics(
+    event: dict,
+) -> ProxySemanticsReference | None:
+    snapshot_id = str(event.get("snapshot_id", "") or "")
+    adapter_instance_id = str(event.get("adapter_instance_id", "") or "")
+    protocol = _normalize_proxy_type(event.get("adapter_protocol", ""))
+    behavior_fingerprint = str(
+        event.get("behavior_fingerprint", "") or ""
+    )
+    try:
+        config_generation = int(event.get("config_generation", 0) or 0)
+    except (TypeError, ValueError):
+        config_generation = 0
+    reference = ProxySemanticsReference(
+        snapshot_id=snapshot_id,
+        config_generation=config_generation,
+        adapter_instance_id=adapter_instance_id,
+        protocol=protocol,
+        behavior_fingerprint=behavior_fingerprint,
+    )
+    return reference if reference.complete else None
 
 
 def _clean_addr(raw: str) -> str:
@@ -82,6 +105,7 @@ class TcpProxyDial:
     carrier_generation: int = 0
     carrier_protocol: str = ""
     carrier_paths: tuple[FlowTuple, ...] = ()
+    proxy_semantics: ProxySemanticsReference | None = None
     event_seq: int = 0
     leaf_proxy: str = ""
     leaf_proxy_type: str = ""
@@ -141,6 +165,7 @@ class UdpProxyDial:
     carrier_generation: int = 0
     carrier_protocol: str = ""
     carrier_paths: tuple[FlowTuple, ...] = ()
+    proxy_semantics: ProxySemanticsReference | None = None
     event_seq: int = 0
     leaf_proxy: str = ""
     leaf_proxy_type: str = ""
@@ -183,6 +208,7 @@ class CarrierLifecycleRecord:
     relation: str
     generation: int
     protocol: str
+    proxy_semantics: ProxySemanticsReference | None
     post_flow: FlowTuple | None
     physical_paths: tuple[FlowTuple, ...]
 
@@ -414,6 +440,7 @@ def parse_carrier_events(
             relation=str(event.get("carrier_relation", "")),
             generation=int(event.get("carrier_generation", 0) or 0),
             protocol=_event_carrier_protocol(event),
+            proxy_semantics=_event_proxy_semantics(event),
             post_flow=parse_flow_tuple(event.get("post_flow")),
             physical_paths=_event_carrier_paths(event),
         ))
@@ -535,6 +562,7 @@ def parse_tracing_log(
                 carrier_generation=int(event.get("carrier_generation", 0) or 0),
                 carrier_protocol=_event_carrier_protocol(event),
                 carrier_paths=_event_carrier_paths(event),
+                proxy_semantics=_event_proxy_semantics(event),
                 event_seq=int(event.get("event_seq", 0) or 0),
                 leaf_proxy=event.get("leaf_proxy", ""),
                 leaf_proxy_type=event.get("leaf_proxy_type", ""),
@@ -591,6 +619,7 @@ def parse_udp_tracing_log(
                 carrier_generation=int(event.get("carrier_generation", 0) or 0),
                 carrier_protocol=_event_carrier_protocol(event),
                 carrier_paths=_event_carrier_paths(event),
+                proxy_semantics=_event_proxy_semantics(event),
                 leaf_proxy=event.get("leaf_proxy", ""),
                 leaf_proxy_type=event.get("leaf_proxy_type", ""),
                 egress_outcome=event.get("egress_outcome", ""),

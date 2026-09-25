@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import ipaddress
 
-from ..models import CarrierBinding, FlowTuple
+from ..models import CarrierBinding, FlowTuple, ProxySemanticsReference
 from .mihomo_log import MihomoConnection, UdpConnection, parse_tracing_log, parse_udp_tracing_log
 
 
@@ -22,6 +22,7 @@ class FlowMapping:
     error_class_source: str = "unavailable"
     egress_outcome: str = ""
     carrier_binding: CarrierBinding | None = None
+    proxy_semantics: ProxySemanticsReference | None = None
     inbound_name: str = ""
     leaf_proxy_type: str = ""
 
@@ -99,6 +100,7 @@ def _tcp_mapping(conn: MihomoConnection) -> FlowMapping | None:
         pre_flow=pre,
         post_flow=dial.post_flow if dial else None,
         carrier_binding=_carrier_binding(dial),
+        proxy_semantics=dial.proxy_semantics if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
         stage=close.stage if close else "",
@@ -122,6 +124,7 @@ def _udp_mapping(conn: UdpConnection) -> FlowMapping | None:
         pre_flow=pre,
         post_flow=dial.post_flow if dial else None,
         carrier_binding=_carrier_binding(dial),
+        proxy_semantics=dial.proxy_semantics if dial else None,
         status=close.status if close and close.status else ("mapped" if dial and dial.post_flow else "pending"),
         error=close.error if close else "",
         stage=close.stage if close else "",

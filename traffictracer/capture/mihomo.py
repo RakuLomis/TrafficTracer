@@ -236,6 +236,40 @@ class MihomoManager:
             })
         return result
 
+    def get_proxy_runtime_semantics(self, proxy_name: str) -> dict:
+        """Return Mihomo's redacted semantics for one concrete runtime leaf."""
+        normalized = str(proxy_name or "").strip()
+        if not normalized:
+            raise ValueError("proxy_name is required for runtime semantics")
+        snapshot = self._api_request(
+            "POST",
+            "/experimental/tracing/proxy-semantics",
+            {"name": normalized},
+        )
+        required = {
+            "schema_version", "redaction_policy_version", "snapshot_id",
+            "config_generation", "adapter_instance_id", "protocol",
+            "evidence", "coverage", "behavior_fingerprint", "build",
+        }
+        if not isinstance(snapshot, dict) or not required.issubset(snapshot):
+            raise RuntimeError("Mihomo returned an invalid runtime semantics snapshot")
+        if (
+            not isinstance(snapshot["config_generation"], int)
+            or snapshot["config_generation"] <= 0
+            or not all(
+                isinstance(snapshot[key], str) and bool(snapshot[key])
+                for key in (
+                    "snapshot_id", "adapter_instance_id", "protocol",
+                    "behavior_fingerprint",
+                )
+            )
+            or not isinstance(snapshot["evidence"], dict)
+            or not isinstance(snapshot["coverage"], dict)
+            or not isinstance(snapshot["build"], dict)
+        ):
+            raise RuntimeError("Mihomo returned malformed runtime semantics evidence")
+        return snapshot
+
     def get_proxy_protocol_snapshot(self, selection_group: str = "") -> dict:
         selections = self.get_proxy_info()
         inventory_protocols = sorted({

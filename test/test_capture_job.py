@@ -89,6 +89,22 @@ class FakeMihomo:
         }
 
 
+    def get_proxy_runtime_semantics(self, proxy_name):
+        self.events.append(f"proxy:semantics:{proxy_name}")
+        return {
+            "schema_version": 1,
+            "redaction_policy_version": 1,
+            "snapshot_id": "sha256:" + "a" * 64,
+            "config_generation": 3,
+            "adapter_instance_id": "adapter-0123456789abcdef-000001",
+            "protocol": "hysteria2",
+            "evidence": {},
+            "coverage": {"status": "partial"},
+            "behavior_fingerprint": "sha256:" + "b" * 64,
+            "build": {"executable_sha256": "sha256:" + "c" * 64},
+        }
+
+
     def restore_tracing(self, state):
         self.events.append("tracing:restore")
 
@@ -763,3 +779,41 @@ def test_strict_capture_does_not_reject_mixed_inventory_before_trace(tmp_path, m
     assert result.state is JobState.COMPLETED
     assert "start:tun" in events
     assert events[-1] == "tracing:restore"
+
+
+def test_scoped_capture_persists_start_and_end_runtime_semantics(
+    tmp_path, monkeypatch,
+):
+    events = []
+    job, _, _ = _job(tmp_path, monkeypatch, events)
+
+    class ScopedMihomo(FakeMihomo):
+        def get_proxy_protocol_snapshot(self):
+            self.events.append("proxy:protocol")
+            return {
+                "mode": "strict_single",
+                "status": "single",
+                "protocols": ["hysteria2"],
+                "expected_protocol": "hysteria2",
+                "selected_scope": {
+                    "leaf_node": "runtime leaf",
+                    "leaf_type": "Hysteria2",
+                },
+                "selections": [],
+            }
+
+    job.mihomo = ScopedMihomo(events)
+    result = job.run()
+
+    artifact_path = next(
+        (tmp_path / "logs").glob("proxy_semantics_*.json")
+    )
+    artifact = json.loads(artifact_path.read_text())
+    context = json.loads(
+        next((tmp_path / "logs").glob("capture_context_*.json")).read_text()
+    )
+    assert result.state is JobState.COMPLETED
+    assert events.count("proxy:semantics:runtime leaf") == 2
+    assert artifact["verification"]["state"] == "passed"
+    assert context["proxy_semantics"]["verification"]["state"] == "passed"
+    assert context["proxy_semantics"]["artifact"] in result.artifacts

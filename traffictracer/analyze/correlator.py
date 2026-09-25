@@ -185,6 +185,11 @@ def correlate_v2(
                 if mconn and mconn.proxy_dial
                 else None
             ),
+            proxy_semantics=(
+                mconn.proxy_dial.proxy_semantics
+                if mconn and mconn.proxy_dial
+                else None
+            ),
             proxy=(
                 mconn.proxy_dial.proxy
                 if mconn and mconn.proxy_dial
@@ -320,6 +325,7 @@ def correlate_cdp_direct(
             connection_reused=rep.connection_reused,
             terminal=_terminal_from_close(mconn.close),
             carrier_binding=_binding_from_dial(mconn.proxy_dial),
+            proxy_semantics=mconn.proxy_dial.proxy_semantics if mconn.proxy_dial else None,
         ))
 
     if udp_conns:
@@ -397,6 +403,10 @@ def _correlate_cdp_udp(
             outer_conn_id=rich.proxy_dial.outer_conn_id if rich and rich.proxy_dial else "",
             carrier_binding=_binding_from_dial(
                 rich.proxy_dial if rich and rich.proxy_dial else None
+            ),
+            proxy_semantics=(
+                rich.proxy_dial.proxy_semantics
+                if rich and rich.proxy_dial else None
             ),
             proxy=rich.proxy_dial.proxy if rich and rich.proxy_dial else "",
             proxy_type=(

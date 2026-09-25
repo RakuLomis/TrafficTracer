@@ -426,6 +426,7 @@ def _role(path: str) -> str:
         "phys.pcap": "physical_pcap",
         "capture_context.json": "capture_context",
         "capture-context.json": "capture_context",
+        "proxy-semantics.json": "proxy_semantics",
         "mihomo-trace.jsonl": "mihomo_trace",
         "netlog.json": "netlog",
         "cdp.json": "cdp_events",
@@ -441,6 +442,8 @@ def _role(path: str) -> str:
         return "derived_pcap"
     if name.startswith("mihomo_trace_"):
         return "mihomo_trace"
+    if name.startswith("proxy_semantics_"):
+        return "proxy_semantics"
     if name.startswith("netlog_"):
         return "netlog"
     if name.startswith("cdp_"):

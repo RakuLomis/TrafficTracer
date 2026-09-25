@@ -477,6 +477,7 @@ def _udp_as_mihomo_candidates(
                 carrier_generation=proxy_dial.carrier_generation,
                 carrier_protocol=proxy_dial.carrier_protocol,
                 carrier_paths=proxy_dial.carrier_paths,
+                proxy_semantics=proxy_dial.proxy_semantics,
                 event_seq=proxy_dial.event_seq,
                 leaf_proxy=proxy_dial.leaf_proxy,
                 leaf_proxy_type=proxy_dial.leaf_proxy_type,

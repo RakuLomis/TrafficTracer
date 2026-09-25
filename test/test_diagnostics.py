@@ -33,6 +33,7 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
         "supports_logical_carrier_binding",
         "supports_multi_path_carrier",
         "supports_protocol_snapshot",
+        "supports_runtime_proxy_semantics",
     ]
     monkeypatch.setattr(
         environment,
@@ -47,6 +48,7 @@ def test_controller_diagnostics_distinguish_unreachable_and_wrong_core(monkeypat
             "supports_logical_carrier_binding": True,
             "supports_multi_path_carrier": True,
             "supports_protocol_snapshot": True,
+            "supports_runtime_proxy_semantics": True,
         },
     )
     assert environment.check_controller("http://127.0.0.1:9090").code == "CORE_READY"
@@ -140,6 +142,7 @@ def test_environment_report_keeps_all_checks_and_stable_fields(tmp_path, monkeyp
             "supports_logical_carrier_binding": True,
             "supports_multi_path_carrier": True,
             "supports_protocol_snapshot": True,
+            "supports_runtime_proxy_semantics": True,
         },
     )
     monkeypatch.setattr(

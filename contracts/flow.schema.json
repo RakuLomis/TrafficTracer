@@ -44,6 +44,7 @@
     "outer_conn_id": { "type": "string" },
     "inbound_name": { "type": "string" },
     "carrier_binding": { "$ref": "#/$defs/carrierBinding" },
+    "proxy_semantics": { "$ref": "#/$defs/proxySemanticsReference" },
     "carrier_state": { "enum": ["exclusive_bound", "shared_bound", "not_applicable", "failed_before_carrier", "observation_missing"] },
     "egress_outcome": {
       "enum": ["direct", "proxy", "rejected", "rejected_drop", "internal_dns", "pass", "compatible", "unknown"]
@@ -94,6 +95,17 @@
         "generation": { "type": "integer", "minimum": 0 },
         "protocol": { "type": "string", "minLength": 1 },
         "physical_paths": { "type": "array", "items": { "$ref": "#/$defs/flowTuple" } }
+      }
+    },
+    "proxySemanticsReference": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshot_id", "config_generation", "adapter_instance_id", "protocol", "behavior_fingerprint"],
+      "properties": {
+        "snapshot_id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "config_generation": { "type": "integer", "minimum": 1 },
+        "adapter_instance_id": { "type": "string", "pattern": "^adapter-([0-9a-f]{16}|unavailable)-[0-9]{6}$" },
+        "protocol": { "type": "string", "pattern": "^[a-z0-9_-]+$", "maxLength": 64 },
+        "behavior_fingerprint": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       }
     },
     "terminal": {
