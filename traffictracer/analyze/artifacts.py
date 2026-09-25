@@ -19,6 +19,7 @@ from .activity import session_activity_outcomes
 from .flow_index import FlowIndex, FlowMapping
 from .mihomo_log import trace_snapshot_info
 from .outcomes import (
+    egress_evidence_kind,
     outcome_without_socket,
     post_flow_disposition, record_without_socket, terminal_error_class,
     terminal_is_failure,
@@ -951,6 +952,10 @@ def _flow_item(
         item["carrier_state"] = "failed_before_carrier"
     else:
         item["carrier_state"] = "observation_missing"
+    evidence_record = dict(item)
+    if mapping.leaf_proxy_type:
+        evidence_record["leaf_proxy_type"] = mapping.leaf_proxy_type
+    item["egress_evidence_kind"] = egress_evidence_kind(evidence_record)
     return item
 
 
@@ -1042,7 +1047,28 @@ def _warnings(
         ))
     dispositions = Counter(item["post_flow_disposition"] for item in items)
     tail_incomplete = sum(_capture_tail_unattributed(item) for item in items)
-    unexplained_missing = dispositions["unexpected_missing"] - tail_incomplete
+    actionable_items = [
+        item for item in items if not _capture_tail_unattributed(item)
+    ]
+    evidence_counts = Counter(
+        str(item.get("egress_evidence_kind") or egress_evidence_kind(item))
+        for item in actionable_items
+    )
+    if evidence_counts["carrier_binding_unavailable"]:
+        warnings.append(_warning(
+            "CARRIER_BINDING_UNAVAILABLE",
+            evidence_counts["carrier_binding_unavailable"],
+            "Some capture-global shared-carrier flows lack an explicit carrier binding.",
+            scope="capture_global",
+        ))
+    if evidence_counts["carrier_path_unavailable"]:
+        warnings.append(_warning(
+            "CARRIER_PATH_UNAVAILABLE",
+            evidence_counts["carrier_path_unavailable"],
+            "Some capture-global carriers lack an observed physical path.",
+            scope="capture_global",
+        ))
+    unexplained_missing = evidence_counts["egress_unavailable"]
     if unexplained_missing:
         warnings.append(_warning(
             "POST_FLOW_UNAVAILABLE",
@@ -1131,18 +1157,22 @@ def analysis_quality(
         record.get("match", {}).get("status", "unmatched")
         for record in page_connections
     )
-
-    established = sum(
-        record.get("post_flow") is not None
+    evidence_counts = Counter(
+        str(
+            record.get("egress_evidence_kind")
+            or egress_evidence_kind(record)
+        )
         for record in socket_applicable_connections
     )
-    failed_before_socket = sum(
-        record.get("post_flow") is None
-        and terminal_is_failure(record)
-        for record in socket_applicable_connections
+    established = (
+        evidence_counts["exclusive_socket"]
+        + evidence_counts["shared_carrier"]
     )
+    failed_before_socket = evidence_counts["failed_before_socket"]
     unavailable = (
-        len(socket_applicable_connections) - established - failed_before_socket
+        evidence_counts["carrier_binding_unavailable"]
+        + evidence_counts["carrier_path_unavailable"]
+        + evidence_counts["egress_unavailable"]
     )
 
     split_mode = pcap_payload.get("split_mode", "none")
@@ -1188,6 +1218,13 @@ def analysis_quality(
             "established": established,
             "failed_before_socket": failed_before_socket,
             "unavailable": unavailable,
+        },
+        "egress_evidence": {
+            "exclusive_socket": evidence_counts["exclusive_socket"],
+            "shared_carrier": evidence_counts["shared_carrier"],
+            "carrier_binding_unavailable": evidence_counts["carrier_binding_unavailable"],
+            "carrier_path_unavailable": evidence_counts["carrier_path_unavailable"],
+            "egress_unavailable": evidence_counts["egress_unavailable"],
         },
         "pcap_extraction": {
             "requested": split_mode == "unique_connections",
@@ -1248,6 +1285,8 @@ ANALYSIS_INTEGRITY_CODES = frozenset({
     "TRANSPORT_UNMATCHED",
     "TRANSPORT_AMBIGUOUS",
     "EGRESS_UNAVAILABLE",
+    "CARRIER_BINDING_UNAVAILABLE",
+    "CARRIER_PATH_UNAVAILABLE",
     "PCAP_PRE_EMPTY",
     "PCAP_POST_UNAVAILABLE",
 })
@@ -1436,15 +1475,31 @@ def _quality_warnings(
             "Observed page network failures ended before an egress socket was established.",
             scope="page_attributed", severity="info",
         ))
-    unavailable = sum(
-        record.get("post_flow") is None
-        and not terminal_is_failure(record)
+    evidence_counts = Counter(
+        str(
+            record.get("egress_evidence_kind")
+            or egress_evidence_kind(record)
+        )
         for record in socket_applicable_connections
     )
-    if unavailable:
+    if evidence_counts["carrier_binding_unavailable"]:
+        warnings.append(_warning(
+            "CARRIER_BINDING_UNAVAILABLE",
+            evidence_counts["carrier_binding_unavailable"],
+            "Some shared-carrier logical flows lack an explicit carrier binding.",
+            scope="page_attributed",
+        ))
+    if evidence_counts["carrier_path_unavailable"]:
+        warnings.append(_warning(
+            "CARRIER_PATH_UNAVAILABLE",
+            evidence_counts["carrier_path_unavailable"],
+            "Some logical flows identify a carrier but lack an observed physical path.",
+            scope="page_attributed",
+        ))
+    if evidence_counts["egress_unavailable"]:
         warnings.append(_warning(
             "EGRESS_UNAVAILABLE",
-            unavailable,
+            evidence_counts["egress_unavailable"],
             "Some page-attributed flows have no complete egress tuple.",
             scope="page_attributed",
         ))
@@ -1827,6 +1882,8 @@ def _quality_state(
         "TRANSPORT_AMBIGUOUS",
         "EGRESS_DIAL_FAILED",
         "EGRESS_UNAVAILABLE",
+        "CARRIER_BINDING_UNAVAILABLE",
+        "CARRIER_PATH_UNAVAILABLE",
         "PCAP_PRE_EMPTY",
         "PCAP_POST_UNAVAILABLE",
         "TARGET_DOCUMENT_NON_NETWORK",

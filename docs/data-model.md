@@ -177,6 +177,25 @@ unique, the endpoint remains unresolved.
 
 Only `unexpected_missing` is counted as an unexplained egress gap.
 
+## Egress evidence kind
+
+`egress_evidence_kind` describes the strongest persisted egress evidence
+without claiming that a logical flow owns a shared physical transport:
+
+| Value | Meaning |
+| --- | --- |
+| `exclusive_socket` | A physical socket is exclusively attributable to the logical flow. |
+| `shared_carrier` | The logical flow is bound to an observed shared physical carrier. |
+| `explicit_no_socket` | Policy intentionally produced no external socket. |
+| `failed_before_socket` | The route failed before an egress socket or carrier existed. |
+| `local_not_applicable` | External egress does not apply to the local endpoint. |
+| `carrier_binding_unavailable` | A shared-carrier protocol succeeded logically, but no carrier identity was emitted. |
+| `carrier_path_unavailable` | A carrier identity exists, but its physical tuple was not observed. |
+| `egress_unavailable` | An otherwise socket-applicable flow lacks usable egress evidence. |
+
+For AnyTLS UDP-over-TCP, the pre-proxy flow can be UDP while the shared carrier
+path is TCP. This is a protocol transformation, not a transport mismatch.
+
 ## Attribution scope
 
 `attribution_scope` answers whether a logical connection belongs to the requested page:

@@ -16,6 +16,15 @@ not unique and do not identify the selector whose state must be changed. Every
 selected `sites.yaml` entry remains an independent target; entries are not
 deduplicated by domain.
 
+`selection_group` must resolve to a manual Mihomo `Selector`. A requested node
+must be a member of that selector and must not itself be an automatic
+`URLTest`, `Fallback`, or `LoadBalance` group. Those groups may change their
+effective leaf without an explicit experiment transition, so treating them as
+candidates would make queue identity and provenance misleading. The UI lists
+manual selectors structurally instead of guessing one from its display name;
+the backend repeats the same validation when adding, starting, and
+materializing candidates.
+
 ## Ownership
 
 Clash Verge owns the outer supervisor because it owns Profiles, effective core

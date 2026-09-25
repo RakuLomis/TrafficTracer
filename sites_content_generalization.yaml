@@ -1,0 +1,324 @@
+sites:
+
+  # Cross-content confirmatory target pool.
+  #
+  # Current-schema identity mapping:
+  #   business_label = domain + "::" + traffic_type
+  #   content_id     = page_type
+  #   visit_id       = generated independently by TrafficTracer for every run
+  #   deployment_id  = selected by the UI profile/node pipeline
+  #
+  # `traffic_type` values other than tcp/udp/all are intentionally normalized
+  # to run_label with network=all. The preview warning stating that behavior is
+  # expected and is not a configuration error.
+  #
+  # Capture protocol:
+  # - Main confirmatory set: select targets 1-30 in the UI (indexes 0-29).
+  # - Bilibili preflight: select targets 31-35 only (indexes 30-34).
+  # - Configure repetition=5 and select only the SS and VLESS deployments for
+  #   the confirmatory run. Rotate their order between repetitions.
+  # - Use a fresh cold Chrome profile for every visit.
+  # - Every target uses the same 60-second observation window. Downstream
+  #   analysis should additionally compare a common post-navigation window.
+  # - Query parameters are part of content identity and must be preserved.
+  #
+  # Bilibili is deliberately present as a separate candidate pool. The current
+  # worker only emits deterministic playback confirmation for YouTube, so the
+  # Bilibili preflight must separately audit primary playback, selected routing,
+  # strict pairing coverage, and feature quality before formal collection.
+
+  # ============================================================
+  # A. youtube.com::video_playback (five contents)
+  # ============================================================
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=sAWK0mgrMp4"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: yt-video-01
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=aircAruvnKk"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: yt-video-02
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: yt-video-03
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=eRsGyueVLvQ"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: yt-video-04
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/watch?v=R6MlUcmOul8"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: yt-video-05
+    playback:
+      provider: youtube
+      ad_policy: click_visible_skip
+      desired_primary_seconds: 25
+
+  # ============================================================
+  # B. wikipedia.org::article_view (five contents)
+  # ============================================================
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Computer_network"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: article_view
+    page_type: wiki-article-01
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Transmission_Control_Protocol"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: article_view
+    page_type: wiki-article-02
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Domain_Name_System"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: article_view
+    page_type: wiki-article-03
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Transport_Layer_Security"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: article_view
+    page_type: wiki-article-04
+
+  - domain: wikipedia.org
+    url: "https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: article_view
+    page_type: wiki-article-05
+
+  # ============================================================
+  # C. developer.mozilla.org::document_view (five contents)
+  # ============================================================
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: document_view
+    page_type: mdn-doc-01
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Overview"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: document_view
+    page_type: mdn-doc-02
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Caching"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: document_view
+    page_type: mdn-doc-03
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: document_view
+    page_type: mdn-doc-04
+
+  - domain: developer.mozilla.org
+    url: "https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: document_view
+    page_type: mdn-doc-05
+
+  # ============================================================
+  # D. github.com::repository_view (five contents)
+  # ============================================================
+
+  - domain: github.com
+    url: "https://github.com/RakuLomis/TrafficTracer"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: repository_view
+    page_type: gh-repo-01
+
+  - domain: github.com
+    url: "https://github.com/python/cpython"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: repository_view
+    page_type: gh-repo-02
+
+  - domain: github.com
+    url: "https://github.com/pallets/flask"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: repository_view
+    page_type: gh-repo-03
+
+  - domain: github.com
+    url: "https://github.com/numpy/numpy"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: repository_view
+    page_type: gh-repo-04
+
+  - domain: github.com
+    url: "https://github.com/scikit-learn/scikit-learn"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: repository_view
+    page_type: gh-repo-05
+
+  # ============================================================
+  # E. bing.com::search_results_view (five contents)
+  # ============================================================
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=network+traffic+analysis"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: bing-query-01
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=sourdough+bread+recipe"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: bing-query-02
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=beginner+guitar+chords"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: bing-query-03
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=indoor+plant+care"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: bing-query-04
+
+  - domain: bing.com
+    url: "https://www.bing.com/search?q=solar+system+facts"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: bing-query-05
+
+  # ============================================================
+  # F. youtube.com::search_results_view (five contents)
+  # No playback policy: thumbnails/previews do not make these playback samples.
+  # ============================================================
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/results?search_query=watercolor+tutorial"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: yt-query-01
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/results?search_query=bicycle+maintenance"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: yt-query-02
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/results?search_query=piano+practice"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: yt-query-03
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/results?search_query=bread+baking"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: yt-query-04
+
+  - domain: youtube.com
+    url: "https://www.youtube.com/results?search_query=astronomy+documentary"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: search_results_view
+    page_type: yt-query-05
+
+  # ============================================================
+  # G. bilibili.com::video_playback candidate preflight (five contents)
+  # Select this section separately; do not mix it into the 30-target main run
+  # until all five contents pass playback, routing, pairing, and feature checks.
+  # ============================================================
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1hu4m1P7Mu/"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: bili-video-01
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1HEf2YWEvs/"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: bili-video-02
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1pW411J7s8/"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: bili-video-03
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1ys411472E/?p=2"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: bili-video-04
+
+  - domain: bilibili.com
+    url: "https://www.bilibili.com/video/BV1o4411D7vm/"
+    wait: 60
+    wait_load_timeout: 30
+    traffic_type: video_playback
+    page_type: bili-video-05

@@ -17,6 +17,13 @@ FAILED_TERMINAL_STATUSES = frozenset({
     "canceled",
 })
 
+SHARED_CARRIER_PROTOCOLS = frozenset({
+    "anytls",
+    "hysteria",
+    "hysteria2",
+    "tuic",
+})
+
 
 def egress_outcome(record: Mapping[str, object]) -> str:
     value = record.get("egress_outcome")
@@ -73,6 +80,52 @@ def post_flow_disposition(
     if terminal_is_failure(record):
         return "failed_before_socket"
     return "unexpected_missing"
+
+
+def egress_evidence_kind(
+    record: Mapping[str, object],
+    *,
+    local_endpoint: bool = False,
+) -> str:
+    """Describe the strongest egress evidence without implying ownership."""
+    binding_value = record.get("carrier_binding")
+    binding = binding_value if isinstance(binding_value, Mapping) else {}
+    post_value = record.get("post_flow")
+    post_flow = post_value if isinstance(post_value, Mapping) else {}
+    physical_paths = binding.get("physical_paths")
+    has_physical_paths = bool(
+        isinstance(physical_paths, (list, tuple)) and physical_paths
+    )
+    shared = bool(
+        binding.get("mode") == "shared"
+        or post_flow.get("shared")
+    )
+    if post_flow:
+        return "shared_carrier" if shared else "exclusive_socket"
+    if binding.get("carrier_id"):
+        if has_physical_paths:
+            return "shared_carrier" if shared else "exclusive_socket"
+        return "carrier_path_unavailable"
+    if local_endpoint:
+        return "local_not_applicable"
+    if record_without_socket(record):
+        return "explicit_no_socket"
+    if terminal_is_failure(record):
+        return "failed_before_socket"
+
+    selected_type = ""
+    egress = record.get("egress")
+    if isinstance(egress, Mapping):
+        selected_type = str(egress.get("selected_type") or "")
+    if not selected_type:
+        selected_type = str(record.get("leaf_proxy_type") or "")
+    normalized_type = selected_type.lower().replace("-", "").replace("_", "")
+    outcome = egress_outcome(record)
+    if not outcome and isinstance(egress, Mapping):
+        outcome = str(egress.get("outcome") or "")
+    if outcome == "proxy" and normalized_type in SHARED_CARRIER_PROTOCOLS:
+        return "carrier_binding_unavailable"
+    return "egress_unavailable"
 
 
 def terminal_error_class(

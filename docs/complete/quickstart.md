@@ -165,7 +165,13 @@ instead of silently accepting the node or protocol currently selected in the UI.
 
 ### Profile and node pipeline
 
-Enable **Profile / node pipeline** when the same ordered YAML target set must be sampled through several `(Profile, selector, node)` tuples. Activate each desired Profile and concrete node, click **Add current pair**, and repeat in experiment order. Then select the YAML targets and start the pipeline.
+Enable **Profile / concrete node pipeline** when the same ordered YAML
+target set must be sampled through several `(Profile, selector, node)` tuples.
+Choose the manual selector that owns the experiment nodes, activate one concrete
+node in that selector, click **Add current pair**, and repeat in experiment
+order. `URLTest`, `Fallback`, and `LoadBalance` groups such as **Auto Select**
+are runtime policies rather than reproducible candidates and cannot be queued.
+Then select the YAML targets and start the pipeline.
 
 Start performs one whole-queue preflight before the first Session. It checks
 the frozen target hash, unique queued tuples, Profile existence, the active

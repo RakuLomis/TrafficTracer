@@ -23,6 +23,7 @@ class FlowMapping:
     egress_outcome: str = ""
     carrier_binding: CarrierBinding | None = None
     inbound_name: str = ""
+    leaf_proxy_type: str = ""
 
 
 class FlowIndex:
@@ -105,6 +106,7 @@ def _tcp_mapping(conn: MihomoConnection) -> FlowMapping | None:
         error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
         inbound_name=conn.connect.in_name if conn.connect else "",
+        leaf_proxy_type=dial.leaf_proxy_type if dial else "",
     )
 
 
@@ -127,6 +129,7 @@ def _udp_mapping(conn: UdpConnection) -> FlowMapping | None:
         error_class_source=close.error_class_source if close else "unavailable",
         egress_outcome=dial.egress_outcome if dial else "",
         inbound_name=conn.connect.in_name if conn.connect else "",
+        leaf_proxy_type=dial.leaf_proxy_type if dial else "",
     )
 
 

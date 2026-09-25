@@ -13,7 +13,11 @@ from traffictracer.models import CarrierBinding, CorrelatedFlowV2, FlowTuple, Vi
 from traffictracer.analyze.pcap_splitter import ConnectionPcapResult, PcapSideResult
 from traffictracer.analyze.pcap_mapping import reconcile_pcap_attribution
 from traffictracer.analyze.artifacts import core_flow_records, layered_coverage
-from traffictracer.analyze.outcomes import post_flow_disposition, terminal_error_class
+from traffictracer.analyze.outcomes import (
+    egress_evidence_kind,
+    post_flow_disposition,
+    terminal_error_class,
+)
 from traffictracer.analyze.request_resolver import resolve_visit_requests
 from traffictracer.analyze.request_observation import (
     flow_targets_loopback,
@@ -140,6 +144,9 @@ def _annotate_connection_semantics(record: dict, local_endpoint: bool) -> None:
     record["attribution_scope"] = scope
     record["attribution_evidence"] = evidence
     record["post_flow_disposition"] = post_flow_disposition(
+        record, local_endpoint=local_endpoint,
+    )
+    record["egress_evidence_kind"] = egress_evidence_kind(
         record, local_endpoint=local_endpoint,
     )
 

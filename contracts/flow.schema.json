@@ -49,6 +49,7 @@
       "enum": ["direct", "proxy", "rejected", "rejected_drop", "internal_dns", "pass", "compatible", "unknown"]
     },
     "terminal": { "oneOf": [{ "$ref": "#/$defs/terminal" }, { "type": "null" }] },
+    "egress_evidence_kind": { "enum": ["exclusive_socket", "shared_carrier", "explicit_no_socket", "failed_before_socket", "local_not_applicable", "carrier_binding_unavailable", "carrier_path_unavailable", "egress_unavailable"] },
     "attribution_scope": { "enum": ["page_attributed", "browser_background", "capture_unattributed", "local_internal"] },
     "attribution_evidence": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "post_flow_disposition": { "enum": ["with_post_flow", "explicit_no_socket", "failed_before_socket", "local_not_applicable", "unexpected_missing"] }

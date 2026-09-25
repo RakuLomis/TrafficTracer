@@ -229,6 +229,22 @@ def test_unattributed_capture_tail_is_informational_not_correlation_loss():
     assert warnings[0]["severity"] == "info"
 
 
+def test_capture_global_shared_carrier_gap_has_specific_warning():
+    items = [{
+        "shared": False,
+        "post_flow": None,
+        "post_flow_disposition": "unexpected_missing",
+        "egress_evidence_kind": "carrier_binding_unavailable",
+        "attribution_scope": "page_attributed",
+        "request_ids": ["request-1"],
+        "terminal": None,
+    }]
+    warnings = _warnings(items, Counter(), set(), set())
+    assert [warning["code"] for warning in warnings] == [
+        "CARRIER_BINDING_UNAVAILABLE",
+    ]
+
+
 def test_summary_is_recomputable_from_v2_indexes(tmp_path):
     logs = tmp_path / "logs"
     logs.mkdir()
@@ -423,6 +439,37 @@ def test_observed_network_failure_does_not_degrade_analysis_integrity():
     assert _analysis_integrity_state(
         {"status": "passed"}, warnings, scope="page_attributed",
     ) == "passed"
+
+
+def test_shared_carrier_binding_gap_has_a_specific_quality_warning():
+    connection = {
+        "connection_id": "conn-11111111111111111111111111111111",
+        "match": {"status": "matched", "method": "exact_pre_flow"},
+        "post_flow": None,
+        "egress": {
+            "mode": "proxy",
+            "outcome": "proxy",
+            "selected_type": "AnyTLS",
+        },
+    }
+
+    quality = analysis_quality(
+        [], [connection], {"split_mode": "none", "connections": []},
+    )
+    assert quality["egress_establishment"]["unavailable"] == 1
+    assert quality["egress_evidence"] == {
+        "exclusive_socket": 0,
+        "shared_carrier": 0,
+        "carrier_binding_unavailable": 1,
+        "carrier_path_unavailable": 0,
+        "egress_unavailable": 0,
+    }
+    warnings = _quality_warnings(
+        [], [connection], {"split_mode": "none", "connections": []},
+    )
+    assert [item["code"] for item in warnings] == [
+        "CARRIER_BINDING_UNAVAILABLE",
+    ]
 
 
 def test_rejected_egress_is_not_missing_socket_quality_failure():
