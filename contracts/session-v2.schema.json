@@ -58,7 +58,7 @@
         "artifact_id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
         "name": { "type": "string", "minLength": 1 },
         "phase": { "enum": ["capture", "analysis", "diagnostic"] },
-        "role": { "enum": ["tun_pcap", "physical_pcap", "mihomo_trace", "cdp_events", "netlog", "capture_context", "request_index", "connection_index", "flow_index", "pcap_index", "coverage_summary", "derived_pcap", "analysis_log", "other"] },
+        "role": { "enum": ["tun_pcap", "physical_pcap", "mihomo_trace", "proxy_semantics", "cdp_events", "netlog", "capture_context", "request_index", "connection_index", "flow_index", "pcap_index", "coverage_summary", "derived_pcap", "analysis_log", "other"] },
         "generation_id": { "$ref": "#/$defs/uuid" },
         "path": { "$ref": "#/$defs/relativeArtifactPath" },
         "media_type": { "type": "string", "minLength": 1 },

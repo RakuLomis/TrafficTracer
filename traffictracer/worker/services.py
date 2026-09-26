@@ -55,6 +55,7 @@ from traffictracer.session.manifest import (
     SessionTarget,
 )
 from traffictracer.session.store import MANIFEST_NAME, SessionStore, SessionStoreError
+from traffictracer.utils import logger
 
 from .dispatcher import WorkerMethodError
 from .job_manager import JobManager
@@ -847,7 +848,11 @@ class _PersistentCaptureRunner:
         except Exception as exc:
             partial_artifacts = getattr(self.capture, "artifacts", ())
             if isinstance(partial_artifacts, tuple):
-                self._record_paths(partial_artifacts, kind="raw")
+                self._record_paths(
+                    partial_artifacts,
+                    kind="raw",
+                    best_effort=True,
+                )
             code = getattr(exc, "code", "CAPTURE_FAILED")
             self._transition(
                 JobState.FAILED,
@@ -859,23 +864,48 @@ class _PersistentCaptureRunner:
             )
             raise
 
-    def _record_paths(self, paths: tuple[str, ...], *, kind: str) -> None:
+    def _record_paths(
+        self,
+        paths: tuple[str, ...],
+        *,
+        kind: str,
+        best_effort: bool = False,
+    ) -> None:
         manifest = self.store.get(self.session_id)
         existing = {artifact.path for artifact in manifest.artifacts}
         for relative in paths:
             path = Path(manifest.session_dir) / relative
             if relative in existing or not path.is_file():
                 continue
-            manifest = manifest.with_artifact(Artifact(
-                name=path.name,
-                kind=kind,
-                path=relative,
-                media_type=_media_type(path),
-                size_bytes=path.stat().st_size,
-                size_semantics="as_of" if relative == "raw/mihomo-trace.jsonl" else "exact",
-            ))
+            try:
+                updated = manifest.with_artifact(Artifact(
+                    name=path.name,
+                    kind=kind,
+                    path=relative,
+                    media_type=_media_type(path),
+                    size_bytes=path.stat().st_size,
+                    size_semantics=(
+                        "as_of"
+                        if relative == "raw/mihomo-trace.jsonl"
+                        else "exact"
+                    ),
+                ))
+                # Persist each valid artifact independently. A later contract
+                # failure must not discard evidence already registered.
+                self.store.save(updated)
+            except Exception as artifact_error:
+                if not best_effort:
+                    raise
+                logger.warning(
+                    "Session %s could not register artifact %s while "
+                    "finalizing a failed capture: %s",
+                    self.session_id,
+                    relative,
+                    artifact_error,
+                )
+                continue
+            manifest = updated
             existing.add(relative)
-        self.store.save(manifest)
 
     def _transition(
         self,

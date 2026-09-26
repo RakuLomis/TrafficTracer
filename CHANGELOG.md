@@ -4,6 +4,18 @@ All notable TrafficTracer Complete changes are recorded here.
 
 ## Unreleased
 
+## [1.0.29] - 2026-09-26
+
+### Fixed
+
+- Added the runtime `proxy_semantics` artifact role to the Session v2 contract.
+- Made capture artifact finalization incremental so a validation error still
+  produces a durable terminal Session with the original failure details.
+- Preserved real Batch child errors in the profile/node pipeline UI.
+- Added audited recovery and pipeline reconciliation for capture-complete 1.0.28
+  Sessions blocked by the artifact-role contract defect.
+- Preserved redacted protocol-semantics snapshots byte-for-byte during repair.
+
 ## [1.0.22] - 2026-09-09
 
 ### Fixed

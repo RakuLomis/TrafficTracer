@@ -181,6 +181,13 @@ If a Session is marked corrupt:
 
 The scanner reports one damaged Session without invalidating healthy siblings.
 
+A 1.0.28 capture can contain complete raw evidence but remain in `capturing`
+when its Batch reports `CONTRACT_VALIDATION_FAILED` for an artifact `role`.
+Do not rename the timestamp group, edit its manifests, or recapture it before
+checking the narrow recovery procedure in
+[Artifact-finalization recovery](complete/artifact-finalization-recovery.md).
+The recovery tool is read-only by default and refuses unrelated failures.
+
 ## Capture appears stuck
 
 The capture card reports target number, stage, elapsed progress, and terminal error. A long configured `wait` is not a deadlock. Navigation, Chrome shutdown, packet finalization, and analysis each have separate bounded phases.

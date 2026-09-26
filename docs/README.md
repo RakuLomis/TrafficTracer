@@ -7,6 +7,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 - [Complete UI guide](complete/quickstart.md): installation, first capture, YAML batches, Session browsing, and flow lookup.
 - [Target configuration](configuration.md): supported YAML fields, normalization rules, examples, and validation limits.
 - [Operations and troubleshooting](operations.md): TUN and service behavior, capture permissions, output directories, recovery, and common failures.
+- [Artifact-finalization recovery](complete/artifact-finalization-recovery.md): audited recovery for the 1.0.28 `proxy_semantics` Session-contract defect.
 
 ## Technical reference
 
@@ -25,6 +26,7 @@ This directory contains the detailed documentation for TrafficTracer Complete. T
 
 ## Release information
 
+- [1.0.29 release notes](releases/v1.0.29.md)
 - [1.0.28 release notes](releases/v1.0.28.md)
 - [1.0.27 release notes](releases/v1.0.27.md)
 - [1.0.26 release notes](releases/v1.0.26.md)
@@ -49,4 +51,4 @@ The documentation follows these rules:
 5. Runtime behavior takes precedence over historical design notes. Obsolete implementation plans are not kept in the active documentation tree.
 6. Examples must not contain real proxy credentials, subscription URLs, controller secrets, captures, or user-specific paths.
 
-Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.28 on Linux x86-64. Historical release notes retain their original versions. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.
+Unless a page states otherwise, this documentation describes TrafficTracer Complete 1.0.29 on Linux x86-64. Historical release notes retain their original versions. Legacy Session schemas remain readable, but new captures use the current contracts pinned by `complete/components.lock.yaml`.

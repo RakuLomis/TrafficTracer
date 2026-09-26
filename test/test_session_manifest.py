@@ -150,3 +150,28 @@ def test_normalized_capture_artifact_names_have_stable_roles(path, role):
     )
 
     assert artifact.to_dict()["role"] == role
+
+
+def test_proxy_semantics_artifact_is_valid_in_session_v2_manifest():
+    manifest = (
+        _manifest()
+        .transition(JobState.PREPARING, now=BASE_TIME + timedelta(seconds=1))
+        .transition(JobState.CAPTURING, now=BASE_TIME + timedelta(seconds=2))
+    )
+    artifact = Artifact(
+        name="proxy-semantics.json",
+        kind="raw",
+        phase="capture",
+        path="raw/proxy-semantics.json",
+        media_type="application/json",
+        size_bytes=1,
+    )
+
+    updated = manifest.with_artifact(
+        artifact,
+        now=BASE_TIME + timedelta(seconds=3),
+    )
+    completed = updated.transition(
+        JobState.COMPLETED,
+        now=BASE_TIME + timedelta(seconds=4),
+    )

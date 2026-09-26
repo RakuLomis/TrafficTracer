@@ -256,6 +256,76 @@ def test_capture_failure_records_partial_raw_artifacts_and_non_empty_error(
     ]
 
 
+def test_artifact_contract_failure_still_persists_failed_session(
+    tmp_path, monkeypatch
+):
+    import traffictracer.session.manifest as manifest_module
+    import traffictracer.worker.services as module
+
+    services = WorkerServices(
+        tmp_path,
+        notify=lambda message: None,
+        shutdown_event=Event(),
+    )
+
+    class CompletedCaptureJob:
+        def __init__(self, spec, **kwargs):
+            self.spec = spec
+            self.session = kwargs["session"]
+            self._artifacts = ("raw/proxy-semantics.json",)
+
+        @property
+        def artifacts(self):
+            return self._artifacts
+
+        def run(self):
+            raw = self.session.directory / "raw"
+            raw.mkdir(exist_ok=True)
+            (raw / "proxy-semantics.json").write_text(
+                '{"schema_version": 1}\n', encoding="utf-8"
+            )
+            return CaptureJobResult(
+                job_id=self.spec.job_id,
+                state=JobState.COMPLETED,
+                session_id=self.session.session_id,
+                artifacts=self._artifacts,
+            )
+
+    original_validate = manifest_module.validate_session_v2
+
+    def reject_proxy_semantics(payload):
+        if any(
+            item.get("role") == "proxy_semantics"
+            for item in payload.get("artifacts", [])
+        ):
+            error = ValueError("fixture artifact contract rejection")
+            error.code = "CONTRACT_VALIDATION_FAILED"
+            raise error
+        return original_validate(payload)
+
+    monkeypatch.setattr(module, "CaptureJob", CompletedCaptureJob)
+    monkeypatch.setattr(
+        manifest_module, "validate_session_v2", reject_proxy_semantics
+    )
+    payload = _capture_payload(tmp_path)
+    payload["options"]["analyze_after_capture"] = False
+
+    started = services.jobs.start_capture({"job": payload})
+    assert services.jobs.wait(started["job_id"], timeout=3)
+
+    sessions = services.session_list({})
+    manifest = services.session_get({
+        "session_id": sessions["sessions"][0]["session_id"]
+    })
+    assert manifest["state"] == "failed"
+    assert manifest["error"] == {
+        "code": "CONTRACT_VALIDATION_FAILED",
+        "message": "fixture artifact contract rejection",
+        "stage": "capture",
+    }
+    assert manifest["artifacts"] == []
+
+
 def test_batch_start_reports_unresolved_mixed_inventory_before_acceptance(tmp_path, monkeypatch):
     import traffictracer.worker.services as module
 
